@@ -229,6 +229,7 @@ class PeakCollection:
         """
         # Init variables from input
         self._tag = peak_tag
+        self._mask = mask
         self._filename: str = ""
         self.projectfilename = projectfilename  # use the setter
         self._runnumber: int = runnumber
@@ -250,7 +251,7 @@ class PeakCollection:
         self._fit_status = None
 
         # must happen after the sub_run array is set
-        self._d_reference: Optional[unumpy.uarray]
+        self._d_reference: Optional[unumpy.uarray] = None
         self.set_d_reference(d_reference, d_reference_error)
 
     def __len__(self):
@@ -270,6 +271,18 @@ class PeakCollection:
 
         """
         return self._tag
+
+    @property
+    def mask(self) -> str:
+        """Mask name
+
+        Returns
+        -------
+        str
+            Mask name
+
+        """
+        return self._mask
 
     @property
     def peak_profile(self) -> str:

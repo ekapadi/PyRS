@@ -1,5 +1,6 @@
 from copy import deepcopy
 import numpy as np
+from pathlib import Path
 import os
 import pytest
 import sys
@@ -17,9 +18,10 @@ ON_GITHUB_ACTIONS = bool(os.environ.get("GITHUB_ACTIONS", False))
 
 @pytest.fixture(scope="session")
 def test_data_dir():
-    this_module_path = sys.modules[__name__].__file__
-    this_module_directory = os.path.dirname(this_module_path)
-    return os.path.join(this_module_directory, "data")
+    # WARNING, there may be multiple `conftest.py`: do _not_ use `sys.modules[__name__].__file__` here!
+    this_module_path = Path(__file__).resolve()  # absolute path to this module
+    this_module_directory = this_module_path.parent  # directory containing this module
+    return str(this_module_directory / 'data')
 
 
 @pytest.fixture(scope="session")
@@ -142,7 +144,7 @@ def strain_single_builder():
         )
 
         # Back-calculate the peak centers from supplied lattice spacings
-        centers = 2 * np.rad2deg(np.arcsin(peaks_data["wavelength"] / (2 * peaks_data["d_spacing"])))
+        centers = 2.0 * np.rad2deg(np.arcsin(peaks_data["wavelength"] / (2 * peaks_data["d_spacing"])))
 
         # Enter the native parameters in the peak collection
         subruns_count = len(peaks_data["subruns"])

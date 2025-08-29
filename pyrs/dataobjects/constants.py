@@ -55,5 +55,12 @@ class HidraConstants:
     D_REFERENCE_ERROR = "d reference error"
 
     # Special sample logs
-    SUB_RUN_DURATION = "sub-run duration"  # units in seconds
-    SAMPLE_COORDINATE_NAMES = ("vx", "vy", "vz")
+    SUB_RUN_DURATION = 'sub-run duration'  # units in seconds
+    SAMPLE_COORDINATE_NAMES = ('vx', 'vy', 'vz')
+    SAMPLE_NAME = 'SampleName'
+    SAMPLE_DESCRIPTION = 'SampleDescription'
+    CHEMICAL_FORMULA = 'chemical formula'
+    TEMPERATURE = 'temperature'
+    STRESS_FIELD = 'stress field'
+    STRESS_FIELD_DIRECTION = 'stress field direction'
+    
