@@ -307,7 +307,7 @@ class TestNXstress:
         assert file_path.exists()
         
         # *** DEBUG *** : for validation:
-        shutil.copy2(file_path, Path('/mnt/data0/workspaces/ORNL-work/PyRS/tmp/validation'))
+        # shutil.copy2(file_path, Path('${workspaces}/ORNL-work/PyRS/tmp/validation'))
         
     def test__Instrument_fields_and_subgroups(
         self,
