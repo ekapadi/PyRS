@@ -7,6 +7,7 @@ from pyrs.core.peak_profile_utility import (
     BackgroundFunction,
 )
 from pyrs.dataobjects import SubRuns  # type: ignore
+from pyrs.dataobjects.constants import HidraConstants
 from typing import Optional, Tuple, Union
 from uncertainties import unumpy
 from uncertainties import ufloat
@@ -209,6 +210,7 @@ class PeakCollection:
         peak_tag: str,
         peak_profile,
         background_type,
+        mask: str = HidraConstants.DEFAULT_MASK, 
         wavelength: float = np.nan,
         d_reference: Union[float, np.ndarray] = np.nan,
         d_reference_error: Union[float, np.ndarray] = 0.0,
