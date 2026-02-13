@@ -17,11 +17,11 @@ ON_GITHUB_ACTIONS = bool(os.environ.get("GITHUB_ACTIONS", False))
 
 
 @pytest.fixture(scope="session")
-def test_data_dir():
-    # WARNING, there may be multiple `conftest.py`: do _not_ use `sys.modules[__name__].__file__` here!
-    this_module_path = Path(__file__).resolve()  # absolute path to this module
-    this_module_directory = this_module_path.parent  # directory containing this module
-    return str(this_module_directory / 'data')
+def test_data_dir(request):
+    # WARNING, there may be multiple `conftest.py`,
+    #   and pytest often screws with the import sequence:
+    #   do _not_ use `sys.modules[__name__].__file__` here!
+    return str(request.config.rootpath /'tests' / 'data')
 
 
 @pytest.fixture(scope="session")
