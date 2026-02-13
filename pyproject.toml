@@ -39,11 +39,6 @@ artifacts = [
 [tool.hatch.build.targets.wheel]
 packages = ["pyrs", "scripts"]
 
-[tool.pytest.ini_options]
-pythonpath = [
-  "tests"
-]
-
 [tool.versioningit.vcs]
 method = "git"
 default-tag = "0.1.0"
@@ -112,6 +107,8 @@ matplotlib = "*"
 numpy = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
 
 
 # ------------------------------- #
@@ -162,6 +159,8 @@ uncertainties = "*"
 libarchive = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
 
 # ------------------------------- #
 # QA Environment Feature #
@@ -176,6 +175,8 @@ uncertainties = "*"
 libarchive = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
 
 # ------------------------------- #
 # Production Environment Feature #
@@ -190,6 +191,8 @@ uncertainties = "*"
 libarchive = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
 
 [tool.pixi.package]
 name = "pyrs"
