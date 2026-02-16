@@ -216,7 +216,7 @@ class TestPeaks:
         load_HidraWorkspace: HidraWorkspace,
         createPeakCollection: PeakCollection
     ):
-        """Verify qx, qy, qz are initialized but remain NaN after init_group"""
+        """Verify qx, qy, qz fields exist but remain empty after init_group since implementation doesn't populate them"""
         ws = load_HidraWorkspace(
             file_name=self.PROJECT_FILE_B,
             name='test_workspace',
@@ -239,16 +239,11 @@ class TestPeaks:
         
         peaks = _Peaks.init_group([peak0], ws._sample_logs)
         
-        # qx, qy, qz should exist but be empty (since we initialize to empty arrays)
-        # After appending, they would be filled, but the implementation doesn't populate them
-        # So they should remain as initialized (empty in _init, not resized in _append_peak)
+        # qx, qy, qz exist but remain empty (implementation doesn't populate them)
         assert 'qx' in peaks
         assert 'qy' in peaks
         assert 'qz' in peaks
         
-        # Check if they're empty or NaN
-        # Based on the implementation, they're initialized as empty arrays
-        # and _append_peak doesn't resize them, so they remain empty
         assert peaks['qx'].shape[0] == 0
         assert peaks['qy'].shape[0] == 0
         assert peaks['qz'].shape[0] == 0
