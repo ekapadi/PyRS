@@ -437,8 +437,107 @@ class TestNXstress:
             assert key in fit
             assert isinstance(fit[key], NXclass_)
                 
-    def test__Fit_multiple(self):
-        pass
+    def test_write_without_context_manager(
+        self,
+        tmp_path: Path,
+        load_HidraWorkspace: HidraWorkspace,
+        createPeakCollection: PeakCollection
+        ):
+        """Verify RuntimeError when write() is called without context manager"""
+        ws = load_HidraWorkspace(
+            file_name=self.PROJECT_FILE_C,
+            name='test_workspace',
+            load_raw_counts=True,
+            load_reduced_diffraction=True
+        )
+        sampleLogs = ws._sample_logs
+        subruns = sampleLogs.subruns.raw_copy()
+        
+        N_subrun = len(subruns)
+        peak0 = createPeakCollection(
+            peak_tag="Al 251540",
+            peak_profile="Gaussian",
+            background_type="Quadratic",
+            wavelength=25.4,
+            projectfilename="/does/not/exist.h5",
+            runnumber=12345,
+            N_subrun=N_subrun    
+        )
+        
+        file_path = tmp_path / 'test_no_context.nxs'
+        nx = NXstress(file_path, 'w')
+        
+        with pytest.raises(RuntimeError, match=r".*only usage as context manager is supported.*"):
+            nx.write(ws, [peak0])
+
+    def test_NXentry_init_fallback_timestamps(
+        self,
+        load_HidraWorkspace: HidraWorkspace,
+        ):
+        """Verify NXstress._init succeeds when timestamps are not valid ISO-8601"""
+        # Load workspace and deliberately corrupt the timestamps
+        ws = load_HidraWorkspace(
+            file_name=self.PROJECT_FILE_C,
+            name='test_workspace',
+            load_raw_counts=True,
+            load_reduced_diffraction=True
+        )
+        
+        # Corrupt the timestamps to trigger the fallback path
+        bad_timestamps = [b'not-valid-iso8601' for _ in ws._sample_logs.subruns]
+        ws._sample_logs._logs['start_time'] = bad_timestamps
+        ws._sample_logs._logs['end_time'] = bad_timestamps
+        
+        # Should not raise - fallback path handles this
+        entry = NXstress._init(ws)
+        assert isinstance(entry, NXentry)
+        assert 'start_time' in entry
+        assert 'end_time' in entry
+
+    def test_validateWorkspaceAndPeaksData_valid(
+        self,
+        load_HidraWorkspace: HidraWorkspace,
+        createPeakCollection: PeakCollection
+        ):
+        """Verify _validateWorkspaceAndPeaksData completes without error for valid data"""
+        ws = load_HidraWorkspace(
+            file_name=self.PROJECT_FILE_C,
+            name='test_workspace',
+            load_raw_counts=True,
+            load_reduced_diffraction=True
+        )
+        sampleLogs = ws._sample_logs
+        subruns = sampleLogs.subruns.raw_copy()
+        
+        N_subrun = len(subruns)
+        peak0 = createPeakCollection(
+            peak_tag="Al 251540",
+            peak_profile="Gaussian",
+            background_type="Quadratic",
+            wavelength=25.4,
+            projectfilename="/does/not/exist.h5",
+            runnumber=12345,
+            N_subrun=N_subrun    
+        )
+        
+        # Should not raise
+        NXstress._validateWorkspaceAndPeaksData(ws, [peak0])
+
+    def test_NXentry_definition_value(
+        self,
+        load_HidraWorkspace: HidraWorkspace,
+        ):
+        """Verify entry['definition'] is 'NXstress' and processing_type is 'd-spacing'"""
+        ws = load_HidraWorkspace(
+            file_name=self.PROJECT_FILE_C,
+            name='test_workspace',
+            load_raw_counts=True,
+            load_reduced_diffraction=True
+        )
+        
+        entry = NXstress._init(ws)
+        assert entry['definition'] == 'NXstress'
+        assert entry['processing_type'] == 'd-spacing'
                 
     def test__PeakParameters_fields_and_subgroups(
         self,
