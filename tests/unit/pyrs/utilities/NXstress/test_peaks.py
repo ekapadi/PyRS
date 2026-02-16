@@ -32,16 +32,20 @@ class TestPeaks:
         
         assert isinstance(peaks, NXreflections)
         
-        # Verify all required fields exist and are empty
-        required_fields = [
+        # Verify all required fields exist and array fields are empty
+        array_fields = [
             'scan_point', 'h', 'k', 'l', 'phase_name', 'mask',
-            'qx', 'qy', 'qz', 'center', 'center_errors', 'center_type',
+            'qx', 'qy', 'qz', 'center', 'center_errors',
             'sx', 'sy', 'sz'
         ]
         
-        for field in required_fields:
+        for field in array_fields:
             assert field in peaks
             assert peaks[field].shape[0] == 0
+        
+        # Verify scalar field
+        assert 'center_type' in peaks
+        assert peaks['center_type'].nxdata == 'd-spacing'
 
     def test_Peaks_init_group_data_values(
         self,

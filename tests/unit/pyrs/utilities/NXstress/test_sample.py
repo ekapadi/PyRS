@@ -65,7 +65,7 @@ class TestSample:
         )
         
         # Add chemical formula to logs
-        ws._sample_logs._logs[HidraConstants.CHEMICAL_FORMULA] = ['Fe3O4']
+        ws._sample_logs[HidraConstants.CHEMICAL_FORMULA] = ['Fe3O4']
         
         sample = _Sample.init_group(ws._sample_logs)
         
@@ -85,8 +85,8 @@ class TestSample:
         )
         
         # Ensure chemical formula is not in logs
-        if HidraConstants.CHEMICAL_FORMULA in ws._sample_logs._logs:
-            del ws._sample_logs._logs[HidraConstants.CHEMICAL_FORMULA]
+        if HidraConstants.CHEMICAL_FORMULA in ws._sample_logs:
+            del ws._sample_logs[HidraConstants.CHEMICAL_FORMULA]
         
         sample = _Sample.init_group(ws._sample_logs)
         
@@ -110,8 +110,8 @@ class TestSample:
         N_scan = len(subruns)
         temp_values = np.linspace(300, 400, N_scan)
         
-        ws._sample_logs._logs[HidraConstants.TEMPERATURE] = temp_values
-        ws._sample_logs._units[HidraConstants.TEMPERATURE] = 'K'
+        ws._sample_logs[HidraConstants.TEMPERATURE] = temp_values
+        ws._sample_logs.set_units(HidraConstants.TEMPERATURE, 'K')
         
         sample = _Sample.init_group(ws._sample_logs)
         
@@ -133,8 +133,8 @@ class TestSample:
         )
         
         # Ensure temperature is not in logs
-        if HidraConstants.TEMPERATURE in ws._sample_logs._logs:
-            del ws._sample_logs._logs[HidraConstants.TEMPERATURE]
+        if HidraConstants.TEMPERATURE in ws._sample_logs:
+            del ws._sample_logs[HidraConstants.TEMPERATURE]
         
         sample = _Sample.init_group(ws._sample_logs)
         
@@ -157,8 +157,8 @@ class TestSample:
         N_scan = len(subruns)
         stress_values = np.random.randn(N_scan, 3)
         
-        ws._sample_logs._logs[HidraConstants.STRESS_FIELD] = stress_values
-        ws._sample_logs._logs[HidraConstants.STRESS_FIELD_DIRECTION] = 'z'
+        ws._sample_logs[HidraConstants.STRESS_FIELD] = stress_values
+        ws._sample_logs[HidraConstants.STRESS_FIELD_DIRECTION] = 'z'
         
         sample = _Sample.init_group(ws._sample_logs)
         
@@ -184,7 +184,7 @@ class TestSample:
         N_scan = len(subruns)
         wrong_shape_stress = np.random.randn(N_scan + 5, 3)  # Wrong first dimension
         
-        ws._sample_logs._logs[HidraConstants.STRESS_FIELD] = wrong_shape_stress
+        ws._sample_logs[HidraConstants.STRESS_FIELD] = wrong_shape_stress
         
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
             _Sample.init_group(ws._sample_logs)
@@ -206,7 +206,7 @@ class TestSample:
         N_scan = len(subruns)
         
         # Create bad coordinate data with wrong length
-        ws._sample_logs._logs['vx'] = np.zeros(N_scan + 5)  # Wrong size
+        ws._sample_logs['vx'] = np.zeros(N_scan + 5)  # Wrong size
         
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
             _Sample.init_group(ws._sample_logs)
@@ -226,8 +226,8 @@ class TestSample:
         # Add a custom log with ':' in the name
         custom_log_name = 'HB2B:CS:CustomValue'
         custom_log_value = [42.0]
-        ws._sample_logs._logs[custom_log_name] = custom_log_value
-        ws._sample_logs._units[custom_log_name] = 'mm'
+        ws._sample_logs[custom_log_name] = custom_log_value
+        ws._sample_logs.set_units(custom_log_name, 'mm')
         
         sample = _Sample.init_group(ws._sample_logs)
         

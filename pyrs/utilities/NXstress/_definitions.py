@@ -198,5 +198,5 @@ def is_ISO_8601(s: str) -> bool:
     except ValueError as e:
         if not 'Invalid isoformat string' in str(e):
             raise
-        scanable = False
+        scannable = False
     return scannable

@@ -485,8 +485,8 @@ class TestNXstress:
         
         # Corrupt the timestamps to trigger the fallback path
         bad_timestamps = [b'not-valid-iso8601' for _ in ws._sample_logs.subruns]
-        ws._sample_logs._logs['start_time'] = bad_timestamps
-        ws._sample_logs._logs['end_time'] = bad_timestamps
+        ws._sample_logs['start_time'] = bad_timestamps
+        ws._sample_logs['end_time'] = bad_timestamps
         
         # Should not raise - fallback path handles this
         entry = NXstress._init(ws)

@@ -389,18 +389,22 @@ class TestFit:
         assert 'fit' in dgram
         assert 'fit_errors' in dgram
         
-        # Verify data matches workspace
+        # Verify data matches workspace (use allclose for float32 comparison)
         data_key, errors_key = _Diffractogram._diffraction_data_keys(DEFAULT_TAG)
         expected_data = ws._diff_data_set[data_key]
         expected_errors = ws._var_data_set[errors_key]
         
-        np.testing.assert_array_equal(
+        np.testing.assert_allclose(
             dgram['diffractogram'].nxdata,
-            expected_data
+            expected_data,
+            rtol=1e-6,
+            equal_nan=True
         )
-        np.testing.assert_array_equal(
+        np.testing.assert_allclose(
             dgram['diffractogram_errors'].nxdata,
-            expected_errors
+            expected_errors,
+            rtol=1e-6,
+            equal_nan=True
         )
         
         # fit and fit_errors should be empty
@@ -538,7 +542,7 @@ class TestFit:
         
         # Add a non-existent scan point to the peak collection
         import numpy as np
-        from pyrs.dataobjects.sub_runs import SubRuns
+        from pyrs.dataobjects.sample_logs import SubRuns
         
         # Create sub_runs with extra scan points not in workspace
         extra_subruns = np.append(subruns, [9999, 10000])
