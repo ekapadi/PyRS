@@ -72,30 +72,64 @@ class TestInputData:
         tmp_path: Path,
         load_HidraWorkspace: HidraWorkspace,
     ):
-        """Verify readSubruns round-trip: write then read back
+        """Verify readSubruns round-trip: write then read back"""
+        # Load workspace with raw counts
+        ws_write = load_HidraWorkspace(
+            file_name=self.PROJECT_FILE_A,
+            name='test_workspace_write',
+            load_raw_counts=True,
+            load_reduced_diffraction=True
+        )
         
-        SKIPPED: The readSubruns method has a type signature issue.
-        - Method signature at line 57: readSubruns(ws: HidraWorkspace, nx: NXFile, data: NXdata)
-        - The nx parameter is typed as NXFile
-        - However, nxopen() returns an NXroot object, not NXFile
-        - This causes pydantic validation to fail with: "Input should be an instance of NXFile"
+        # Create input data
+        data = _InputData.init_group(ws_write)
         
-        To fix this test, the implementation would need to be refactored to either:
-        1. Change the type hint from NXFile to NXroot, or
-        2. Use a different approach to access the file handle
+        # Write to file
+        file_path = tmp_path / 'test_readSubruns.nxs'
+        with nxopen(str(file_path), 'w') as nx:
+            nx['input_data'] = data
         
-        The underlying functionality works, but cannot be tested with current type constraints.
-        """
-        pytest.skip("readSubruns type signature expects NXFile but nxopen returns NXroot - needs refactoring")
+        # Create empty workspace for reading
+        ws_read = HidraWorkspace('test_workspace_read')
+        
+        # Read back
+        with nxopen(str(file_path), 'r') as nx:
+            _InputData.readSubruns(ws_read, nx['input_data'])
+        
+        # Verify round-trip
+        assert len(ws_read.get_sub_runs()) == len(ws_write.get_sub_runs())
+        
+        # Check that all scan points are present
+        original_scan_points = list(ws_write._raw_counts.keys())
+        read_scan_points = ws_read.get_sub_runs()
+        
+        for scan_point in original_scan_points:
+            assert scan_point in read_scan_points
+            original_counts = ws_write.get_detector_counts(scan_point)
+            read_counts = ws_read.get_detector_counts(scan_point)
+            np.testing.assert_array_equal(read_counts, original_counts)
 
     def test_InputData_readSubruns_raises_on_existing_subruns(
         self,
         tmp_path: Path,
         load_HidraWorkspace: HidraWorkspace,
     ):
-        """Verify RuntimeError when workspace already has subruns
+        """Verify RuntimeError when workspace already has subruns"""
+        # Load workspace with data
+        ws = load_HidraWorkspace(
+            file_name=self.PROJECT_FILE_A,
+            name='test_workspace',
+            load_raw_counts=True,
+            load_reduced_diffraction=True
+        )
         
-        SKIPPED: Same type signature issue as test_InputData_readSubruns.
-        See that test's docstring for details on the NXFile vs NXroot mismatch.
-        """
-        pytest.skip("readSubruns type signature expects NXFile but nxopen returns NXroot - needs refactoring")
+        # Create input data and write to file
+        data = _InputData.init_group(ws)
+        file_path = tmp_path / 'test_existing_subruns.nxs'
+        with nxopen(str(file_path), 'w') as nx:
+            nx['input_data'] = data
+        
+        # Try to read into workspace that already has subruns
+        with nxopen(str(file_path), 'r') as nx:
+            with pytest.raises(RuntimeError, match=r".*not implemented: append detector_counts data to workspace.*"):
+                _InputData.readSubruns(ws, nx['input_data'])

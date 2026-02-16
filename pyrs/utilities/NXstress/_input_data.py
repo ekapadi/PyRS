@@ -54,7 +54,7 @@ class _InputData:
 
     @classmethod
     @validate_call_
-    def readSubruns(cls, ws: HidraWorkspace, nx: NXFile, data: NXdata):
+    def readSubruns(cls, ws: HidraWorkspace, data: NXdata):
         # Initialize `HidraWorkspace` detector_counts from input-data group.
         
         # TODO: append to the `HidraWorkspace`, if any detector_counts data already exists.

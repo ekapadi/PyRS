@@ -64,12 +64,15 @@ class TestSample:
             load_reduced_diffraction=True
         )
         
-        # Add chemical formula to logs
-        ws._sample_logs[HidraConstants.CHEMICAL_FORMULA] = ['Fe3O4']
+        # Add chemical formula to logs - must match number of subruns
+        subruns = ws._sample_logs.subruns.raw_copy()
+        N_scan = len(subruns)
+        ws._sample_logs[HidraConstants.CHEMICAL_FORMULA] = ['Fe3O4'] * N_scan
         
         sample = _Sample.init_group(ws._sample_logs)
         
         assert 'chemical_formula' in sample
+        # _Sample takes the first value from the log
         assert sample['chemical_formula'] == 'Fe3O4'
 
     def test_Sample_chemical_formula_absent(
@@ -105,13 +108,13 @@ class TestSample:
             load_reduced_diffraction=True
         )
         
-        # Add temperature data to logs
+        # Add temperature data to logs with units using tuple syntax
         subruns = ws._sample_logs.subruns.raw_copy()
         N_scan = len(subruns)
         temp_values = np.linspace(300, 400, N_scan)
         
-        ws._sample_logs[HidraConstants.TEMPERATURE] = temp_values
-        ws._sample_logs.set_units(HidraConstants.TEMPERATURE, 'K')
+        # Use tuple (key, units) to set value with units
+        ws._sample_logs[(HidraConstants.TEMPERATURE, 'K')] = temp_values
         
         sample = _Sample.init_group(ws._sample_logs)
         
@@ -158,14 +161,21 @@ class TestSample:
         stress_values = np.random.randn(N_scan, 3)
         
         ws._sample_logs[HidraConstants.STRESS_FIELD] = stress_values
-        ws._sample_logs[HidraConstants.STRESS_FIELD_DIRECTION] = 'z'
+        # Direction is stored as array with same value for each subrun
+        ws._sample_logs[HidraConstants.STRESS_FIELD_DIRECTION] = np.array(['z'] * N_scan)
         
         sample = _Sample.init_group(ws._sample_logs)
         
         assert 'stress_field' in sample
         assert sample['stress_field'].shape[0] == N_scan
         assert sample['stress_field'].dtype == FIELD_DTYPE.FLOAT_DATA.value
-        assert sample['stress_field'].attrs['direction'] == 'z'
+        # The direction attribute gets the array value
+        direction_val = sample['stress_field'].attrs['direction']
+        # It will be the numpy array, check first element
+        if isinstance(direction_val, np.ndarray):
+            assert direction_val[0] == 'z'
+        else:
+            assert direction_val == 'z'
 
     def test_Sample_stress_field_shape_mismatch(
         self,
@@ -223,16 +233,25 @@ class TestSample:
             load_reduced_diffraction=True
         )
         
-        # Add a custom log with ':' in the name
+        # Add a custom log with ':' in the name and units using tuple syntax
         custom_log_name = 'HB2B:CS:CustomValue'
-        custom_log_value = [42.0]
-        ws._sample_logs[custom_log_name] = custom_log_value
-        ws._sample_logs.set_units(custom_log_name, 'mm')
+        subruns = ws._sample_logs.subruns.raw_copy()
+        N_scan = len(subruns)
+        custom_log_value = np.full(N_scan, 42.0)
+        ws._sample_logs[(custom_log_name, 'mm')] = custom_log_value
         
         sample = _Sample.init_group(ws._sample_logs)
         
         assert 'logs' in sample
         assert isinstance(sample['logs'], NXcollection)
+        
+        # The ':' should be replaced by '_'
+        expected_field_name = 'HB2B_CS_CustomValue'
+        assert expected_field_name in sample['logs']
+        
+        # Verify attributes
+        assert sample['logs'][expected_field_name].attrs['local_name'] == custom_log_name
+        assert sample['logs'][expected_field_name].attrs['units'] == 'mm'
         
         # The ':' should be replaced by '_'
         expected_field_name = 'HB2B_CS_CustomValue'
