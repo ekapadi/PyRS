@@ -424,7 +424,7 @@ class _Peaks:
                 peak_tag=peak_tag,
                 peak_profile=peak_profile,
                 background_type=background_function,
-                wavelength=None,  # Will be set by workspace if needed
+                wavelength=np.nan,  # Will be set by workspace if needed
                 projectfilename='',
                 runnumber=0,
                 d_reference=d_reference,
