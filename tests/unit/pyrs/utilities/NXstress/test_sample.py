@@ -159,7 +159,7 @@ class TestSample:
         subruns = ws._sample_logs.subruns.raw_copy()
         N_scan = len(subruns)
         stress_values = np.random.randn(N_scan, 3)
-        
+               
         ws._sample_logs[HidraConstants.STRESS_FIELD] = stress_values
         # Direction is stored as array with same value for each subrun
         ws._sample_logs[HidraConstants.STRESS_FIELD_DIRECTION] = np.array(['z'] * N_scan)
@@ -171,8 +171,8 @@ class TestSample:
         assert sample['stress_field'].dtype == FIELD_DTYPE.FLOAT_DATA.value
         # The direction attribute gets the array value
         direction_val = sample['stress_field'].attrs['direction']
-        # It will be the numpy array, check first element
-        if isinstance(direction_val, np.ndarray):
+        # Using `nexusformat`, for a string attribute it will return a list, check first element
+        if isinstance(direction_val, list):
             assert direction_val[0] == 'z'
         else:
             assert direction_val == 'z'
@@ -194,7 +194,8 @@ class TestSample:
         N_scan = len(subruns)
         wrong_shape_stress = np.random.randn(N_scan + 5, 3)  # Wrong first dimension
         
-        ws._sample_logs[HidraConstants.STRESS_FIELD] = wrong_shape_stress
+        # Set `_data` dict directly, otherwise `SampleLogs.__setitem__` itself will raise an exception.
+        ws._sample_logs._data[HidraConstants.STRESS_FIELD] = wrong_shape_stress
         
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
             _Sample.init_group(ws._sample_logs)
@@ -216,7 +217,10 @@ class TestSample:
         N_scan = len(subruns)
         
         # Create bad coordinate data with wrong length
-        ws._sample_logs['vx'] = np.zeros(N_scan + 5)  # Wrong size
+        # Set `_data` dict directly, otherwise `SampleLogs.__setitem__` itself will raise an exception.
+        ws._sample_logs._data['vx'] = np.zeros(N_scan + 5)  # Wrong size
+        ws._sample_logs._data['vy'] = np.zeros(N_scan + 5)
+        ws._sample_logs._data['vz'] = np.zeros(N_scan + 5)
         
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
             _Sample.init_group(ws._sample_logs)
