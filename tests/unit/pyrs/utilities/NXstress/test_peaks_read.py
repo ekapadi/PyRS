@@ -272,13 +272,13 @@ class TestPeakParametersForRange:
         assert 'PeakCentre' in native_values.dtype.names
         assert 'Sigma' in native_values.dtype.names
         
-        # Verify values match sliced data
-        np.testing.assert_array_almost_equal(native_values['Height'], heights[start:end])
-        np.testing.assert_array_almost_equal(native_values['PeakCentre'], centers[start:end])
+        # Verify values match sliced data (account for float32 precision)
+        np.testing.assert_allclose(native_values['Height'], heights[start:end], rtol=1e-6)
+        np.testing.assert_allclose(native_values['PeakCentre'], centers[start:end], rtol=1e-6)
         
-        # Verify errors match
-        np.testing.assert_array_almost_equal(native_errors['Height'], heights[start:end] * 0.01)
-        np.testing.assert_array_almost_equal(native_errors['PeakCentre'], centers[start:end] * 0.01)
+        # Verify errors match (account for float32 precision)
+        np.testing.assert_allclose(native_errors['Height'], heights[start:end] * 0.01, rtol=1e-6)
+        np.testing.assert_allclose(native_errors['PeakCentre'], centers[start:end] * 0.01, rtol=1e-6)
         
         # CRITICAL: Verify form_factor was inverted to Mixing (not directly visible in native Gaussian)
         # For Gaussian, we converted via effective parameters where Mixing=1-form_factor
@@ -339,9 +339,9 @@ class TestPeakCollectionsFromNexus:
     def test_peakCollectionsFromNexus_roundtrip(self, load_HidraWorkspace, createPeakCollection):
         """Write PeakCollections via NXstress.write(), read back via peakCollectionsFromNexus, verify match"""
         ws = load_HidraWorkspace(
-            file_name="HB2B_1628.h5",
+            file_name="HB2B_1017_w_mask.h5",
             name='test_workspace',
-            load_raw_counts=False,
+            load_raw_counts=True,  # Required to load instrument geometry
             load_reduced_diffraction=True
         )
         
@@ -441,9 +441,9 @@ class TestPeakCollectionsFromNexus:
     def test_peak_tag_roundtrip_multidigit_miller(self, load_HidraWorkspace, createPeakCollection):
         """PeakCollection with peak_tag='Fe120100' (h=12,k=1,l=0) round-trips correctly"""
         ws = load_HidraWorkspace(
-            file_name="HB2B_1628.h5",
+            file_name="HB2B_1017_w_mask.h5",
             name='test_workspace',
-            load_raw_counts=False,
+            load_raw_counts=True,  # Required to load instrument geometry
             load_reduced_diffraction=True
         )
         
