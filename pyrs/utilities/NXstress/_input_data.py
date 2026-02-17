@@ -58,9 +58,12 @@ class _InputData:
         # Initialize `HidraWorkspace` detector_counts from input-data group.
         
         # TODO: append to the `HidraWorkspace`, if any detector_counts data already exists.
-        if len(ws.get_sub_runs()):
-            raise RuntimeError("not implemented: append detector_counts data to workspace")
-        
+        scan_points = data['scan_point'].nxdata
+
+        # `HidraWorkspace` must already contain its `SampleLogs`, and scan-points must match.
+        if ws.get_sub_runs() != scan_points:
+            raise RuntimeError("not implemented: append or change detector_counts data on existing workspace")         
+         
         scan_points = data['scan_point'].nxdata
         scans = data['detector_counts'].nxdata
         for n, p in enumerate(scan_points):

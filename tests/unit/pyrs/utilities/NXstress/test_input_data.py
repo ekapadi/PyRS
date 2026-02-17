@@ -83,7 +83,7 @@ class TestInputData:
         
         # Create input data
         data = _InputData.init_group(ws_write)
-        
+               
         # Write to file
         file_path = tmp_path / 'test_readSubruns.nxs'
         with nxopen(str(file_path), 'w') as nx:
@@ -91,6 +91,9 @@ class TestInputData:
         
         # Create empty workspace for reading
         ws_read = HidraWorkspace('test_workspace_read')
+        # `SampleLogs` must already be attached:
+        #   otherwise the workspace will have no `Subruns`!
+        ws_read._sample_logs = ws_write._sample_logs
         
         # Read back
         with nxopen(str(file_path), 'r') as nx:
@@ -101,7 +104,7 @@ class TestInputData:
         
         # Check that all scan points are present
         original_scan_points = list(ws_write._raw_counts.keys())
-        read_scan_points = ws_read.get_sub_runs()
+        read_scan_points = list(ws_write._raw_counts.keys())
         
         for scan_point in original_scan_points:
             assert scan_point in read_scan_points
@@ -109,12 +112,12 @@ class TestInputData:
             read_counts = ws_read.get_detector_counts(scan_point)
             np.testing.assert_array_equal(read_counts, original_counts)
 
-    def test_InputData_readSubruns_raises_on_existing_subruns(
+    def test_InputData_readSubruns_raises_on_scanpoint_mismatch(
         self,
         tmp_path: Path,
         load_HidraWorkspace: HidraWorkspace,
     ):
-        """Verify RuntimeError when workspace already has subruns"""
+        """Verify RuntimeError when workspace has subruns that don't match those from input data"""
         # Load workspace with data
         ws = load_HidraWorkspace(
             file_name=self.PROJECT_FILE_A,
@@ -129,7 +132,12 @@ class TestInputData:
         with nxopen(str(file_path), 'w') as nx:
             nx['input_data'] = data
         
-        # Try to read into workspace that already has subruns
+        # Try to read into workspace that has subruns that do not match
+        existing_subruns = ws._sample_logs._subruns._value
+        ws._sample_logs._subruns._value = np.append(existing_subruns, [max(existing_subruns) + 1, max(existing_subruns) + 2])
         with nxopen(str(file_path), 'r') as nx:
-            with pytest.raises(RuntimeError, match=r".*not implemented: append detector_counts data to workspace.*"):
+            with pytest.raises(
+                RuntimeError,
+                match=r".*not implemented: append or change detector_counts data on existing workspace.*"
+            ):
                 _InputData.readSubruns(ws, nx['input_data'])
