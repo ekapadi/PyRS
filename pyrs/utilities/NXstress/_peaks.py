@@ -235,3 +235,208 @@ class _Peaks:
         peaks['sz'][curr_len:] = np.full((N_scan,), np.nan)
 
         return peaks
+
+    @classmethod
+    def peakCollectionRanges(cls, peaks) -> list[tuple[tuple[str, int, int, int, str], int, int]]:
+        """Identify contiguous blocks of PeakCollection data in NXreflections group.
+        
+        Each PeakCollection corresponds to a unique 5-tuple (phase_name, h, k, l, mask)
+        with multiple scan-points written as a contiguous block in increasing order.
+        
+        Parameters
+        ----------
+        peaks : NXreflections
+            The peaks group from which to read the flattened index
+            
+        Returns
+        -------
+        list[tuple[tuple[str, int, int, int, str], int, int]]
+            List of (key, start, end) where:
+            - key is (phase_name, h, k, l, mask)
+            - start is the first index (inclusive)
+            - end is the last index (exclusive)
+            
+        Raises
+        ------
+        RuntimeError
+            If scan_point values are not strictly increasing within a block
+        RuntimeError
+            If interleaved blocks are detected for the same sub-index key
+        """
+        # Read index arrays via .nxdata
+        phase_name = peaks['phase_name'].nxdata[:]
+        h = peaks['h'].nxdata[:]
+        k = peaks['k'].nxdata[:]
+        l = peaks['l'].nxdata[:]
+        mask = peaks['mask'].nxdata[:]
+        scan_point = peaks['scan_point'].nxdata[:]
+        
+        if len(phase_name) == 0:
+            return []
+        
+        # Decode bytes to strings if necessary
+        if phase_name.dtype.kind == 'S' or phase_name.dtype.kind == 'O':
+            phase_name = np.array([p.decode('utf-8') if isinstance(p, bytes) else str(p) for p in phase_name])
+        if mask.dtype.kind == 'S' or mask.dtype.kind == 'O':
+            mask = np.array([m.decode('utf-8') if isinstance(m, bytes) else str(m) for m in mask])
+        
+        ranges = []
+        seen_keys = set()
+        
+        # Track current block
+        current_key = (str(phase_name[0]), int(h[0]), int(k[0]), int(l[0]), str(mask[0]))
+        start_idx = 0
+        
+        for i in range(1, len(phase_name)):
+            key = (str(phase_name[i]), int(h[i]), int(k[i]), int(l[i]), str(mask[i]))
+            
+            if key != current_key:
+                # Block boundary - validate and record current block
+                end_idx = i
+                
+                # Check for strictly increasing scan_point within block
+                block_scan_points = scan_point[start_idx:end_idx]
+                if not np.all(block_scan_points[1:] > block_scan_points[:-1]):
+                    raise RuntimeError(
+                        f"scan_point values are not strictly increasing within PeakCollection block "
+                        f"at {current_key}, indices [{start_idx}, {end_idx})"
+                    )
+                
+                # Check for interleaved blocks
+                if current_key in seen_keys:
+                    raise RuntimeError(f"Interleaved blocks detected for sub-index {current_key}")
+                
+                seen_keys.add(current_key)
+                ranges.append((current_key, start_idx, end_idx))
+                
+                # Start new block
+                current_key = key
+                start_idx = i
+        
+        # Handle last block
+        end_idx = len(phase_name)
+        block_scan_points = scan_point[start_idx:end_idx]
+        if not np.all(block_scan_points[1:] > block_scan_points[:-1]):
+            raise RuntimeError(
+                f"scan_point values are not strictly increasing within PeakCollection block "
+                f"at {current_key}, indices [{start_idx}, {end_idx})"
+            )
+        
+        if current_key in seen_keys:
+            raise RuntimeError(f"Interleaved blocks detected for sub-index {current_key}")
+        
+        seen_keys.add(current_key)
+        ranges.append((current_key, start_idx, end_idx))
+        
+        return ranges
+
+    @classmethod
+    def validateNoDuplicatePeaks(cls, peakss: list[PeakCollection]) -> None:
+        """Validate that no duplicate PeakCollections exist in the list.
+        
+        Each PeakCollection must have a unique 5-tuple key (phase_name, h, k, l, mask).
+        
+        Parameters
+        ----------
+        peakss : list[PeakCollection]
+            List of PeakCollection instances to validate
+            
+        Raises
+        ------
+        ValueError
+            If any duplicate keys are found
+        """
+        seen_keys = {}
+        for peaks in peakss:
+            key = cls.PeakIndex.sort_key(peaks)
+            if key in seen_keys:
+                raise ValueError(
+                    f"Duplicate PeakCollection detected in output list at {key} "
+                    f"-- did you forget to initialize the `mask` key?"
+                )
+            seen_keys[key] = peaks
+
+    @classmethod
+    @validate_call_
+    def peakCollectionsFromNexus(cls, peaks, fit) -> list[PeakCollection]:
+        """Read PeakCollections from NXreflections and NXprocess groups.
+        
+        Parameters
+        ----------
+        peaks : NXreflections
+            The peaks (NXreflections) group containing d-spacing and Miller indices
+        fit : NXprocess
+            The FIT (NXprocess) group containing peak_parameters and background_parameters
+            
+        Returns
+        -------
+        list[PeakCollection]
+            List of reconstructed PeakCollection instances
+        """
+        from ._fit import _PeakParameters, _BackgroundParameters
+        from ._definitions import GROUP_NAME
+        
+        # Get the parameter groups
+        pp = fit[GROUP_NAME.PEAK_PARAMETERS]
+        bp = fit[GROUP_NAME.BACKGROUND_PARAMETERS]
+        
+        # Get peak profile and background function from titles
+        from pyrs.core.peak_profile_utility import PeakShape, BackgroundFunction
+        peak_profile = PeakShape.getShape(pp['title'].nxdata)
+        background_function = BackgroundFunction.getFunction(bp['title'].nxdata)
+        
+        # Get ranges for each PeakCollection
+        ranges = cls.peakCollectionRanges(peaks)
+        
+        peak_collections = []
+        for (phase_name, h, k, l, mask), start, end in ranges:
+            # Extract scan points for this range
+            sub_runs_array = peaks['scan_point'].nxdata[start:end]
+            
+            # Get peak parameters
+            native_peak_values, native_peak_errors = _PeakParameters.peakParametersForRange(pp, start, end)
+            
+            # Get background parameters  
+            bg_values, bg_errors = _BackgroundParameters.backgroundParametersForRange(bp, start, end)
+            
+            # Merge background into native peak arrays
+            # The native arrays already have A0, A1, A2 fields that need to be filled
+            native_peak_values['A0'] = bg_values['A0']
+            native_peak_values['A1'] = bg_values['A1']
+            native_peak_values['A2'] = bg_values['A2']
+            native_peak_errors['A0'] = bg_errors['A0']
+            native_peak_errors['A1'] = bg_errors['A1']
+            native_peak_errors['A2'] = bg_errors['A2']
+            
+            param_values = native_peak_values
+            param_errors = native_peak_errors
+            
+            # Reconstruct peak_tag with zero-padded Miller indices
+            N_d = max(len(str(abs(v))) for v in (h, k, l))
+            peak_tag = f"{phase_name}{str(h).zfill(N_d)}{str(k).zfill(N_d)}{str(l).zfill(N_d)}"
+            
+            # Extract d_reference and errors
+            d_reference = peaks['center'].nxdata[start]
+            d_reference_error = peaks['center_errors'].nxdata[start]
+            
+            # Construct PeakCollection with mask keyword
+            pc = PeakCollection(
+                peak_tag=peak_tag,
+                peak_profile=peak_profile,
+                background_type=background_function,
+                wavelength=None,  # Will be set by workspace if needed
+                projectfilename='',
+                runnumber=0,
+                d_reference=d_reference,
+                d_reference_error=d_reference_error,
+                mask=mask
+            )
+            
+            # Set peak fitting values
+            N = len(sub_runs_array)
+            fit_costs = np.full(N, np.nan)
+            pc.set_peak_fitting_values(sub_runs_array, param_values, param_errors, fit_costs)
+            
+            peak_collections.append(pc)
+        
+        return peak_collections

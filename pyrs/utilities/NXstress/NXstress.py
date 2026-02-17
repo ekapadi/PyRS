@@ -166,6 +166,9 @@ class NXstress:
             if k not in logs:
                 raise ValueError(f"NXstress requires log '{k}', which is not present")
         
+        # VERIFY that no duplicate PeakCollections exist
+        _Peaks.validateNoDuplicatePeaks(peakss)
+        
         # VERIFY that any <scan point> or <mask> referenced by any `PeakCollection` is included in the workspace.
         _Fit.validateWorkspaceAndPeaksData(ws, peakss)
                 
