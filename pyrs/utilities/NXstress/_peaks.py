@@ -361,6 +361,9 @@ class _Peaks:
     def peakCollectionsFromNexus(cls, peaks, fit) -> list[PeakCollection]:
         """Read PeakCollections from NXreflections and NXprocess groups.
         
+        Note: This implementation assumes positive Miller indices. Negative indices
+        are not supported by the current _parse_peak_tag implementation.
+        
         Parameters
         ----------
         peaks : NXreflections
