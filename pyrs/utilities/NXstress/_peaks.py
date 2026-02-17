@@ -412,7 +412,9 @@ class _Peaks:
             param_errors = native_peak_errors
             
             # Reconstruct peak_tag with zero-padded Miller indices
-            N_d = max(len(str(abs(v))) for v in (h, k, l))
+            # Use max absolute value to ensure all indices have the same digit count
+            max_val = max(abs(h), abs(k), abs(l))
+            N_d = len(str(max_val))
             peak_tag = f"{phase_name}{str(h).zfill(N_d)}{str(k).zfill(N_d)}{str(l).zfill(N_d)}"
             
             # Extract d_reference and errors

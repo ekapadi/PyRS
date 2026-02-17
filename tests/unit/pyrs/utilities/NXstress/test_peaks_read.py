@@ -531,10 +531,7 @@ class TestValidateNoDuplicatePeaksIntegration:
         with tempfile.TemporaryDirectory() as tmpdir:
             file_path = Path(tmpdir) / "test_duplicate_check.nxs"
             
+            # The validation happens before any writes, so the error is raised early
             with pytest.raises(ValueError, match="Duplicate PeakCollection detected"):
                 with NXstress(file_path, mode='w') as nxs:
                     nxs.write(ws, duplicate_peaks)
-            
-            # Verify file was not created (or is empty)
-            # Since write() is called inside the context manager, the file might exist but be incomplete
-            # The important thing is the ValueError was raised

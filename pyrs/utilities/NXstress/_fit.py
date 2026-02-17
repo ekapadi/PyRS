@@ -219,7 +219,8 @@ class _PeakParameters:
         eff_values['Intensity'] = np.nan
         eff_errors['Intensity'] = np.nan
         
-        # A0, A1, A2 are not in peak_parameters - will be merged from background
+        # A0, A1, A2 will be populated from backgroundParametersForRange
+        # Initialize to 0.0 as they are part of the effective parameter dtype
         eff_values['A0'] = 0.0
         eff_values['A1'] = 0.0
         eff_values['A2'] = 0.0
