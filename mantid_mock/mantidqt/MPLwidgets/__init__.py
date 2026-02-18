@@ -1,6 +1,0 @@
-
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as _FigureCanvasQTAgg
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as _NavigationToolbar2QT
-
-FigureCanvasQTAgg = _FigureCanvasQTAgg
-NavigationToolbar2QT = _NavigationToolbar2QT
