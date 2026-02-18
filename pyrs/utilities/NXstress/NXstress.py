@@ -216,7 +216,8 @@ class NXstress:
                 # Map DEFAULT_TAG to None for workspace dict keys
                 ws_mask_key = None if mask_name == DEFAULT_TAG else mask_name
                 diff_data[ws_mask_key] = data
-                # Note: The write side stores variance in 'diffractogram_errors', not std errors
+                # NOTE: Despite the field name 'diffractogram_errors', the write side
+                # stores variance values (not standard errors) in this field
                 var_data[ws_mask_key] = errors
                 
                 if two_theta_matrix is None:
