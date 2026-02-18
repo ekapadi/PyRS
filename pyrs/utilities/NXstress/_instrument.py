@@ -72,7 +72,7 @@ class _Masks:
         for mask in _masks:
             if mask in names:
                 raise RuntimeError(
-                    f'Usage error: mask "{name}" has already been written:\n'
+                    f'Usage error: mask "{mask}" has already been written:\n'
                     + '  names must be distinct over both detector and solid-angle masks'
                 )
             names.append(mask)
@@ -339,7 +339,7 @@ class _Masks:
         for mask in _masks:
             if mask in names:
                 raise RuntimeError(
-                    f'Usage error: mask "{name}" has already been written:\n'
+                    f'Usage error: mask "{mask}" has already been written:\n'
                     + '  names must be distinct over both detector and solid-angle masks'
                 )
             names.append(mask)
