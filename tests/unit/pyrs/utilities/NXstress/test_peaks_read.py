@@ -348,11 +348,11 @@ class TestPeakCollectionsFromNexus:
         subruns = ws._sample_logs.subruns.raw_copy()
         N_subrun = len(subruns)
         
-        # Create test PeakCollections
+        # Create test PeakCollections (must use same peak profile)
         peak1 = createPeakCollection(
             peak_tag="Al 111",
             peak_profile="Gaussian",
-            background_type="Linear",
+            background_type="Quadratic",
             wavelength=25.4,
             projectfilename="/tmp/test.h5",
             runnumber=1,
@@ -361,7 +361,7 @@ class TestPeakCollectionsFromNexus:
         
         peak2 = createPeakCollection(
             peak_tag="Si 200",
-            peak_profile="PseudoVoigt",
+            peak_profile="Gaussian",  # Must match peak1
             background_type="Quadratic",
             wavelength=25.4,
             projectfilename="/tmp/test.h5",

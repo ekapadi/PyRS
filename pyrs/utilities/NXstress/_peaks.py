@@ -403,13 +403,15 @@ class _Peaks:
             bg_values, bg_errors = _BackgroundParameters.backgroundParametersForRange(bp, start, end)
             
             # Merge background into native peak arrays
-            # The native arrays already have A0, A1, A2 fields that need to be filled
+            # A0 and A1 are always present, A2 only for Quadratic background
             native_peak_values['A0'] = bg_values['A0']
             native_peak_values['A1'] = bg_values['A1']
-            native_peak_values['A2'] = bg_values['A2']
             native_peak_errors['A0'] = bg_errors['A0']
             native_peak_errors['A1'] = bg_errors['A1']
-            native_peak_errors['A2'] = bg_errors['A2']
+            # A2 only exists if background is Quadratic
+            if 'A2' in native_peak_values.dtype.names:
+                native_peak_values['A2'] = bg_values['A2']
+                native_peak_errors['A2'] = bg_errors['A2']
             
             param_values = native_peak_values
             param_errors = native_peak_errors
