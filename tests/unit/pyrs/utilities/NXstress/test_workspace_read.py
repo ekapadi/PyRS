@@ -31,6 +31,31 @@ def roundtrip_nxstress(load_HidraWorkspace, createPeakCollection, tmp_path):
         load_reduced_diffraction=True
     )
     
+    # Set up instrument geometry if not present
+    if ws_original._instrument_setup is None:
+        from pyrs.core.instrument_geometry import DENEXDetectorGeometry, DENEXDetectorShift
+        geometry = DENEXDetectorGeometry(
+            num_rows=512,
+            num_columns=512,
+            pixel_size_x=0.001,  # 1 mm in meters
+            pixel_size_y=0.001,  # 1 mm in meters
+            arm_length=2.0,      # 2 meters
+            calibrated=True
+        )
+        ws_original.set_instrument_geometry(geometry)
+        
+        # Set detector shift for calibrated geometry
+        shift = DENEXDetectorShift(
+            shift_x=0.01,
+            shift_y=0.02,
+            shift_z=0.03,
+            rotation_x=1.0,
+            rotation_y=2.0,
+            rotation_z=3.0,
+            tth_0=0.5
+        )
+        ws_original.set_detector_shift(shift)
+    
     # Create 2 PeakCollection objects
     subruns = ws_original._sample_logs.subruns.raw_copy()
     N_subrun = len(subruns)
@@ -233,6 +258,19 @@ class TestReadErrors:
             load_reduced_diffraction=True
         )
         
+        # Set up instrument geometry if not present
+        if ws._instrument_setup is None:
+            from pyrs.core.instrument_geometry import DENEXDetectorGeometry
+            geometry = DENEXDetectorGeometry(
+                num_rows=512,
+                num_columns=512,
+                pixel_size_x=0.001,
+                pixel_size_y=0.001,
+                arm_length=2.0,
+                calibrated=False
+            )
+            ws.set_instrument_geometry(geometry)
+        
         nxstress_file = tmp_path / "test_nonexistent.nxs"
         with NXstress(nxstress_file, mode='w') as nxs:
             nxs.write(ws, [])
@@ -241,11 +279,34 @@ class TestReadErrors:
             with NXstress(nxstress_file, mode='r') as nxs:
                 nxs.read(entry_number=99)
     
-    def test_read_outside_context_manager(self, tmp_path):
+    def test_read_outside_context_manager(self, load_HidraWorkspace, tmp_path):
         """Call read() outside context manager → RuntimeError"""
-        nxstress_file = tmp_path / "test_outside_context.nxs"
-        nxstress_file.touch()  # Create empty file
+        # First create a valid NXstress file
+        ws = load_HidraWorkspace(
+            file_name="HB2B_1017.h5",
+            name='test_workspace',
+            load_raw_counts=False,
+            load_reduced_diffraction=True
+        )
         
+        # Set up instrument geometry if not present
+        if ws._instrument_setup is None:
+            from pyrs.core.instrument_geometry import DENEXDetectorGeometry
+            geometry = DENEXDetectorGeometry(
+                num_rows=512,
+                num_columns=512,
+                pixel_size_x=0.001,
+                pixel_size_y=0.001,
+                arm_length=2.0,
+                calibrated=False
+            )
+            ws.set_instrument_geometry(geometry)
+        
+        nxstress_file = tmp_path / "test_outside_context.nxs"
+        with NXstress(nxstress_file, mode='w') as nxs:
+            nxs.write(ws, [])
+        
+        # Now try to read without context manager
         nxs = NXstress(nxstress_file, mode='r')
         with pytest.raises(RuntimeError, match="context manager"):
             nxs.read()
