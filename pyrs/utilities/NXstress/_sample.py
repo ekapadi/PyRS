@@ -144,3 +144,76 @@ class _Sample:
                 )    
 
         return sd
+
+    @classmethod
+    @validate_call_
+    def sampleLogsFromNexus(cls, sample) -> SampleLogs:
+        """Read SampleLogs from an NXsample group.
+        
+        Parameters
+        ----------
+        sample : NXsample
+            The NXsample group from the HDF5 file
+        
+        Returns
+        -------
+        SampleLogs
+            Populated SampleLogs object
+        """
+        from pyrs.dataobjects.sample_logs import SubRuns
+        
+        # Read scan_point array
+        scan_point = sample['scan_point'].nxdata
+        
+        # Initialize SampleLogs and set subruns
+        logs = SampleLogs()
+        logs.subruns = SubRuns(scan_point)
+        
+        # Read vx, vy, vz coordinates (stored at top level of NXsample)
+        for coord_name in HidraConstants.SAMPLE_COORDINATE_NAMES:
+            if coord_name in sample:
+                coord_field = sample[coord_name]
+                values = coord_field.nxdata
+                units = coord_field.attrs.get('units', 'mm')
+                logs[coord_name, units] = values
+        
+        # Read extra logs from the 'logs' NXcollection (if present)
+        if 'logs' in sample:
+            logs_collection = sample['logs']
+            for field_name in logs_collection:
+                field = logs_collection[field_name]
+                # Get the original PV-log key from local_name attribute
+                original_key = field.attrs.get('local_name', field_name)
+                units = field.attrs.get('units', '')
+                values = field.nxdata
+                logs[original_key, units] = values
+        
+        # Read optional scalar fields
+        if 'name' in sample:
+            sample_name = sample['name'].nxdata
+            if isinstance(sample_name, (bytes, np.bytes_)):
+                sample_name = sample_name.decode('utf-8')
+            logs[HidraConstants.SAMPLE_NAME, ''] = np.array([sample_name] * len(scan_point))
+        
+        if 'chemical_formula' in sample:
+            chem_formula = sample['chemical_formula'].nxdata
+            if isinstance(chem_formula, (bytes, np.bytes_)):
+                chem_formula = chem_formula.decode('utf-8')
+            logs[HidraConstants.CHEMICAL_FORMULA, ''] = np.array([chem_formula] * len(scan_point))
+        
+        if 'temperature' in sample:
+            temp_field = sample['temperature']
+            temp_values = temp_field.nxdata
+            temp_units = temp_field.attrs.get('units', 'K')
+            logs[HidraConstants.TEMPERATURE, temp_units] = temp_values
+        
+        if 'stress_field' in sample:
+            stress_field = sample['stress_field']
+            stress_values = stress_field.nxdata
+            logs[HidraConstants.STRESS_FIELD, ''] = stress_values
+            # Read direction attribute if present
+            if 'direction' in stress_field.attrs:
+                direction = stress_field.attrs['direction']
+                logs[HidraConstants.STRESS_FIELD_DIRECTION, ''] = np.array([direction] * len(scan_point))
+        
+        return logs

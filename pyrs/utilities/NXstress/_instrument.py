@@ -72,7 +72,7 @@ class _Masks:
         for mask in _masks:
             if mask in names:
                 raise RuntimeError(
-                    f'Usage error: mask "{name}" has already been written:\n'
+                    f'Usage error: mask "{mask}" has already been written:\n'
                     + '  names must be distinct over both detector and solid-angle masks'
                 )
             names.append(mask)
@@ -153,21 +153,23 @@ class _Instrument:
         trans = NXtransformations()
 
         if is_calibrated:
-            tx = float(shift_obj.centershiftx)  # meters
-            ty = float(shift_obj.centershifty)  # meters
-            tz = float(shift_obj.centershiftz)  # meters
+            tx = float(shift.center_shift_x)  # meters
+            ty = float(shift.center_shift_y)  # meters
+            tz = float(shift.center_shift_z)  # meters
             
             # Sample-to-detector distance: 
             # TODO: RE `L2`: At present there seems no way to determine if the `DENEXDetectorGeometry`
             #   already has had the _arm_ shift applied to it -- this issue needs to be fixed!
             distance = float(geom.arm_length)   # meters
             
-            rotx = float(shift_obj.rotationx)   # degrees
-            roty = float(shift_obj.rotationy)   # degrees
-            rotz = float(shift_obj.rotationz)   # degrees
-            tth0 = float(shift_obj.two_theta_0) # degrees
+            rotx = float(shift.rotation_x)   # degrees
+            roty = float(shift.rotation_y)   # degrees
+            rotz = float(shift.rotation_z)   # degrees
+            tth0 = float(shift.two_theta_0) # degrees
         else:
-            tx = ty = tz = distance = 0.0
+            tx = ty = tz = 0.0
+            # Always write the actual arm_length, not 0.0
+            distance = float(geom.arm_length)   # meters
             rotx = roty = rotz = tth0 = 0.0
             
         ex = np.array([1.0, 0.0, 0.0], dtype=np.float64)
@@ -204,15 +206,19 @@ class _Instrument:
         # Optional calibration provenance
         if is_calibrated:
             try:
-                caldict = shift_obj.converttodict()
+                caldict = shift.convert_to_dict()
             except Exception:
                 caldict = {
-                    'centershiftx': tx, 'centershifty': ty, 'centershiftz': tz,
-                    'rotationx': rotx, 'rotationy': roty, 'rotationz': rotz,
+                    'center_shift_x': tx, 'center_shift_y': ty, 'center_shift_z': tz,
+                    'rotation_x': rotx, 'rotation_y': roty, 'rotation_z': rotz,
                 }
             note = NXnote()
             note['type'] = NXfield('text/plain')
-            note['file_name'] = setup._calibration_file
+            # Note: calibration_file may not be available on all shift objects
+            try:
+                note['file_name'] = shift.calibration_file
+            except AttributeError:
+                note['file_name'] = ''
             note['data'] = NXfield(json.dumps(caldict, indent=2))
         else:
             note = None
@@ -230,3 +236,160 @@ class _Instrument:
         inst[GROUP_NAME.MASKS] = _Masks.init_group(ws, detectorMasks=True)
         
         return inst
+
+    @classmethod
+    @validate_call_
+    def instrumentFromNexus(cls, instrument):
+        """Read instrument geometry, detector shift, and wavelength from NXinstrument group.
+        
+        Parameters
+        ----------
+        instrument : NXinstrument
+            The NXinstrument group from the HDF5 file
+        
+        Returns
+        -------
+        tuple
+            (DENEXDetectorGeometry, DENEXDetectorShift | None, wavelength | None)
+        """
+        from pyrs.core.instrument_geometry import DENEXDetectorGeometry, DENEXDetectorShift
+        
+        # Read detector geometry from detector/detector_bank
+        detector = instrument[GROUP_NAME.DETECTOR]
+        detector_bank = detector['detector_bank']
+        
+        # data_size: (nrows, ncols)
+        data_size = detector_bank['data_size'].nxdata
+        nrows, ncols = int(data_size[0]), int(data_size[1])
+        
+        # Pixel sizes in meters
+        px_m = float(detector_bank['fast_pixel_direction'].nxdata)
+        py_m = float(detector_bank['slow_pixel_direction'].nxdata)
+        
+        # Read transformations
+        trans = detector['transformations']
+        calibrated = bool(trans.attrs.get('calibrated', False))
+        
+        # Read distance (arm_length)
+        distance = float(trans['distance'].nxdata) if 'distance' in trans else 0.0
+        arm_length = distance
+        
+        # Create geometry object
+        geometry = DENEXDetectorGeometry(nrows, ncols, px_m, py_m, arm_length, calibrated)
+        
+        # If calibrated, read shift parameters
+        shift = None
+        if calibrated:
+            tx = float(trans['translation_x'].nxdata) if 'translation_x' in trans else 0.0
+            ty = float(trans['translation_y'].nxdata) if 'translation_y' in trans else 0.0
+            tz = float(trans['translation_z'].nxdata) if 'translation_z' in trans else 0.0
+            rotx = float(trans['rotation_x'].nxdata) if 'rotation_x' in trans else 0.0
+            roty = float(trans['rotation_y'].nxdata) if 'rotation_y' in trans else 0.0
+            rotz = float(trans['rotation_z'].nxdata) if 'rotation_z' in trans else 0.0
+            tth0 = float(trans['two_theta_zero'].nxdata) if 'two_theta_zero' in trans else 0.0
+            
+            shift = DENEXDetectorShift(tx, ty, tz, rotx, roty, rotz, tth0)
+        
+        # Read wavelength from monochromator
+        wavelength = None
+        if GROUP_NAME.MONOCHROMATOR in instrument:
+            mono = instrument[GROUP_NAME.MONOCHROMATOR]
+            if 'wavelength' in mono:
+                wl_value = float(mono['wavelength'].nxdata)
+                # Treat NaN as None
+                if not np.isnan(wl_value):
+                    wavelength = wl_value
+        
+        return geometry, shift, wavelength
+
+
+class _Masks:
+    # `INSTRUMENT/masks` (NXcollection) is allowed by the `NXstress` schema,
+    #    but is not specified by the schema.
+
+    # Masks are stored by name.
+    # Mask names must be distinct over both <detector masks> and <solid angle masks>:
+    #   this allows us to successfully use the mask name as a suffix tag on other groups,
+    #   without requiring the same sub-categorization for those groups.
+
+    @classmethod
+    @validate_call_
+    def _init(cls) -> NXcollection:
+        # initialize the `masks` (NXcollection) group
+        masks = NXcollection()
+        masks['names'] = NXfield(np.empty((0,), dtype=FIELD_DTYPE.STRING.value),
+                                 maxshape=(None,), chunks=CHUNK_SHAPE(1))
+        masks['detector'] = NXcollection()
+        masks['solid_angle'] = NXcollection()
+
+        return masks
+
+    @classmethod
+    @validate_call_
+    def init_group(cls, ws: HidraWorkspace, detectorMasks: bool = True, masks: NXcollection = None):
+        # Write or append masks to the `NXcollection`
+
+        # Allow append: both 'detector' and 'solid_angle' masks may exist,
+        #   and if so, will need to be added in separate steps.
+        masks = masks if masks is not None else cls._init()
+        names = masks['names'].nxvalue
+        appending = len(names) > 0
+        
+        # Unify the `_mask_dict` to a standard Python `dict`.
+        _masks = ws._mask_dict.copy()
+        if not appending and ws._default_mask is not None:
+            # There's only one default mask.
+            _masks[DEFAULT_TAG] = ws._default_mask
+        
+        dest = masks['detector'] if detectorMasks else masks['solid_angle']
+        for mask in _masks:
+            if mask in names:
+                raise RuntimeError(
+                    f'Usage error: mask "{mask}" has already been written:\n'
+                    + '  names must be distinct over both detector and solid-angle masks'
+                )
+            names.append(mask)
+            dest[mask] = NXfield(_masks[mask], units='')
+        masks['names'].resize((len(names),))
+        masks['names'] = names
+        
+        return masks
+
+    @classmethod
+    @validate_call_
+    def masksFromNexus(cls, masks):
+        """Read masks from NXcollection group.
+        
+        Parameters
+        ----------
+        masks : NXcollection
+            The masks NXcollection group from the HDF5 file
+        
+        Returns
+        -------
+        tuple
+            (default_mask_or_None, {mask_name: mask_array})
+        """
+        # Read mask names
+        mask_names = masks['names'].nxdata
+        if isinstance(mask_names, np.ndarray):
+            mask_names = [name.decode('utf-8') if isinstance(name, bytes) else name for name in mask_names]
+        else:
+            mask_names = [mask_names.decode('utf-8') if isinstance(mask_names, bytes) else mask_names]
+        
+        default_mask = None
+        mask_dict = {}
+        
+        # Check both detector and solid_angle collections
+        for collection_name in ['detector', 'solid_angle']:
+            if collection_name in masks:
+                collection = masks[collection_name]
+                for name in mask_names:
+                    if name in collection:
+                        mask_array = collection[name].nxdata
+                        if name == DEFAULT_TAG:
+                            default_mask = mask_array
+                        else:
+                            mask_dict[name] = mask_array
+        
+        return default_mask, mask_dict

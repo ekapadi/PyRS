@@ -6,7 +6,7 @@ Primary service class for NeXus NXstress-compatible I/O.
 from datetime import datetime
 import h5py
 from nexusformat.nexus import (
-    NXentry, NXfield, NXFile, nxopen, NXroot
+    NXdata, NXentry, NXfield, NXFile, nxopen, NXroot
 )
 import numpy as np
 from pathlib import Path
@@ -25,9 +25,9 @@ from ._definitions import (
     REQUIRED_LOGS
 )    
 from ._input_data import _InputData
-from ._instrument import _Instrument
+from ._instrument import _Instrument, _Masks
 from ._sample import _Sample
-from ._fit import _Fit
+from ._fit import _Fit, _Diffractogram
 from ._peaks import _Peaks
 
 
@@ -152,6 +152,97 @@ class NXstress:
         entry = self.init_group(ws, peakss)
         self._root[entry_name] = entry
 
+    def read(self, entry_number: int = 1):
+        """Read back a (HidraWorkspace, list[PeakCollection]) from the NXstress file.
+        
+        Parameters
+        ----------
+        entry_number : int
+            Which NXentry to read (1-based). Default is 1.
+        
+        Returns
+        -------
+        tuple
+            (HidraWorkspace, list[PeakCollection])
+        """
+        # Verify context manager is active
+        if self._root is None:
+            raise RuntimeError("Usage error: only usage as context manager is supported!")
+        
+        # Resolve entry name
+        entry_name = group_naming_scheme(GROUP_NAME.ENTRY, entry_number)
+        
+        # Access entry
+        entry = self._root[entry_name]
+        
+        # Read sample logs
+        sample_logs = _Sample.sampleLogsFromNexus(entry[GROUP_NAME.SAMPLE_DESCRIPTION])
+        
+        # Read instrument
+        geometry, shift, wavelength = _Instrument.instrumentFromNexus(entry[GROUP_NAME.INSTRUMENT])
+        
+        # Read masks
+        default_mask, mask_dict = _Masks.masksFromNexus(entry[GROUP_NAME.INSTRUMENT][GROUP_NAME.MASKS])
+        
+        # Build workspace
+        ws = HidraWorkspace()
+        ws.set_sample_logs_from_object(sample_logs)
+        if wavelength is not None:
+            ws.set_wavelength_from_value(wavelength)
+        ws.set_instrument_geometry(geometry)
+        if shift is not None:
+            ws.set_detector_shift(shift)
+        ws.set_masks_from_dict(default_mask, mask_dict)
+        
+        # Read raw counts if present
+        if GROUP_NAME.INPUT_DATA in entry:
+            _InputData.readSubruns(ws, entry[GROUP_NAME.INPUT_DATA])
+        
+        # Read reduced diffraction data from FIT group's DIFFRACTOGRAM subgroups
+        fit_group_name = group_naming_scheme(GROUP_NAME.FIT, 1)
+        if fit_group_name in entry:
+            fit_group = entry[fit_group_name]
+            diff_data = {}
+            var_data = {}
+            two_theta_matrix = None
+            
+            for child_name in fit_group:
+                child = fit_group[child_name]
+                if not isinstance(child, NXdata):
+                    continue
+                mask_name = _parse_diffractogram_mask_name(child_name)
+                scan_pts, two_theta, data, errors = _Diffractogram.diffractogramFromNexus(child)
+                
+                # Map DEFAULT_TAG to None for workspace dict keys for intensity data
+                ws_mask_key = None if mask_name == DEFAULT_TAG else mask_name
+                diff_data[ws_mask_key] = data
+                
+                # NOTE: Despite the field name 'diffractogram_errors', the write side
+                # stores variance values (not standard errors) in this field
+                # 
+                # IMPORTANT: Variance keys differ from intensity keys in the workspace:
+                # - Intensity: default mask uses None, custom masks use mask_name
+                # - Variance: default mask uses 'main_var', custom masks use '{mask_name}_var'
+                # This asymmetry is a workspace convention (see _fit.py line 391)
+                var_mask_key = 'main_var' if mask_name == DEFAULT_TAG else f"{mask_name}_var"
+                var_data[var_mask_key] = errors
+                
+                if two_theta_matrix is None:
+                    two_theta_matrix = two_theta
+            
+            if two_theta_matrix is not None:
+                ws.set_reduced_diffraction_data_set(two_theta_matrix, diff_data, var_data)
+        
+        # Read peak collections
+        peak_collections = []
+        if GROUP_NAME.PEAKS in entry:
+            peaks_group = entry[GROUP_NAME.PEAKS]
+            if fit_group_name in entry:
+                fit_group = entry[fit_group_name]
+                peak_collections = _Peaks.peakCollectionsFromNexus(peaks_group, fit_group)
+        
+        return ws, peak_collections
+
     ############################################
     # ALL non-context-manager related methods ##
     #   must be `classmethod`.                ##
@@ -240,3 +331,28 @@ class NXstress:
         entry[GROUP_NAME.PEAKS] = _Peaks.init_group(peakss, ws._sample_logs)
         
         return entry
+
+
+def _parse_diffractogram_mask_name(group_name: str) -> str:
+    """Reverse of group_naming_scheme for DIFFRACTOGRAM groups.
+    
+    'DIFFRACTOGRAM' -> DEFAULT_TAG
+    'DIFFRACTOGRAM_mask_A' -> 'mask_A'
+    
+    Parameters
+    ----------
+    group_name : str
+        The group name to parse
+    
+    Returns
+    -------
+    str
+        The mask name (DEFAULT_TAG for default)
+    """
+    prefix = str(GROUP_NAME.DIFFRACTOGRAM)
+    if group_name == prefix:
+        return DEFAULT_TAG
+    elif group_name.startswith(prefix + '_'):
+        return group_name[len(prefix) + 1:]
+    else:
+        raise RuntimeError(f"Cannot parse diffractogram mask name from '{group_name}'")
