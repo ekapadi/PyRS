@@ -360,7 +360,10 @@ class PeakCollection:
                 raise RuntimeError(msg)
         converted = np.zeros(parameters.size, get_parameter_dtype(self._peak_profile, self._background_type))
         for name in converted.dtype.names:
-            converted[name] = parameters[name]
+            # Only copy fields that exist in the input parameters
+            if name in supplied_names:
+                converted[name] = parameters[name]
+            # Fields not in input (e.g., A2 for Linear background) remain zero
 
         return converted
 

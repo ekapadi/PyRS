@@ -165,6 +165,74 @@ class _PeakParameters:
         pp['form_factor_errors'][cur_rows:] = params_error['Mixing'].astype(np.float64)
         
         return pp
+
+    @classmethod
+    def peakParametersForRange(cls, pp, start: int, end: int) -> tuple:
+        """Extract peak parameters for a specific range and convert to native parameters.
+        
+        Reads effective parameters from the NXparameters group, slices to the specified range,
+        and converts to native parameters using the appropriate converter.
+        
+        CRITICAL: form_factor is stored as (1 - Mixing), so we invert: Mixing = 1 - form_factor
+        
+        Parameters
+        ----------
+        pp : NXparameters
+            Peak parameters group
+        start : int
+            Starting index (inclusive)
+        end : int
+            Ending index (exclusive)
+            
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            (native_values, native_errors) structured arrays
+        """
+        from pyrs.core.peak_profile_utility import (
+            PeakShape, get_parameter_dtype, get_effective_parameters_converter
+        )
+        
+        # Get peak profile type
+        peak_shape = PeakShape.getShape(pp['title'].nxdata)
+        
+        # Build effective parameter structured arrays
+        N = end - start
+        eff_values = np.zeros(N, dtype=get_parameter_dtype(effective=True))
+        eff_errors = np.zeros(N, dtype=get_parameter_dtype(effective=True))
+        
+        # Slice datasets and populate effective arrays
+        eff_values['Center'] = pp['center'].nxdata[start:end]
+        eff_values['Height'] = pp['height'].nxdata[start:end]
+        eff_values['FWHM'] = pp['fwhm'].nxdata[start:end]
+        
+        # CRITICAL: Invert form_factor to Mixing
+        eff_values['Mixing'] = 1.0 - pp['form_factor'].nxdata[start:end]
+        
+        eff_errors['Center'] = pp['center_errors'].nxdata[start:end]
+        eff_errors['Height'] = pp['height_errors'].nxdata[start:end]
+        eff_errors['FWHM'] = pp['fwhm_errors'].nxdata[start:end]
+        eff_errors['Mixing'] = pp['form_factor_errors'].nxdata[start:end]
+        
+        # Intensity is not stored separately (derived from Height/FWHM/Mixing)
+        # Set to NaN - will be recalculated if needed
+        eff_values['Intensity'] = np.nan
+        eff_errors['Intensity'] = np.nan
+        
+        # A0, A1, A2 will be populated from backgroundParametersForRange
+        # Initialize to 0.0 as they are part of the effective parameter dtype
+        eff_values['A0'] = 0.0
+        eff_values['A1'] = 0.0
+        eff_values['A2'] = 0.0
+        eff_errors['A0'] = 0.0
+        eff_errors['A1'] = 0.0
+        eff_errors['A2'] = 0.0
+        
+        # Convert to native parameters
+        converter = get_effective_parameters_converter(peak_shape)
+        native_values, native_errors = converter.calculate_native_parameters(eff_values, eff_errors)
+        
+        return native_values, native_errors
         
 class _BackgroundParameters:
 
@@ -265,6 +333,44 @@ class _BackgroundParameters:
         bp['A2_errors'][cur_rows:,] = params_error['A2'].astype(np.float64) 
         
         return bp
+
+    @classmethod
+    def backgroundParametersForRange(cls, bp, start: int, end: int) -> tuple:
+        """Extract background parameters for a specific range.
+        
+        Reads background coefficients from the NXparameters group and slices to the specified range.
+        
+        Parameters
+        ----------
+        bp : NXparameters
+            Background parameters group
+        start : int
+            Starting index (inclusive)
+        end : int
+            Ending index (exclusive)
+            
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            (eff_bg_values, eff_bg_errors) structured arrays with A0, A1, A2 fields
+        """
+        from pyrs.core.peak_profile_utility import get_parameter_dtype
+        
+        # Build effective background parameter arrays
+        N = end - start
+        eff_bg_values = np.zeros(N, dtype=get_parameter_dtype(effective=True))
+        eff_bg_errors = np.zeros(N, dtype=get_parameter_dtype(effective=True))
+        
+        # Slice datasets and populate arrays
+        eff_bg_values['A0'] = bp['A0'].nxdata[start:end]
+        eff_bg_values['A1'] = bp['A1'].nxdata[start:end]
+        eff_bg_values['A2'] = bp['A2'].nxdata[start:end]
+        
+        eff_bg_errors['A0'] = bp['A0_errors'].nxdata[start:end]
+        eff_bg_errors['A1'] = bp['A1_errors'].nxdata[start:end]
+        eff_bg_errors['A2'] = bp['A2_errors'].nxdata[start:end]
+        
+        return eff_bg_values, eff_bg_errors
                
 class _Diffractogram:
 
