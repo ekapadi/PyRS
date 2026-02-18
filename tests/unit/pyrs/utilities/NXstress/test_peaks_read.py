@@ -404,8 +404,12 @@ class TestPeakCollectionsFromNexus:
             orig = original_by_key[key]
             recon = reconstructed_by_key[key]
             
-            # Verify peak_tag
-            assert orig.peak_tag == recon.peak_tag
+            # Verify peak_tag parses to same (phase, h, k, l)
+            # Exact string match is not required (spaces are not significant)
+            orig_phase, orig_hkl = _Peaks._parse_peak_tag(orig.peak_tag)
+            recon_phase, recon_hkl = _Peaks._parse_peak_tag(recon.peak_tag)
+            assert orig_phase == recon_phase
+            assert orig_hkl == recon_hkl
             
             # Verify mask
             assert orig.mask == recon.mask
