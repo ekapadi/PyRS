@@ -453,6 +453,32 @@ class _Diffractogram:
         
         return dg
         
+    @classmethod
+    def diffractogramFromNexus(cls, dg):
+        """Read diffractogram data from NXdata group.
+        
+        Parameters
+        ----------
+        dg : NXdata
+            The DIFFRACTOGRAM NXdata group from the HDF5 file
+        
+        Returns
+        -------
+        tuple
+            (scan_points, two_theta, diffractogram, diffractogram_errors)
+        """
+        # Read scan_point array
+        scan_points = dg['scan_point'].nxdata
+        
+        # Read two_theta array (using the correct field name from GROUP_NAME)
+        two_theta = dg[GROUP_NAME.DGRAM_TWO_THETA_NAME].nxdata
+        
+        # Read diffractogram and diffractogram_errors
+        diffractogram = dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM].nxdata
+        diffractogram_errors = dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM_ERRORS].nxdata
+        
+        return scan_points, two_theta, diffractogram, diffractogram_errors
+        
 
 class _Fit:
     ########################################
