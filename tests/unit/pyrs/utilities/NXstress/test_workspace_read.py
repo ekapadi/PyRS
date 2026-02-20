@@ -56,6 +56,10 @@ def roundtrip_nxstress(load_HidraWorkspace, createPeakCollection, tmp_path):
         )
         ws_original.set_detector_shift(shift)
     
+    # Set wavelength if not present (test data may lack monochromator settings)
+    if ws_original.get_wavelength(calibrated=True, throw_if_not_set=False) is None:
+        ws_original.set_wavelength(1.486, calibrated=True)
+    
     # Create 2 PeakCollection objects
     subruns = ws_original._sample_logs.subruns.raw_copy()
     N_subrun = len(subruns)

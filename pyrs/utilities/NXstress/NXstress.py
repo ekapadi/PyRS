@@ -213,12 +213,15 @@ class NXstress:
                 mask_name = _parse_diffractogram_mask_name(child_name)
                 scan_pts, two_theta, data, errors = _Diffractogram.diffractogramFromNexus(child)
                 
-                # Map DEFAULT_TAG to None for workspace dict keys
+                # Map DEFAULT_TAG to None for workspace dict keys for intensity data
                 ws_mask_key = None if mask_name == DEFAULT_TAG else mask_name
                 diff_data[ws_mask_key] = data
+                
                 # NOTE: Despite the field name 'diffractogram_errors', the write side
                 # stores variance values (not standard errors) in this field
-                var_data[ws_mask_key] = errors
+                # For variance, workspace uses 'main_var' for default mask, not None
+                var_mask_key = 'main_var' if mask_name == DEFAULT_TAG else f"{mask_name}_var"
+                var_data[var_mask_key] = errors
                 
                 if two_theta_matrix is None:
                     two_theta_matrix = two_theta
