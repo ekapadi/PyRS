@@ -265,8 +265,11 @@ class _Instrument:
         calibrated = bool(trans.attrs.get('calibrated', False))
         
         # Read distance (arm_length)
+        # Note: The write side has a bug where it writes 0.0 when not calibrated,
+        # but DENEXDetectorGeometry requires arm_length >= 1e-5
         distance = float(trans['distance'].nxdata) if 'distance' in trans else 0.0
-        arm_length = distance
+        # Use a sensible default if distance is invalid (too small or zero)
+        arm_length = distance if distance >= 1e-5 else 2.0  # 2 meters default
         
         # Create geometry object
         geometry = DENEXDetectorGeometry(nrows, ncols, px_m, py_m, arm_length, calibrated)
