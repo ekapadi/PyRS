@@ -153,21 +153,23 @@ class _Instrument:
         trans = NXtransformations()
 
         if is_calibrated:
-            tx = float(shift_obj.centershiftx)  # meters
-            ty = float(shift_obj.centershifty)  # meters
-            tz = float(shift_obj.centershiftz)  # meters
+            tx = float(shift.center_shift_x)  # meters
+            ty = float(shift.center_shift_y)  # meters
+            tz = float(shift.center_shift_z)  # meters
             
             # Sample-to-detector distance: 
             # TODO: RE `L2`: At present there seems no way to determine if the `DENEXDetectorGeometry`
             #   already has had the _arm_ shift applied to it -- this issue needs to be fixed!
             distance = float(geom.arm_length)   # meters
             
-            rotx = float(shift_obj.rotationx)   # degrees
-            roty = float(shift_obj.rotationy)   # degrees
-            rotz = float(shift_obj.rotationz)   # degrees
-            tth0 = float(shift_obj.two_theta_0) # degrees
+            rotx = float(shift.rotation_x)   # degrees
+            roty = float(shift.rotation_y)   # degrees
+            rotz = float(shift.rotation_z)   # degrees
+            tth0 = float(shift.two_theta_0) # degrees
         else:
-            tx = ty = tz = distance = 0.0
+            tx = ty = tz = 0.0
+            # Always write the actual arm_length, not 0.0
+            distance = float(geom.arm_length)   # meters
             rotx = roty = rotz = tth0 = 0.0
             
         ex = np.array([1.0, 0.0, 0.0], dtype=np.float64)
@@ -204,15 +206,19 @@ class _Instrument:
         # Optional calibration provenance
         if is_calibrated:
             try:
-                caldict = shift_obj.converttodict()
+                caldict = shift.convert_to_dict()
             except Exception:
                 caldict = {
-                    'centershiftx': tx, 'centershifty': ty, 'centershiftz': tz,
-                    'rotationx': rotx, 'rotationy': roty, 'rotationz': rotz,
+                    'center_shift_x': tx, 'center_shift_y': ty, 'center_shift_z': tz,
+                    'rotation_x': rotx, 'rotation_y': roty, 'rotation_z': rotz,
                 }
             note = NXnote()
             note['type'] = NXfield('text/plain')
-            note['file_name'] = setup._calibration_file
+            # Note: calibration_file may not be available on all shift objects
+            try:
+                note['file_name'] = shift.calibration_file
+            except AttributeError:
+                note['file_name'] = ''
             note['data'] = NXfield(json.dumps(caldict, indent=2))
         else:
             note = None
@@ -265,11 +271,8 @@ class _Instrument:
         calibrated = bool(trans.attrs.get('calibrated', False))
         
         # Read distance (arm_length)
-        # Note: The write side has a bug where it writes 0.0 when not calibrated,
-        # but DENEXDetectorGeometry requires arm_length >= 1e-5
         distance = float(trans['distance'].nxdata) if 'distance' in trans else 0.0
-        # Use a sensible default if distance is invalid (too small or zero)
-        arm_length = distance if distance >= 1e-5 else 2.0  # 2 meters default
+        arm_length = distance
         
         # Create geometry object
         geometry = DENEXDetectorGeometry(nrows, ncols, px_m, py_m, arm_length, calibrated)
