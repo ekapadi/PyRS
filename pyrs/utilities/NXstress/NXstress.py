@@ -219,7 +219,11 @@ class NXstress:
                 
                 # NOTE: Despite the field name 'diffractogram_errors', the write side
                 # stores variance values (not standard errors) in this field
-                # For variance, workspace uses 'main_var' for default mask, not None
+                # 
+                # IMPORTANT: Variance keys differ from intensity keys in the workspace:
+                # - Intensity: default mask uses None, custom masks use mask_name
+                # - Variance: default mask uses 'main_var', custom masks use '{mask_name}_var'
+                # This asymmetry is a workspace convention (see _fit.py line 391)
                 var_mask_key = 'main_var' if mask_name == DEFAULT_TAG else f"{mask_name}_var"
                 var_data[var_mask_key] = errors
                 
