@@ -188,7 +188,8 @@ class NXstress:
         # Build workspace
         ws = HidraWorkspace()
         ws.set_sample_logs_from_object(sample_logs)
-        ws.set_wavelength(wavelength, is_calibrated, False)
+        # `set_wavelength` expects `dict[int, float]`
+        ws.set_wavelength({subrun_index: wavelength[n] for n, subrun_index in enumerate(ws.get_sub_runs())} , is_calibrated)
         ws.set_instrument_geometry(geometry)
         if shift is not None:
             ws.set_detector_shift(shift)

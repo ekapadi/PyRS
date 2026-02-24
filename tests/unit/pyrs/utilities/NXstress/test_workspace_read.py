@@ -17,7 +17,7 @@ from pyrs.utilities.NXstress.NXstress import NXstress
 from pyrs.utilities.NXstress._sample import _Sample
 from pyrs.utilities.NXstress._instrument import _Instrument, _Masks
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG, GROUP_NAME, FIELD_DTYPE
-
+from pyrs.utilities.NXstress._peaks import _Peaks
 
 @pytest.fixture
 def roundtrip_nxstress(load_HidraWorkspace, createPeakCollection, tmp_path):
@@ -129,12 +129,18 @@ class TestWorkspaceRoundtrip:
         """Verify wavelength round-trips correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
         
+        # here `get_wavelength` returns `float | dict[int, float]`
         wl_original = ws_original.get_wavelength(calibrated=True, throw_if_not_set=False)
         wl_readback = ws_readback.get_wavelength(calibrated=True, throw_if_not_set=False)
         
         if wl_original is not None:
+            # `HidraWorkspace` *may* hold its wavelength as a `float`,
+            #    so here we just normalize it over all scan-points.
+            #      Readback from NeXus will always return a non-scalar.
+            if not isinstance(wl_original, dict):
+                wl_original = {n: wl_original for n in ws_original.get_sub_runs()}
             assert wl_readback is not None
-            np.testing.assert_allclose(wl_original, wl_readback, rtol=1e-6)
+            np.testing.assert_allclose(list(wl_original.values()), list(wl_readback.values()), rtol=1e-6)
     
     def test_workspace_roundtrip_instrument(self, roundtrip_nxstress):
         """Verify instrument geometry and detector shift round-trip"""
@@ -241,7 +247,9 @@ class TestWorkspaceRoundtrip:
         
         # Verify each peak collection
         for peak_orig, peak_read in zip(peaks_original, peaks_readback):
-            assert peak_orig.peak_tag == peak_read.peak_tag
+            # we don't care about small changes to the format (e.g. omitted spaces), we only care
+            #   that they parse to the same `(<phase>, h, k, l)` tuples
+            assert _Peaks._parse_peak_tag(peak_orig.peak_tag) == _Peaks._parse_peak_tag(peak_read.peak_tag)
             assert peak_orig.peak_profile == peak_read.peak_profile
             assert peak_orig.background_type == peak_read.background_type
             

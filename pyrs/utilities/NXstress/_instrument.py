@@ -108,7 +108,7 @@ class _Instrument:
         """
         inst = cls._init('HB2B', 'HB2B')
 
-        N_scan_point = len(ws.get_subruns())
+        N_scan_point = len(ws.get_sub_runs())
         
         # Detector base geometry and transformations
         geom: DENEXDetectorGeometry = ws.get_instrument_setup()
@@ -126,7 +126,7 @@ class _Instrument:
             wavelength = list((np.nan,) * N_scan_point)
         else:
             raise RuntimeError(f"unable to parse wavelength from `HidraWorkspace.get_wavelength`: {wavelength}")
-        if len(wavelength) != N_scanpoint:
+        if len(wavelength) != N_scan_point:
             raise ValueError(f"Workspace must have either a single wavelength value,\n  or one wavelength value for each of {N_scanpoint} subruns.")  
 
         # Construct required NeXus subgroups:
@@ -263,7 +263,7 @@ class _Instrument:
         Returns
         -------
         tuple
-            (DENEXDetectorGeometry, DENEXDetectorShift | None, wavelength | None)
+            (DENEXDetectorGeometry, DENEXDetectorShift | None, wavelength: np.ndarray)
         """
         from pyrs.core.instrument_geometry import DENEXDetectorGeometry, DENEXDetectorShift
         
@@ -303,7 +303,9 @@ class _Instrument:
             
             shift = DENEXDetectorShift(tx, ty, tz, rotx, roty, rotz, tth0)
         
-        # Read wavelength from monochromator
+        # Read wavelength from monochromator:
+        #   we don't have access to the scan-point indices at this level,
+        #     so we just return an `np.ndarray` in scan-point order.
         wavelength = None
         if GROUP_NAME.MONOCHROMATOR in instrument:
             mono = instrument[GROUP_NAME.MONOCHROMATOR]
