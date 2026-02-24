@@ -107,14 +107,27 @@ class _Instrument:
           - If present, setup._geometryshift is DENEXDetectorShift.
         """
         inst = cls._init('HB2B', 'HB2B')
-        
-        # Wavelength (use the 'universal' value, if available)
-        wavelength = ws.get_wavelength(True, False)
 
+        N_scan_point = len(ws.get_subruns())
+        
         # Detector base geometry and transformations
         geom: DENEXDetectorGeometry = ws.get_instrument_setup()
         shift: DENEXDetectorGeometryShift | None = ws.get_detector_shift()
         is_calibrated = shift is not None
+        
+        # Wavelength (`get_wavelength` returns either a single `float` or a `dict` keyed by subrun)
+        wavelength = ws.get_wavelength(is_calibrated, False)
+        if isinstance(wavelength, dict):
+            # `dict` order should be the same as the sorted subruns order
+            wavelength = [l for l in wavelength.values()]
+        elif isinstance(wavelength, float):
+            wavelength = list((wavelength,) * N_scan_point)
+        elif wavelength is None:
+            wavelength = list((np.nan,) * N_scan_point)
+        else:
+            raise RuntimeError(f"unable to parse wavelength from `HidraWorkspace.get_wavelength`: {wavelength}")
+        if len(wavelength) != N_scanpoint:
+            raise ValueError(f"Workspace must have either a single wavelength value,\n  or one wavelength value for each of {N_scanpoint} subruns.")  
 
         # Construct required NeXus subgroups:
         #   NXsource, NXmonochromator, NXdetector, NXtransformations.
@@ -123,8 +136,8 @@ class _Instrument:
         src['probe'] = NXfield('neutron')
 
         mono = NXmonochromator()
-        # TODO: should this be `wavelength` by <sub run>?
-        mono['wavelength'] = NXfield(wavelength if wavelength is not None else float('nan'), units='angstrom')
+        # `wavelength` by <sub run>?
+        mono['wavelength'] = NXfield(wavelength, units='angstrom', calibrated=is_calibrated)
 
         det = NXdetector()
         det['type'] = 'He_3 PSD'
@@ -295,10 +308,7 @@ class _Instrument:
         if GROUP_NAME.MONOCHROMATOR in instrument:
             mono = instrument[GROUP_NAME.MONOCHROMATOR]
             if 'wavelength' in mono:
-                wl_value = float(mono['wavelength'].nxdata)
-                # Treat NaN as None
-                if not np.isnan(wl_value):
-                    wavelength = wl_value
+                wavelength = mono['wavelength'].nxdata
         
         return geometry, shift, wavelength
 

@@ -180,6 +180,7 @@ class NXstress:
         
         # Read instrument
         geometry, shift, wavelength = _Instrument.instrumentFromNexus(entry[GROUP_NAME.INSTRUMENT])
+        is_calibrated = shift is not None
         
         # Read masks
         default_mask, mask_dict = _Masks.masksFromNexus(entry[GROUP_NAME.INSTRUMENT][GROUP_NAME.MASKS])
@@ -187,8 +188,7 @@ class NXstress:
         # Build workspace
         ws = HidraWorkspace()
         ws.set_sample_logs_from_object(sample_logs)
-        if wavelength is not None:
-            ws.set_wavelength_from_value(wavelength)
+        ws.set_wavelength(wavelength, is_calibrated, False)
         ws.set_instrument_geometry(geometry)
         if shift is not None:
             ws.set_detector_shift(shift)

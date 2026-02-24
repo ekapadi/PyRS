@@ -420,9 +420,9 @@ class HidraWorkspace:
         calibrated : bool
             whether the wave length is calibrated or raw
         throw_if_not_set : bool
-            throw an exception if wave length is not set to workspace
+            throw an exception if wave length is not set on the workspace
         sub_run : None or int
-            sub run number for the wave length associated with
+            sub run number for the wave length
 
         Returns
         -------
