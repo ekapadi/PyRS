@@ -381,19 +381,22 @@ class _Diffractogram:
     @classmethod
     def _get_diffraction_data(cls, ws: HidraWorkspace, mask_name: str) -> Tuple[np.ndarray, np.ndarray]:
         # Workaround for PyRS codebase use of `None` as the default key.
-        data_key, errors_key = cls._diffraction_data_keys(mask_name)
-        return ws._diff_data_set[data_key], ws._var_data_set[errors_key]
+        data_key = cls._diffraction_data_key(mask_name)
+        if data_key not in ws._diff_data_set:
+            raise RuntimeError(
+                f"NXstress._fit._Diffractogram: usage error: diffraction data '{data_key}' is not present in the workspace"
+            )
+        if data_key not in ws._var_data_set:
+            raise RuntimeError(
+                f"NXstress._fit._Diffractogram: variance for diffraction data '{mask_name}' is not present in the workspace:\n"
+                "  how was this workspace initialized?"
+            )
+        return ws._diff_data_set[data_key], ws._var_data_set[data_key]
 
     @classmethod
-    def _diffraction_data_keys(cls, mask_name: str) -> Tuple[str, str]:
+    def _diffraction_data_key(cls, mask_name: str) -> str | None:
         # Workaround for PyRS codebase use of `None` as the default key.
-        if mask_name != DEFAULT_TAG:
-            data_key = mask_name
-            errors_key = f"{mask_name}_var"
-        else:
-            data_key = None # <default key>
-            errors_key = 'main_var'
-        return data_key, errors_key 
+        return mask_name if mask_name != DEFAULT_TAG else None
         
     @classmethod
     def _init(cls, ws: HidraWorkspace) -> NXdata:
@@ -406,15 +409,7 @@ class _Diffractogram:
     @validate_call_
     def init_group(cls, ws: HidraWorkspace, maskName: str, peakss: list[PeakCollection]) -> NXdata:
         # required DIFFRACTOGRAM (NXdata) subgroup:        
-        data_key, errors_key = cls._diffraction_data_keys(maskName)
-        
-        # *** DEBUG ***
-        breakpoint()
-        
-        if data_key not in ws._diff_data_set or errors_key not in ws._var_data_set:
-            # *** DEBUG ***
-            print(f"==> Workspace: diffraction data keys: {ws._diff_data_set.keys()}, error keys: {ws._var_data_set.keys()}")
-            raise RuntimeError(f"Reduced data for mask '{maskName}' is not attached to the workspace.")
+        data_key = cls._diffraction_data_key(maskName)
         
         dg = cls._init(ws)
         dg.attrs['signal'] = GROUP_NAME.DGRAM_DIFFRACTOGRAM
@@ -429,7 +424,6 @@ class _Diffractogram:
         dg['scan_point'].attrs['units'] = ''
         
         two_theta = ws._2theta_matrix
-        # dg['two_theta'] = NXfield(
         dg[GROUP_NAME.DGRAM_TWO_THETA_NAME] = NXfield( # *** DEBUG *** validator bug
             two_theta,
             units='degree'
@@ -449,8 +443,11 @@ class _Diffractogram:
             units='counts'
         )
         
-        # ENTRY/FIT/DIFFRACTOGRAM/fit, fit_errors: required datasets: these should contain the spectrum reconstructed from the fitted model.
-        #   For the moment, this will be initialized to NaN.
+        ##
+        ## ENTRY/FIT/DIFFRACTOGRAM/fit, fit_errors: required datasets under `NXstress`:
+        ##   these should contain the spectrum reconstructed from the fitted model.
+        ##   For the moment, these will be initialized to NaN.
+        ##
         dg[GROUP_NAME.DGRAM_FIT] = NXfield(np.empty((0, 0), dtype=np.float64),
                                            maxshape=(None, None), chunks=CHUNK_SHAPE(2), fillvalue=np.nan)
         dg[GROUP_NAME.DGRAM_FIT].attrs['interpretation'] = 'spectrum'
@@ -565,12 +562,11 @@ class _Fit:
         fit[GROUP_NAME.PEAK_PARAMETERS] = _PeakParameters.init_group(peakss)
         fit[GROUP_NAME.BACKGROUND_PARAMETERS] = _BackgroundParameters.init_group(peakss)
         
-        # Add one DIFFRACTOGRAM group for each mask present in the workspace.
-        masks = set(ws._mask_dict.keys())
-        if None in masks:
-            masks.remove(None)
-        masks.add(DEFAULT_TAG)
-        for mask in masks:
+        # Add one DIFFRACTOGRAM group for each reduced diffraction dataset present in the workspace.
+        mask_keys = set(ws._diff_data_set.keys())
+        mask_keys.discard(None)
+        mask_keys.add(DEFAULT_TAG)
+        for mask in mask_keys:
             ## TODO: mask naming (and storage) is messed up.  They all need to be accessed the same way,
             ##   regardless of whether or not the "default" mask is being accessed.
             ##   Here we assume that this loop also accesses data for the _DEFAULT_ mask, and that the default
