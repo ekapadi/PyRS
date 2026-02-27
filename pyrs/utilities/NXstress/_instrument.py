@@ -30,61 +30,6 @@ REQUIRED PARAMETERS FOR NXstress:
 │   └─ masks (optional)                     (NXcollection, group)
 """
 
-class _Masks:
-    # `INSTRUMENT/masks` (NXcollection) is allowed by the `NXstress` schema,
-    #    but is not specified by the schema.
-
-    #  * Masks are stored by name.
-    #  * Mask names must be distinct over both <detector masks> and <solid angle masks>:
-    #    this allows us to successfully use the mask name as a suffix tag on other groups,
-    #    without requiring the same sub-categorization for those groups.
-    #  * Throughout the PyRS codebase `None` is used to indicate that the default mask is 
-    #    being used.  For the purposes of the NXstress-compliant output, `None` will be
-    #    mapped to `_definitions.DEFAULT_TAG`.  For this key *only*, the mask-name suffix
-    #    is _omitted_ from generated group names.
-
-    @classmethod
-    @validate_call_
-    def _init(cls) -> NXcollection:
-        # initialize the `masks` (NXcollection) group
-        masks = NXcollection()
-        masks['names'] = NXfield(np.empty((0,), dtype=FIELD_DTYPE.STRING.value),
-                                 maxshape=(None,), chunks=CHUNK_SHAPE(1))
-        masks['detector'] = NXcollection()
-        masks['solid_angle'] = NXcollection()
-
-        return masks
-
-    @classmethod
-    @validate_call_
-    def init_group(cls, ws: HidraWorkspace, detectorMasks: bool = True, masks: NXcollection = None):
-        # Write or append masks to the `NXcollection`
-
-        # Allow append: both 'detector' and 'solid_angle' masks may exist,
-        #   and if so, will need to be added in separate steps.
-        masks = masks if masks is not None else cls._init()
-        names = masks['names'].nxvalue
-        appending = len(names) > 0
-        
-        # Unify the `_mask_dict` to a standard Python `dict`.
-        _masks = ws._mask_dict.copy()
-        if not appending and ws._default_mask is not None:
-            # There's only one default mask.
-            _masks[DEFAULT_TAG] = ws._default_mask
-        
-        dest = masks['detector'] if detectorMasks else masks['solid_angle']
-        for mask in _masks:
-            if mask in names:
-                raise RuntimeError(
-                    f'Usage error: mask "{mask}" has already been written:\n'
-                    + '  names must be distinct over both detector and solid-angle masks'
-                )
-            names.append(mask)
-            dest[mask] = NXfield(_masks[mask], units='')
-        masks['names'].resize((len(names),))
-        masks['names'] = names
-        
-        return masks
     
 class _Instrument:
     ########################################
@@ -250,7 +195,7 @@ class _Instrument:
         # Add an optional 'masks' subgroup, to contain any detector or solid-angle masks.
         # For the moment, we only write detector masks -- the `HidraWorkspace` doesn't
         # yet seem to provide a way to distinguish between a detector and a solid-angle mask.
-        inst[GROUP_NAME.MASKS] = _Masks.init_group(ws, detectorMasks=True)
+        inst[GROUP_NAME.MASKS] = _Masks.init_group(ws, detector_mask=True)
         
         return inst
 
@@ -323,10 +268,14 @@ class _Masks:
     # `INSTRUMENT/masks` (NXcollection) is allowed by the `NXstress` schema,
     #    but is not specified by the schema.
 
-    # Masks are stored by name.
-    # Mask names must be distinct over both <detector masks> and <solid angle masks>:
-    #   this allows us to successfully use the mask name as a suffix tag on other groups,
-    #   without requiring the same sub-categorization for those groups.
+    #  * Masks are stored by name.
+    #  * Mask names must be distinct over both <detector masks> and <solid angle masks>:
+    #    this allows us to successfully use the mask name as a suffix tag on other groups,
+    #    without requiring the same sub-categorization for those groups.
+    #  * Throughout the PyRS codebase `None` is used to indicate that the default mask is 
+    #    being used.  For the purposes of the NXstress-compliant output, `None` will be
+    #    mapped to `_definitions.DEFAULT_TAG`.  For this key *only*, the mask-name suffix
+    #    is _omitted_ from gener
 
     @classmethod
     @validate_call_
