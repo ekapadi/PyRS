@@ -43,7 +43,7 @@ class TestInstrument:
             load_reduced_diffraction=True
         )
         
-        masks = _Masks.init_group(ws, detectorMasks=True)
+        masks = _Masks.init_group(ws, detector_mask=True)
         
         assert isinstance(masks, NXcollection)
         assert DEFAULT_TAG in masks['names']
@@ -62,13 +62,13 @@ class TestInstrument:
         )
         
         # First call for detector masks
-        masks = _Masks.init_group(ws, detectorMasks=True)
+        masks = _Masks.init_group(ws, detector_mask=True)
         initial_count = len(masks['names'])
         
         # Second call for solid angle masks (appending)
         # For this test, we'll use the same workspace which should be fine
         # In real usage, solid angle masks would be different data
-        masks = _Masks.init_group(ws, detectorMasks=False, masks=masks)
+        masks = _Masks.init_group(ws, detector_mask=False, masks=masks)
         
         # Names should have been appended
         assert len(masks['names']) >= initial_count
@@ -94,12 +94,12 @@ class TestInstrument:
         )
         
         # Create masks with detector masks
-        masks = _Masks.init_group(ws, detectorMasks=True)
+        masks = _Masks.init_group(ws, detector_mask=True)
         
         # Second call does NOT raise because when appending=True,
         # _default_mask is not added to _masks dict (lines 67-69)
         # So the loop in line 72 doesn't iterate and no check happens
-        masks2 = _Masks.init_group(ws, detectorMasks=True, masks=masks)
+        masks2 = _Masks.init_group(ws, detector_mask=True, masks=masks)
         
         # Verify that the masks structure is unchanged (no duplicates added)
         assert len(masks2['names']) == len(masks['names'])

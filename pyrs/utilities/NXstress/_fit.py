@@ -24,7 +24,8 @@ from pyrs.utilities.pydantic_transition import validate_call_
 from ._definitions import (
     FIELD_DTYPE, CHUNK_SHAPE, DEFAULT_TAG,
     GROUP_NAME, EFFECTIVE_BACKGROUND_PARAMETERS,
-    group_naming_scheme
+    group_naming_scheme,
+    UNDEFINED_PEAK_TAG
 )
 from ._peaks import _Peaks
 
@@ -51,11 +52,11 @@ class _PeakParameters:
     def _init(cls, peakss: list[PeakCollection]) -> NXparameters:
         # required 'peak_parameters' subgroup
         pp = NXparameters()
-        peak_profile = peakss[0].peak_profile
+        peak_profile = str(peakss[0].peak_profile).lower() if peakss else UNDEFINED_PEAK_TAG
         
         # To be compliant with `NXstress` schema:
         #   this cannot be tiled: all `PeakCollection` must share the same `peak_profile`.
-        pp['title'] = NXfield(str(peak_profile).lower(), dtype=FIELD_DTYPE.STRING.value)
+        pp['title'] = NXfield(peak_profile, dtype=FIELD_DTYPE.STRING.value)
         
         pp['center'] = NXfield(
             np.empty((0,), dtype=np.float64),
@@ -128,7 +129,9 @@ class _PeakParameters:
         
         # Verify the `PeakCollection` peak-profile type.
         peak_profile = str(peaks.peak_profile).lower()
-        if peak_profile != pp['title']:
+        if pp['title'] == UNDEFINED_PEAK_TAG:
+             pp['title'].replace(peak_profile)
+        elif peak_profile != pp['title']:
             raise ValueError(
                 f"All `PeakCollection` must share the same peak profile ''{pp['title']}'', not ''{peak_profile}''."
             )
@@ -243,8 +246,8 @@ class _BackgroundParameters:
 
         # To be compliant with `NXstress` schema:
         #   this cannot be tiled: all `PeakCollection` must share the same `background_type`.
-        background_function = BackgroundFunction.getFunction(peakss[0].background_type)
-        bp['title'] = NXfield(str(background_function).lower(), dtype=FIELD_DTYPE.STRING.value) 
+        background_function = str(BackgroundFunction.getFunction(peakss[0].background_type)).lower() if peakss else UNDEFINED_PEAK_TAG
+        bp['title'] = NXfield(background_function, dtype=FIELD_DTYPE.STRING.value) 
 
         bp['A0'] = NXfield(
             np.empty((0,), dtype=np.float64),
@@ -304,9 +307,10 @@ class _BackgroundParameters:
         # Append the background parameters from a single `PeakCollection` instance.
         
         # Verify the `PeakCollection` background type.
-        background_function = BackgroundFunction.getFunction(peaks.background_type)
-        background_title = str(background_function).lower()
-        if background_title != bp['title']:
+        background_title = str(BackgroundFunction.getFunction(peaks.background_type)).lower()
+        if bp['title'] == UNDEFINED_PEAK_TAG:
+            bp['title'].replace(background_title)
+        elif background_title != bp['title']:
             raise ValueError(
                 f"All `PeakCollection` must share the same background type ''{bp['title']}'', not ''{background_title}''."
             )
@@ -403,6 +407,10 @@ class _Diffractogram:
     def init_group(cls, ws: HidraWorkspace, maskName: str, peakss: list[PeakCollection]) -> NXdata:
         # required DIFFRACTOGRAM (NXdata) subgroup:        
         data_key, errors_key = cls._diffraction_data_keys(maskName)
+        
+        # *** DEBUG ***
+        breakpoint()
+        
         if data_key not in ws._diff_data_set or errors_key not in ws._var_data_set:
             # *** DEBUG ***
             print(f"==> Workspace: diffraction data keys: {ws._diff_data_set.keys()}, error keys: {ws._var_data_set.keys()}")

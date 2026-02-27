@@ -164,6 +164,8 @@ EFFECTIVE_BACKGROUND_PARAMETERS = ['A0', 'A1', 'A2']
 # -- presently this is only used for masks, to allow multiple FIT.diffractogram groups.
 DEFAULT_TAG = HidraConstants.DEFAULT_MASK
 
+UNDEFINED_PEAK_TAG = "_undefined_"
+
 def group_naming_scheme(base_name: str, suffix: int | str) -> str:
     # Generate the name for an HDF5 group, allowing for multiple group instances:
     #   instance: 
