@@ -2,11 +2,13 @@
 Tests for NXstress workspace read functionality (Part 2)
 """
 import numpy as np
-from nexusformat.nexus import NXsample, NXinstrument, NXcollection, NXfield, NXdetector, NXdetector_module
-from nexusformat.nexus import NXmonochromator, NXsource, NXtransformations
-import pytest
 from pathlib import Path
 import tempfile
+from nexusformat.nexus import (
+    NXsample, NXinstrument, NXcollection, NXfield, NXdetector, NXdetector_module,
+    NXmonochromator, NXsource, NXtransformations
+)
+from nexusformat.nexus.tree import NeXusError
 
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.core.instrument_geometry import DENEXDetectorGeometry, DENEXDetectorShift
@@ -18,6 +20,8 @@ from pyrs.utilities.NXstress._sample import _Sample
 from pyrs.utilities.NXstress._instrument import _Instrument, _Masks
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG, GROUP_NAME, FIELD_DTYPE
 from pyrs.utilities.NXstress._peaks import _Peaks
+
+import pytest
 
 @pytest.fixture
 def roundtrip_nxstress(load_HidraWorkspace, createPeakCollection, tmp_path):
@@ -287,7 +291,7 @@ class TestReadErrors:
         with NXstress(nxstress_file, mode='w') as nxs:
             nxs.write(ws, [])
         
-        with pytest.raises(KeyError):
+        with pytest.raises(NeXusError, match=r".*Invalid path.*"):
             with NXstress(nxstress_file, mode='r') as nxs:
                 nxs.read(entry_number=99)
     

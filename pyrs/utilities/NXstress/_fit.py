@@ -585,10 +585,16 @@ class _Fit:
         # VERIFY that scan_point[s] and mask[s] reference by any `PeakCollection` are present in the workspace.
         scan_point = set(ws.get_sub_runs().raw_copy())
         
-        masks = set(ws._mask_dict.keys())
-        if None in masks:
-            masks.remove(None)
-        masks.add(DEFAULT_TAG)
+        diff_data_keys = set(ws._diff_data_set.keys())
+        var_data_keys = set(ws._var_data_set.keys())
+        if diff_data_keys != var_data_keys:
+            raise ValueError(
+                f"Diffraction-data keys '{diff_data_keys}' and variance keys '{var_data_keys}' are not the same."
+            )
+        
+        mask_keys = set(ws._mask_dict.keys())
+        mask_keys.discard(None)
+        mask_keys.add(DEFAULT_TAG)
 
         for peaks in peakss:
             # VERIFY that any <scan point> referenced by any `PeakCollection` is included in the workspace.
@@ -604,9 +610,14 @@ class _Fit:
         
             # VERIFY that any <mask> referenced by any `PeakCollection` is included in the workspace.
             peaks_mask = peaks.mask
-            data_key, errors_key = _Diffractogram._diffraction_data_keys(peaks_mask)
-            if data_key not in ws._diff_data_set or errors_key not in ws._var_data_set:
+            if peaks_mask not in mask_keys:
+                raise ValueError(
+                    f"Mask '{peaks_mask}' required by `PeakCollection`,\n"
+                    "  is not present in the workspace."
+                )
+            data_key = _Diffractogram._diffraction_data_key(peaks_mask)
+            if data_key not in ws._diff_data_set:
                 raise ValueError(
                     f"Reduced data required for mask '{peaks_mask}', required by `PeakCollection`,\n"
-                    f"  is not present in the workspace '{masks}'."
+                    "  is not present in the workspace."
                 )

@@ -43,13 +43,13 @@ class TestInstrument:
             load_reduced_diffraction=True
         )
         
-        masks = _Masks.init_group(ws, detector_mask=True)
+        masks = _Masks.init_group(ws)
         
         assert isinstance(masks, NXcollection)
         assert DEFAULT_TAG in masks['names']
         assert DEFAULT_TAG in masks['detector']
 
-    def test_Masks_init_group_append_solid_angle(
+    def test_Masks_init_group_append(
         self,
         load_HidraWorkspace: HidraWorkspace,
     ):
@@ -62,13 +62,22 @@ class TestInstrument:
         )
         
         # First call for detector masks
-        masks = _Masks.init_group(ws, detector_mask=True)
+        masks = _Masks.init_group(ws)
         initial_count = len(masks['names'])
         
         # Second call for solid angle masks (appending)
-        # For this test, we'll use the same workspace which should be fine
+        # For this test, we'll use the same workspace but we'll just change the names.
+        defaults = ws._diff_data_set[None], ws._var_data_set[None], ws._mask_dict.get(None, None)
+        ws._diff_data_set = {f"{k}_2nd": v for k, v in ws._diff_data_set.items() if k is not None}
+        ws._var_data_set = {f"{k}_2nd": v for k, v in ws._var_data_set.items() if k is not None}
+        ws._mask_dict = {f"{k}_2nd": v for k, v in ws._mask_dict.items() if k is not None}
+        # Re-add the default items:
+        ws._diff_data_set[None], ws._var_data_set[None] = defaults[0:2]
+        if defaults[2]:
+            ws._mask_dict[None] = defaults[2]
+        
         # In real usage, solid angle masks would be different data
-        masks = _Masks.init_group(ws, detector_mask=False, masks=masks)
+        masks = _Masks.init_group(ws, masks=masks)
         
         # Names should have been appended
         assert len(masks['names']) >= initial_count
@@ -79,12 +88,9 @@ class TestInstrument:
     ):
         """Verify behavior when attempting to add duplicate masks
         
-        Note: Due to implementation logic, duplicate detection only works
-        when appending=False (first call). On subsequent calls with appending=True,
-        the default mask is not re-added to _masks dict, so no error is raised.
-        
-        This test documents the current behavior - a workspace with named masks
-        in _mask_dict (not just default mask) would trigger the duplicate check.
+        This test triggers the duplicate-check behavior, because links to 
+        the default detector-mask are automatically created when there are no
+        masks in the workspace's mask dict.
         """
         ws = load_HidraWorkspace(
             file_name=self.PROJECT_FILE_C,
@@ -93,16 +99,13 @@ class TestInstrument:
             load_reduced_diffraction=True
         )
         
-        # Create masks with detector masks
-        masks = _Masks.init_group(ws, detector_mask=True)
+        # Create masks:
+        #   this will both intialize a mask at '_DEFAULT_' and also produce links to
+        #   this default detector-mask for all entries in `ws._diff_data_set`.
+        masks = _Masks.init_group(ws)
         
-        # Second call does NOT raise because when appending=True,
-        # _default_mask is not added to _masks dict (lines 67-69)
-        # So the loop in line 72 doesn't iterate and no check happens
-        masks2 = _Masks.init_group(ws, detector_mask=True, masks=masks)
-        
-        # Verify that the masks structure is unchanged (no duplicates added)
-        assert len(masks2['names']) == len(masks['names'])
+        with pytest.raises(RuntimeError, match=r".*Usage error: mask .* has already been written.*"):
+            masks2 = _Masks.init_group(ws, masks=masks)
 
     def test_Instrument_init(self):
         """Verify _Instrument._init creates NXinstrument with name and short_name"""

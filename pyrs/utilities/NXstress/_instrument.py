@@ -4,10 +4,10 @@ pyrs/utilities/NXstress/_instrument.py
 Private service class for NeXus NXstress-compatible I/O.
 This class provides I/O for the `instrument` `NXinstrument` subgroup.
 """
-
+import logging
 from nexusformat.nexus import (
-    NXbeam, NXcollection, NXdetector, NXdetector_module, NXfield, NXinstrument, NXmonochromator,
-    NXnote, NXsource, NXtransformations
+    NXbeam, NXcollection, NXdetector, NXdetector_module, NXfield, NXinstrument, NXlink,
+    NXmonochromator, NXnote, NXsource, NXtransformations
 )
 import numpy as np
 import json
@@ -18,6 +18,9 @@ from pyrs.utilities.pydantic_transition import validate_call_
 from ._definitions import (
     CHUNK_SHAPE, DEFAULT_TAG, FIELD_DTYPE, GROUP_NAME
 )
+
+
+_logger = logging.getLogger(__name__)
 
 """
 REQUIRED PARAMETERS FOR NXstress:
@@ -195,7 +198,7 @@ class _Instrument:
         # Add an optional 'masks' subgroup, to contain any detector or solid-angle masks.
         # For the moment, we only write detector masks -- the `HidraWorkspace` doesn't
         # yet seem to provide a way to distinguish between a detector and a solid-angle mask.
-        inst[GROUP_NAME.MASKS] = _Masks.init_group(ws, detector_mask=True)
+        inst[GROUP_NAME.MASKS] = _Masks.init_group(ws)
         
         return inst
 
@@ -302,33 +305,36 @@ class _Masks:
         #   and if so, the masks will need to be added in separate steps.
         masks = masks if masks is not None else cls._init()
         names = masks['names'].nxvalue
+        
         appending = len(names) > 0
         detector_masks = masks['detector']
         solid_angle_masks = masks['solid_angle']
         
         # Unify the `_mask_dict` to a standard Python `dict`.
-        _masks = ws._mask_dict.copy()
+        _mask_dict = ws._mask_dict.copy()
         if not appending:
             # There is only *one* default detector-mask, and for output purposes,
             #   the default mask *must* be initialized.
-            if ws_default_mask is None:
-                logger.warning(
+            default_mask = ws.get_detector_mask(True)
+            if default_mask is None:
+                _logger.warning(
                     "NXstress._instrument: no default "
                     " detector-mask is defined;\n"
                     "  for output purposes, a default mask will be created."
                 )
-            _masks[DEFAULT_TAG] =\
-                ws._default_mask if ws._default_mask is not None\
+            _mask_dict[DEFAULT_TAG] =\
+                default_mask if default_mask is not None\
                 else cls._generate_default_mask(ws, detector_mask=True)
-
+            
             # Write the default-mask *once* to the masks group:
             #   this must happen first, as we may re-use it below as an `NXlink`.
-            detector_masks[DEFAULT_TAG] = NXfield(_masks[DEFAULT_TAG], units='')
-        
+            detector_masks[DEFAULT_TAG] = NXfield(_mask_dict[DEFAULT_TAG], units='')
+            names.append(DEFAULT_TAG)
+            
         # Check key correspondance in order to generate warning messages:
         #   here we do NOT replace the `None` key with `_definitions.DEFAULT_TAG`!
-        ws_data_keys = set(ws._diff_data_set.keys()
-        ws_var_keys = set(ws._var_data_set.keys()
+        ws_data_keys = set(ws._diff_data_set.keys())
+        ws_var_keys = set(ws._var_data_set.keys())
         ws_mask_keys = set(ws._mask_dict.keys())
 
         for mask in cls.mask_keys(ws):
@@ -341,33 +347,35 @@ class _Masks:
                     f'Usage error: mask "{mask}" has already been written;\n'
                     + '  names must be distinct over both detector and solid-angle masks.'
                 )
-            if mask in ws_data_keys and not in ws_mask_keys:
-                logger.warning(
+            if mask in ws_data_keys and mask not in ws_mask_keys:
+                _logger.warning(
                     f"NXstress._instrument: no mask entry exists corresponding to diffraction data '{mask}';\n"
                     "  for output purposes, the *default* mask will be written for this mask."
-            
-            """ # TODO: move this check somewhere else?  It's not really about *mask* keys.
-            if mask in ws_var_keys and not in ws_diff_keys:
-                logger.warning(
-                    f"NXstress._instrument: no diffraction-data entry exists corresponding variance-data '{mask}';\n"
-                    "  this variance-data output will be skipped."
-            """
-            
-            names.append(mask)
-            
+                )
+
             # WARNING: this section assumes that `detector_masks[DEFAULT_TAG]` already exists:
             #   it should have been written above.
-            units = "degrees" if cls._is_solid_angle_mask(_masks[mask]) else ""
+            mask_array = _mask_dict.get(mask)
+            units = "degrees" if (mask_array and cls._is_solid_angle_mask(mask_array)) else ""
 
             # If no specific mask is present corresponding to a reduced diffraction dataset,
             #   a link will be created to the default detector-mask.
-            mask_ = NXfield(_masks[mask], units=units) if mask in _masks\
-                else NXlink(detector_masks[DEFAULT_TAG])
-            if cls._is_solid_angle_mask(mask_.nxdata):
-                solid_angle_masks[mask] = mask_
+            if mask_array:
+                ds = NXfield(mask_array, units=units)
             else:
-                detector_masks[mask] = mask_
-                
+                # WORKAROUND to create an `NXlink` within an *unattached* group:
+                #   this bypasses `NXlink.__init__` attempt to dereferene the parent group. 
+                ds = NXlink(target=DEFAULT_TAG, name=f"link_to_{DEFAULT_TAG}")
+                ds._group = detector_masks
+
+            if cls._is_solid_angle_mask(ds.nxdata):
+                solid_angle_masks[mask] = ds
+            else:
+                detector_masks[mask] = ds
+            
+            # append the mask's name to the `names` list
+            names.append(mask)
+               
         masks['names'].resize((len(names),))
         masks['names'] = names
         
@@ -396,16 +404,17 @@ class _Masks:
         #   * At present, there's no special name for any default solid-angle mask.
         #
         
-        masks = set(ws._mask_dict.keys()).union(ws._diff_data_set.keys())
-        masks.discard(None)
+        keys = set(ws._mask_dict.keys()).union(ws._diff_data_set.keys())
+        keys.discard(None)
         # a key for the default detector-mask must always be present
-        masks.add(DEFAULT_TAG)
+        keys.add(DEFAULT_TAG)
+        return keys
 
     @classmethod
     def _generate_default_mask(cls, ws: HidraWorkspace, *, detector_mask: bool) -> np.ndarray:
         # Generate an unmasked default mask.
         if not detector_mask:
-            logger.warning(
+            _logger.warning(
                 "NXstress._instrument: *generating* a default solid-angle mask as `[-180.0, 180.0]`;\n"
                 "  if this is not correct for your usage, please contact the developers."
             )

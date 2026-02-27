@@ -357,7 +357,7 @@ class TestNXstress:
             ('solid_angle', NXcollection)
         )
         
-        masks = _Masks.init_group(ws, detectorMasks=True)
+        masks = _Masks.init_group(ws)
         assert isinstance(masks, NXcollection)
         for key in required_fields:
             assert key in masks

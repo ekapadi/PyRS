@@ -291,19 +291,17 @@ class TestFit:
         with pytest.raises(ValueError, match=r".*must share the same background type.*"):
             _BackgroundParameters.init_group([peak0, peak1])
 
-    def test_Diffractogram_data_keys_default(self):
-        """Verify _diffraction_data_keys returns (None, 'main_var') for DEFAULT_TAG"""
-        data_key, errors_key = _Diffractogram._diffraction_data_keys(DEFAULT_TAG)
+    def test_Diffractogram_data_key_default(self):
+        """Verify _diffraction_data_key returns `None` for DEFAULT_TAG"""
+        data_key = _Diffractogram._diffraction_data_key(DEFAULT_TAG)
         
         assert data_key is None
-        assert errors_key == 'main_var'
 
     def test_Diffractogram_data_keys_named(self):
         """Verify _diffraction_data_keys returns proper keys for named mask"""
-        data_key, errors_key = _Diffractogram._diffraction_data_keys('my_mask')
+        data_key = _Diffractogram._diffraction_data_key('my_mask')
         
         assert data_key == 'my_mask'
-        assert errors_key == 'my_mask_var'
 
     def test_Diffractogram_init_no_reduced_data_raises(
         self,
@@ -350,7 +348,7 @@ class TestFit:
         )
         
         # Try to create diffractogram for non-existent mask
-        with pytest.raises(RuntimeError, match=r".*not attached to the workspace.*"):
+        with pytest.raises(RuntimeError, match=r".*is not present in the workspace.*"):
             _Diffractogram.init_group(ws, 'non_existent_mask', [peak0])
 
     def test_Diffractogram_data_values(
@@ -390,9 +388,9 @@ class TestFit:
         assert 'fit_errors' in dgram
         
         # Verify data matches workspace (use allclose for float32 comparison)
-        data_key, errors_key = _Diffractogram._diffraction_data_keys(DEFAULT_TAG)
+        data_key = _Diffractogram._diffraction_data_key(DEFAULT_TAG)
         expected_data = ws._diff_data_set[data_key]
-        expected_errors = ws._var_data_set[errors_key]
+        expected_errors = ws._var_data_set[data_key]
         
         np.testing.assert_allclose(
             dgram['diffractogram'].nxdata,
