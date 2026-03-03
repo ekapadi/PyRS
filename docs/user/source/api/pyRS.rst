@@ -57,7 +57,7 @@ pyRS package
 :mod:`Instrument Calibration` Module
 ------------------------------------
 
-.. autoclass:: pyrs.calibration.mantid_peakfit_calibration.FitCalibration
+.. autoclass:: pyrs.calibration.peakfit_calibration.PeakFitCalibration
    :no-index:
    :members:
    :undoc-members:
