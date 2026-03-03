@@ -76,7 +76,7 @@ platforms = ["linux-64"]
 [tool.pixi.dependencies]
 python = "*"
 pip = "*"
-mantidworkbench = ">=6.15.0,<6.16.0"
+mantidworkbench = ">=6.14.0,<6.15.0"
 qtpy = "*"
 pyqt = "*"
 uncertainties = "*"
@@ -85,6 +85,9 @@ matplotlib = "*"
 numpy = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
+h5glance = ">=0.9,<0.10"
 
 [tool.pixi.pypi-dependencies]
 # PyPI dependencies, including this package to allow local editable installs
@@ -95,7 +98,7 @@ hatchling = "*"
 versioningit = "*"
 
 [tool.pixi.package.run-dependencies]
-mantidworkbench = ">=6.15.0,<6.16.0"
+mantidworkbench = ">=6.14.0,<6.15.0"
 qtpy = "*"
 pyqt = "*"
 uncertainties = "*"
@@ -104,6 +107,8 @@ matplotlib = "*"
 numpy = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
 
 
 # ------------------------------- #
@@ -137,6 +142,7 @@ python-build = "*"
 sphinx = "*"
 sphinx_rtd_theme = "*"
 sphinxcontrib-mermaid = "*"
+sphinxcontrib-programoutput = "*"
 types-pyyaml = "*"
 versioningit = "*"
 
@@ -146,13 +152,15 @@ versioningit = "*"
 [tool.pixi.feature.dev.dependencies]
 python = "*"
 pip = "*"
-mantidworkbench = { version = ">=6.15.0", channel = "mantid/label/nightly" }
+mantidworkbench = { version = ">=6.14.0", channel = "mantid/label/nightly" }
 mantid = { channel = "mantid/label/nightly" }
 mantidqt = { channel = "mantid/label/nightly" }
 uncertainties = "*"
 libarchive = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
 
 # ------------------------------- #
 # QA Environment Feature #
@@ -160,13 +168,15 @@ types-six = "*"
 [tool.pixi.feature.qa.dependencies]
 python = "*"
 pip = "*"
-mantidworkbench = { version = ">=6.15.0,<6.16.0", channel = "mantid-ornl/label/rc" }
+mantidworkbench = { version = ">=6.14.0,<6.15.0", channel = "mantid-ornl/label/rc" }
 mantid = { channel = "mantid-ornl/label/rc" }
 mantidqt = { channel = "mantid-ornl/label/rc" }
 uncertainties = "*"
 libarchive = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
 
 # ------------------------------- #
 # Production Environment Feature #
@@ -174,13 +184,15 @@ types-six = "*"
 [tool.pixi.feature.prod.dependencies]
 python = "*"
 pip = "*"
-mantidworkbench = { version = ">=6.15.0,<6.16.0", channel = "mantid/label/main" }
-mantid = { channel = "mantid/label/main" }
-mantidqt = { channel = "mantid/label/main" }
+mantidworkbench = { version = ">=6.14.0,<6.15.0", channel = "mantid-ornl/label/main" }
+mantid = { channel = "mantid-ornl/label/main" }
+mantidqt = { channel = "mantid-ornl/label/main" }
 uncertainties = "*"
 libarchive = "*"
 pandas = "*"
 types-six = "*"
+nexusformat = ">=1.0.8,<2"
+pydantic = ">=2.7.3,<3"
 
 [tool.pixi.package]
 name = "pyrs"
@@ -256,10 +268,11 @@ publish-conda = { cmd = "anaconda upload *.conda", description = "Publish the .c
 clean-conda = { cmd = "rm -f *.conda", description = "Clean the local .conda build artifacts" }
 
 # Documentation tasks
-build-docs = { cmd = "sphinx-build -b html docs/source docs/_build", description = "Build the documentation" }
+build-docs = { cmd = "sphinx-build -b html docs/user/source docs/_build/user", description = "Build the User documentation" }
+build-dev-docs = { cmd = "sphinx-build -b html docs/developer/source docs/_build/developer", description = "Build the Developer documentation" }
 clean-docs = { cmd = "rm -rf docs/_build", description = "Clean the documentation build artifacts" }
-docs-serve = { cmd = "python -m http.server 8000 -d docs/_build", description = "Serve documentation locally on port 8000" }
-docs-autobuild = { cmd = "sphinx-autobuild docs/source docs/_build --host 0.0.0.0 --port 8000", description = "Auto-rebuild and serve docs on changes" }
+docs-serve = { cmd = "python -m http.server 8000 -d docs/_build/user", description = "Serve User documentation locally on port 8000" }
+docs-autobuild = { cmd = "sphinx-autobuild docs/user/source docs/_build/user --host 0.0.0.0 --port 8000", description = "Auto-rebuild and serve User docs on changes" }
 
 # Testing tasks
 test = { cmd = "pytest --cov=pyrs --cov-report=xml --cov-report=term ./tests", description = "Run the tests with coverage" }
