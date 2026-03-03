@@ -208,7 +208,7 @@ class TestWorkspaceRoundtrip:
             assert ws_original._2theta_matrix.shape == ws_readback._2theta_matrix.shape
             np.testing.assert_allclose(ws_original._2theta_matrix, 
                                      ws_readback._2theta_matrix, atol=1e-5)
-        
+
         # Verify diff_data_set and var_data_set for each mask
         for mask_id in ws_original._diff_data_set.keys():
             assert mask_id in ws_readback._diff_data_set, \

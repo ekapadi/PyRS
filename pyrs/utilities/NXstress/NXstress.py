@@ -20,6 +20,7 @@ from ._definitions import (
     FIELD_DTYPE,
     GROUP_NAME,
     group_naming_scheme,
+    suffix_from_group_name,
     is_ISO_8601,
     logger,
     REQUIRED_LOGS
@@ -200,9 +201,8 @@ class NXstress:
             _InputData.readSubruns(ws, entry[GROUP_NAME.INPUT_DATA])
         
         # Read reduced diffraction data from FIT group's DIFFRACTOGRAM subgroups
-        fit_group_name = group_naming_scheme(GROUP_NAME.FIT, 1)
-        if fit_group_name in entry:
-            fit_group = entry[fit_group_name]
+        if GROUP_NAME.FIT in entry:
+            fit_group = entry[GROUP_NAME.FIT]
             diff_data = {}
             var_data = {}
             two_theta_matrix = None
@@ -211,22 +211,16 @@ class NXstress:
                 child = fit_group[child_name]
                 if not isinstance(child, NXdata):
                     continue
-                mask_name = _parse_diffractogram_mask_name(child_name)
+                mask_name = suffix_from_group_name(child_name, GROUP_NAME.DIFFRACTOGRAM)
                 scan_pts, two_theta, data, errors = _Diffractogram.diffractogramFromNexus(child)
                 
-                # Map DEFAULT_TAG to None for workspace dict keys for intensity data
+                # Map DEFAULT_TAG to None for workspace dict keys
                 ws_mask_key = None if mask_name == DEFAULT_TAG else mask_name
                 diff_data[ws_mask_key] = data
                 
-                # NOTE: Despite the field name 'diffractogram_errors', the write side
-                # stores variance values (not standard errors) in this field
-                # 
-                # IMPORTANT: Variance keys differ from intensity keys in the workspace:
-                # - Intensity: default mask uses None, custom masks use mask_name
-                # - Variance: default mask uses 'main_var', custom masks use '{mask_name}_var'
-                # This asymmetry is a workspace convention (see _fit.py line 391)
-                var_mask_key = 'main_var' if mask_name == DEFAULT_TAG else f"{mask_name}_var"
-                var_data[var_mask_key] = errors
+                # NOTE: Despite the field name 'diffractogram_errors',
+                #   variance values (not standard errors) are stored in this field.
+                var_data[ws_mask_key] = errors
                 
                 if two_theta_matrix is None:
                     two_theta_matrix = two_theta
@@ -238,8 +232,8 @@ class NXstress:
         peak_collections = []
         if GROUP_NAME.PEAKS in entry:
             peaks_group = entry[GROUP_NAME.PEAKS]
-            if fit_group_name in entry:
-                fit_group = entry[fit_group_name]
+            if GROUP_NAME.FIT in entry:
+                fit_group = entry[GROUP_NAME.FIT]
                 peak_collections = _Peaks.peakCollectionsFromNexus(peaks_group, fit_group)
         
         return ws, peak_collections
@@ -332,28 +326,3 @@ class NXstress:
         entry[GROUP_NAME.PEAKS] = _Peaks.init_group(peakss, ws._sample_logs)
         
         return entry
-
-
-def _parse_diffractogram_mask_name(group_name: str) -> str:
-    """Reverse of group_naming_scheme for DIFFRACTOGRAM groups.
-    
-    'DIFFRACTOGRAM' -> DEFAULT_TAG
-    'DIFFRACTOGRAM_mask_A' -> 'mask_A'
-    
-    Parameters
-    ----------
-    group_name : str
-        The group name to parse
-    
-    Returns
-    -------
-    str
-        The mask name (DEFAULT_TAG for default)
-    """
-    prefix = str(GROUP_NAME.DIFFRACTOGRAM)
-    if group_name == prefix:
-        return DEFAULT_TAG
-    elif group_name.startswith(prefix + '_'):
-        return group_name[len(prefix) + 1:]
-    else:
-        raise RuntimeError(f"Cannot parse diffractogram mask name from '{group_name}'")

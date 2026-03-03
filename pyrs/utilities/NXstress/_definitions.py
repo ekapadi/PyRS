@@ -181,6 +181,32 @@ def group_naming_scheme(base_name: str, suffix: int | str) -> str:
     
     return f'{base_name}{tag}'
 
+def suffix_from_group_name(group_name: str, base_name: str) -> str:
+    """Reverse of `group_naming_scheme`: extract the suffix from a group name.
+    
+    'DIFFRACTOGRAM' -> DEFAULT_TAG
+    'DIFFRACTOGRAM_mask_A' -> 'mask_A'
+    
+    Parameters
+    ----------
+    group_name : str
+        The group name to parse
+    base_name : str
+        The base name used to form the group name
+        
+    Returns
+    -------
+    str
+        The appended suffix (or DEFAULT_TAG for the default case)
+    """
+    prefix = str(base_name)
+    if group_name == prefix:
+        return DEFAULT_TAG
+    elif group_name.startswith(prefix + '_'):
+        return group_name[len(prefix) + 1:]
+    else:
+        raise RuntimeError(f"Cannot extract suffix (e.g. mask name) from '{group_name}'")
+
 def allowed_identifier(s: str) -> str:
     # Convert PV-log name to NeXus-compliant identifier
     
