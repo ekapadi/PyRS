@@ -65,7 +65,7 @@ class FitCalibration:
         else:
             self._hidra_ws = reduction_engine
 
-        self.initalize_calib_arrays()
+        self.initialize_calib_arrays()
 
         # Initalize calibration status to -1
         self._calibstatus = -1
@@ -217,7 +217,7 @@ class FitCalibration:
         self._diff_peaks["BCC"] = np.sqrt(np.array([2, 4, 6, 8, 10, 12]))
         self._diff_peaks["FCC"] = np.sqrt(np.array([3, 4, 8, 11, 12, 19]))
 
-    def initalize_calib_arrays(self):
+    def initialize_calib_arrays(self):
         # calibration: numpy array. size as 7 for ... [6] for wave length
         self._calib = np.array(8 * [0], dtype=np.float64)
         # calibration error: numpy array. size as 7 for ...
@@ -817,9 +817,11 @@ class FitCalibration:
         Parameters
         ----------
         file_name: str or None
-            output Json file name.  If None, write to /HFIR/HB2B/shared/CAL/
+        output Json file name.  If None, write to /HFIR/HB2B/shared/CAL/
+
         write_latest: bool
-            bool saying that the calibration should write HB2B_Cal_Latest
+        bool saying that the calibration should write HB2B_Cal_Latest
+
         Returns
         -------
         None

@@ -77,6 +77,18 @@ class HidraProjectFile:
         if self._io_mode == HidraProjectFileMode.OVERWRITE:
             self._init_project()
 
+    ######################################
+    ## Context-manager support methods: ##
+    ######################################
+    def __enter__(self) -> "HidraProjectFile":
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False  # do not suppress exceptions
+
+    ######################################
+
     def _checkFileAccess(self):
         """Verify the file has the correct acces permissions and set the value of ``self._is_writable``"""
         # prepare the call to check the file permissions
@@ -487,6 +499,7 @@ class HidraProjectFile:
         """
         Get instrument geometry parameters
         :return: an instance of instrument_geometry.InstrumentSetup
+            *** TODO: actually this returns an instance of `DENEXDetectorGeometry`! ***
         """
         # Get group
         geometry_group = self._project_h5[HidraConstants.INSTRUMENT][HidraConstants.GEOMETRY_SETUP]
