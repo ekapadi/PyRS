@@ -9,7 +9,7 @@ from pyrs.core.peak_profile_utility import (
 )
 from pyrs.dataobjects import SubRuns  # type: ignore
 from pyrs.dataobjects.constants import HidraConstants
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 from uncertainties import unumpy
 from uncertainties import ufloat
 
