@@ -80,3 +80,28 @@ def createPeakCollection() -> Generator[Callable[..., PeakCollection]]:
 
     # teardown follows
     pass
+
+
+def generate_PeakCollection_from_workspace(hidra_ws: HidraWorkspace, fit_dic: dict={}) -> list[PeakCollection]:
+    """
+    You can use file tests/data/3393_PWHT-TD.h5  with fit_dic={"0": {"peak_range": [87.599, 91.569], "peak_label": "Peak0", "d0": 1.08}, "1": {"peak_range": [93.544, 95.89], "peak_label": "Peak1", "d0": 1.03}}
+    """
+    fit_result = []
+    fit_engine = PeakFitEngineFactory.getInstance(hidraworkspace=hidra_ws,
+                                                  peak_function_name='PseudoVoigt',
+                                                  background_function_name='Linear',
+                                                  wavelength=hidra_ws.get_wavelength(True, True))
+
+    for peak in fit_dic.keys():
+        print('Fitting data')
+        print('peak_tag: {}'.format(fit_dic[peak]['peak_label']))
+        print('x_min: {}'.format(fit_dic[peak]['peak_range'][0]))
+        print('x_max: {}'.format(fit_dic[peak]['peak_range'][1]))
+        print('')
+
+        fit_result.append(fit_engine.fit_peaks(peak_tag=fit_dic[peak]['peak_label'],
+                                               x_min=fit_dic[peak]['peak_range'][0],
+                                               x_max=fit_dic[peak]['peak_range'][1]))
+
+    
+    return fit_result

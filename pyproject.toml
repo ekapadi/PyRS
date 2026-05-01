@@ -295,6 +295,9 @@ pyrs = { cmd = "pyrsplot", description = "Start the pyrs application" }
 ignore_missing_imports = true
 namespace_packages = true
 
+[tool.pytest.ini_options]
+norecursedirs = ["tests/scripts/cis_tests"]
+
 [tool.ruff]
 line-length = 119
 target-version = "py311"
