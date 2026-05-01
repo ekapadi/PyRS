@@ -2,6 +2,8 @@ from collections.abc import Callable, Generator
 import numpy as np
 
 from pyrs.core.peak_profile_utility import get_parameter_dtype
+from pyrs.core.workspaces import HidraWorkspace
+from pyrs.peaks import FitEngineFactory as PeakFitEngineFactory  # type: ignore
 from pyrs.peaks.peak_collection import PeakCollection
 
 import pytest
