@@ -371,11 +371,11 @@ class _Masks:
             # WARNING: this section assumes that `detector_masks[DEFAULT_TAG]` already exists:
             #   it should have been written above.
             mask_array = _mask_dict.get(mask)
-            units = "degrees" if (mask_array and cls._is_solid_angle_mask(mask_array)) else ""
+            units = "degrees" if (mask_array is not None and cls._is_solid_angle_mask(mask_array)) else ""
 
             # If no specific mask is present corresponding to a reduced diffraction dataset,
             #   a link will be created to the default detector-mask.
-            if mask_array:
+            if mask_array is not None:
                 ds = NXfield(mask_array, units=units)
             else:
                 # WORKAROUND to create an `NXlink` within an *unattached* group:
