@@ -73,6 +73,11 @@ class TestInstrument:
         if defaults[2]:
             ws._mask_dict[None] = defaults[2]
 
+        # Add a new non-default entry so the second call has at least one new mask to write.
+        # (No corresponding entry is added to ws._mask_dict, so init_group will link it to DEFAULT_TAG.)
+        ws._diff_data_set["appended_mask"] = ws._diff_data_set[None].copy()
+        ws._var_data_set["appended_mask"] = ws._var_data_set[None].copy()
+
         # In real usage, solid angle masks would be different data
         masks = _Masks.init_group(ws, masks=masks)
 
