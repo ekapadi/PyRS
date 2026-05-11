@@ -23,8 +23,10 @@ def default_hb2b_geometry() -> DENEXDetectorGeometry:
     it represents the as-built instrument with no alignment corrections applied.
     """
     return DENEXDetectorGeometry(
-        NUM_PIXEL_1D, NUM_PIXEL_1D,
-        PIXEL_SIZE, PIXEL_SIZE,
+        NUM_PIXEL_1D,
+        NUM_PIXEL_1D,
+        PIXEL_SIZE,
+        PIXEL_SIZE,
         ARM_LENGTH,
         False,  # not calibrated — nominal engineering values, no shift applied
     )

@@ -186,12 +186,12 @@ class _PeakParameters:
         # Intensity is not stored -- reconstruct it and its error from the stored (h, fwhm, eta).
         # The reconstruction is shape-dependent because each peak profile has a different
         # native parameterisation and a different write-path error propagation.
-        h      = eff_values["Height"]
-        fwhm   = eff_values["FWHM"]
-        eta    = eff_values["Mixing"]
-        s_h    = eff_errors["Height"]
+        h = eff_values["Height"]
+        fwhm = eff_values["FWHM"]
+        eta = eff_values["Mixing"]
+        s_h = eff_errors["Height"]
         s_fwhm = eff_errors["FWHM"]
-        s_eta  = eff_errors["Mixing"]
+        s_eta = eff_errors["Mixing"]
 
         if peak_shape == PeakShape.PSEUDOVOIGT:
             # PseudoVoigt: $I = h \pi \Gamma / (2 (1 + F \eta))$ where $F = \sqrt{\pi \ln 2} - 1$
@@ -209,8 +209,8 @@ class _PeakParameters:
             # The subtraction removes the correlation terms that would otherwise be double-counted.
             # The guard below handles the case where floating-point noise makes $s_I^2$ slightly negative.
             _F = np.sqrt(np.pi * np.log(2)) - 1.0
-            I_val   = eff_values["Intensity"]
-            dI_dh   = np.where(h != 0, I_val / h, 0.0)
+            I_val = eff_values["Intensity"]
+            dI_dh = np.where(h != 0, I_val / h, 0.0)
             dI_dfwhm = np.where(fwhm != 0, I_val / fwhm, 0.0)
             dI_deta = -I_val * _F / (1.0 + _F * eta)
             sigma_I_sq = (dI_dh * s_h) ** 2 - (dI_dfwhm * s_fwhm) ** 2 - (dI_deta * s_eta) ** 2
@@ -227,7 +227,7 @@ class _PeakParameters:
             # Gaussian (and any other shape): Height is a native parameter, so s_h comes
             # directly from the fit and is independent of s_fwhm -- no double-counting.
             # $I = \sqrt{2\pi} \cdot h \cdot \sigma$ where $\sigma = \Gamma / (2\sqrt{2 \ln 2})$
-            sigma_g   = converter.cal_sigma(fwhm)
+            sigma_g = converter.cal_sigma(fwhm)
             s_sigma_g = converter.cal_sigma(s_fwhm)  # linear, same scale factor
             I_val = converter.cal_intensity(h, sigma_g)
             eff_values["Intensity"] = I_val

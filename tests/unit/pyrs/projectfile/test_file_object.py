@@ -186,8 +186,8 @@ class TestHidraProjectFile:
         masks = pf_read.read_diffraction_masks()
 
         # Only the intensity mask ('main') should be visible -- no '_var' entries.
-        assert "main_var" not in masks, (
-            "read_diffraction_masks returned a variance dataset as a mask: {}".format(masks)
+        assert "main_var" not in masks, "read_diffraction_masks returned a variance dataset as a mask: {}".format(
+            masks
         )
         # The default mask is stored as 'main'; read_diffraction_masks should keep it.
         assert "main" in masks, "Expected 'main' in masks, got: {}".format(masks)
@@ -197,12 +197,12 @@ class TestHidraProjectFile:
         ws.load_hidra_project(pf_read, load_raw_counts=False, load_reduced_diffraction=True)
 
         # _diff_data_set must have exactly one key: None (the default mask)
-        assert set(ws._diff_data_set.keys()) == {None}, (
-            "Expected {{None}} in _diff_data_set, got: {}".format(set(ws._diff_data_set.keys()))
+        assert set(ws._diff_data_set.keys()) == {None}, "Expected {{None}} in _diff_data_set, got: {}".format(
+            set(ws._diff_data_set.keys())
         )
         # _var_data_set must also have exactly one key: None
-        assert set(ws._var_data_set.keys()) == {None}, (
-            "Expected {{None}} in _var_data_set, got: {}".format(set(ws._var_data_set.keys()))
+        assert set(ws._var_data_set.keys()) == {None}, "Expected {{None}} in _var_data_set, got: {}".format(
+            set(ws._var_data_set.keys())
         )
 
         # Intensity values must round-trip exactly (stored as float64)
