@@ -11,6 +11,7 @@ import pytest
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.NXstress._instrument import _Instrument, _Masks
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG
+from tests.util.mask_helpers import add_named_detector_mask
 
 
 class TestInstrument:
@@ -73,11 +74,6 @@ class TestInstrument:
         if defaults[2]:
             ws._mask_dict[None] = defaults[2]
 
-        # Add a new non-default entry so the second call has at least one new mask to write.
-        # (No corresponding entry is added to ws._mask_dict, so init_group will link it to DEFAULT_TAG.)
-        ws._diff_data_set["appended_mask"] = ws._diff_data_set[None].copy()
-        ws._var_data_set["appended_mask"] = ws._var_data_set[None].copy()
-
         # In real usage, solid angle masks would be different data
         masks = _Masks.init_group(ws, masks=masks)
 
@@ -90,17 +86,19 @@ class TestInstrument:
     ):
         """Verify behavior when attempting to add duplicate masks
 
-        This test triggers the duplicate-check behavior, because links to
-        the default detector-mask are automatically created when there are no
-        masks in the workspace's mask dict.
+        A non-default named mask is added to the workspace.  The first call to
+        `init_group` writes it; the second call must raise because the same
+        name is already present in the masks group.
         """
         ws = load_HidraWorkspace(
             file_name=self.PROJECT_FILE_C, name="test_workspace", load_raw_counts=True, load_reduced_diffraction=True
         )
 
-        # Create masks:
-        #   this will both intialize a mask at '_DEFAULT_' and also produce links to
-        #   this default detector-mask for all entries in `ws._diff_data_set`.
+        # Add a non-default named mask so that `mask_keys(ws)` contains a
+        # name other than DEFAULT_TAG.  The first `init_group` call will write
+        # it; the second call will find it already in `names` and raise.
+        add_named_detector_mask(ws, "test_mask")
+
         masks = _Masks.init_group(ws)
 
         with pytest.raises(RuntimeError, match=r".*Usage error: mask .* has already been written.*"):

@@ -352,7 +352,6 @@ class _Masks:
         ws_data_keys = set(ws._diff_data_set.keys())
         ws_mask_keys = set(ws._mask_dict.keys())
 
-        new_masks_added = 0
         for mask in cls.mask_keys(ws):
             if mask == DEFAULT_TAG:
                 # WARNING: the default-mask should have been written before this point.
@@ -391,15 +390,6 @@ class _Masks:
 
             # append the mask's name to the `names` list
             names.append(mask)
-            new_masks_added += 1
-
-        # When appending, at least one new (non-DEFAULT_TAG) mask must be added.
-        # If nothing was added, DEFAULT_TAG was already written and the call is a duplicate.
-        if appending and new_masks_added == 0:
-            raise RuntimeError(
-                f'Usage error: mask "{DEFAULT_TAG}" has already been written;\n'
-                + "  names must be distinct over both detector and solid-angle masks."
-            )
 
         masks["names"].resize((len(names),))
         masks["names"] = names
