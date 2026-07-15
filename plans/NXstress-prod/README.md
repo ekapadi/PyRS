@@ -12,6 +12,23 @@ This document maps the current I/O terrain and flags gaps that must be
 resolved (or explicitly scheduled) before and during wiring NXstress into the
 GUI. The phased schedule in Section 3 is the primary deliverable.
 
+This document is the primary reference for the NXstress production hookup work. Sub-specifications for each PR-sized chunk of work are listed below.
+
+## Sub-specifications
+
+| Spec | Title | Phase | Depends on |
+|---|---|---|---|
+| [01](01-config-and-test-infra.md) | Config infrastructure & test framework | 1 | — |
+| [02](02-peak-and-texture-nxstress.md) | NXstress I/O for PeakFitting & Texture viewers | 1 | 01 |
+| [03](03-combine-runs-nxstress.md) | NXstress I/O for CombineRuns viewer | 1 | 01 |
+| [04](04-nxstress-internal-cleanup.md) | NXstress internal cleanup (Phase 2 TODOs) | 2 | 02, 03 |
+| [05](05-strain-stress-viewer.md) | StrainStressViewer NXstress hookup | 3 | 04 |
+| [06](06-manual-reduction-prereqs.md) | Manual reduction PyRS prerequisites | 4 | — |
+| [07](07-append-and-manual-reduction-nxstress.md) | NXstress append support & ManualReduction hookup | 4 | 05, 06 |
+| [08](08-fit-spectrum-prereqs.md) | Reconstructed fit spectrum & calibration fidelity (PyRS) | 5 | — |
+| [09](09-fit-spectrum-nxstress.md) | Fit spectrum & calibration fidelity (NXstress) | 5 | 07, 08 |
+| [10](10-flip-defaults.md) | Flip defaults — NXstress becomes primary | 6 | 09 |
+
 ---
 
 ## 1. Current I/O Architecture
