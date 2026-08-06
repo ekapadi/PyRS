@@ -2,7 +2,10 @@
 
 **Plan:** [NXstress GUI Hookup](README.md)
 **Phase:** 3
-**Depends on:** [04 — NXstress internal cleanup](04-nxstress-internal-cleanup.md)
+**Depends on:**
+- [01 — Config infrastructure & test framework](01-config-and-test-infra.md)
+- [04 — NXstress internal cleanup](04-nxstress-internal-cleanup.md)
+- [04b — Multi-workspace NXstress I/O](04b-multi-workspace-nxstress.md)
 
 ---
 
@@ -13,28 +16,69 @@ measurements (directions 11, 22, 33) can be saved and loaded as a single
 `.nxs` file.
 
 The current viewer loads N separate `HidraProjectFile`s per direction into
-three parallel slots (`filenames_11/22/33`). The NXstress equivalent is a
-single NXentry whose `NXreflections` compound peak index is extended with a
-`direction` axis, so all three directions coexist within one entry.
+three parallel slots (`filenames_11/22/33`). This is exactly the N-workspace
+case spec 04b builds general support for: one `HidraWorkspace` per direction
+in, one `.nxs` `NXentry` out. This spec's contribution is narrower than
+originally scoped — it declares `direction` as one of 04b's discriminator
+fields, rather than inventing its own index-extension machinery. The
+schema question of whether `NXreflections` can carry additional index
+columns at all is answered once, generally, at 04b kickoff (see
+`open-questions/04b-multi-workspace-nxstress.md` Q1); this spec only needs
+to confirm that `direction` is the right name and semantics for one such
+column.
 
-> **⚠ Schema check required before implementation begins.**
-> Before modifying `_peaks.py::PeakIndex`, verify against the canonical
-> NXstress.xml schema whether adding a `direction` axis to `NXreflections`
-> is conformant, or whether a different mechanism (multi-NXentry, dedicated
-> stress-field subgroup, etc.) is the schema-intended approach. Update
-> the decision in README.md Section 4 (Q3) accordingly and revise the
-> implementation items below if needed.
+### `direction` needs a home on `HidraWorkspace`, not just a config entry
+
+04b resolves discriminator values *from* the workspace object (a matching
+`@property`, else a `SampleLogs` fallback) — it does not accept them as a
+separate argument to `write()`. But today, the viewer tracks direction
+purely at the *model* level (`filenames_11/22/33` slots); `HidraWorkspace`
+has no notion of direction at all. Per Chris's answer to
+`open-questions/05-strain-stress-viewer.md` Q1 — direction is something "a
+User defines... in the GUI or API," not something derived from existing log
+data — **decided:** this spec adds a real, settable `direction` property to
+`HidraWorkspace`, per 04b's own forward-looking convention note (any later
+spec wanting a first-class accessor should add a `@property`, matching
+`HidraWorkspace`'s existing style). The viewer sets `ws.direction` on each
+per-direction workspace before calling `write()`; 04b's read-path resolver
+(now bidirectional — see the "Discriminator value resolution" update in
+[04b](04b-multi-workspace-nxstress.md)) sets it back onto each reconstructed
+workspace on `read()`, so the viewer can select `ws.direction == "11"` etc.
+with no extra plumbing.
+
+### Config precondition
+
+04b's discriminator mechanism only works if the deployment's
+`nxstress.discriminator_fields` actually includes `"direction"` — if some
+other field is configured instead (or none), all three per-direction
+workspaces would resolve to the same discriminator tuple, most likely
+surfacing as an opaque duplicate-index error several layers removed from
+the real cause. **Decided:** `save_as_nxstress` checks
+`"direction" in load_config().nxstress.discriminator_fields` before calling
+`write()` and raises a clear, StrainStress-specific error if not; and the
+shipped default in `pyrs/config/pyrs.default.yml` (delivered by spec 01) is
+updated to `nxstress.discriminator_fields: ["direction"]` (was `[]`), so
+this works out of the box rather than requiring every deployment to opt in
+manually.
 
 ---
 
 ## Scope
 
 **In scope:**
-- NXstress.xml schema review (decision gate — must happen first)
-- Extend `_peaks.py::PeakIndex` with a `direction` field (or adopt the
-  schema-preferred alternative)
-- Update `sort_key`, `validateNoDuplicatePeaks`, `_init`, `init_group`,
-  and `peakCollectionsFromNexus` in `_peaks.py`
+- Add a settable `direction` `@property` to `HidraWorkspace`
+  (`pyrs/core/workspaces.py`) — see "`direction` needs a home..." above.
+- Declare `direction: str` as one of 04b's discriminator fields on
+  `_peaks.py::PeakIndex` (values `"11"`, `"22"`, `"33"`), using the
+  mechanism 04b already implements — no new index-extension machinery is
+  built here.
+- Confirm `direction` composes correctly with 04b's `sort_key`,
+  `validateNoDuplicatePeaks`, `_init`, `init_group`, and
+  `peakCollectionsFromNexus`; add StrainStress-specific tests, not new
+  mechanism.
+- `save_as_nxstress`'s config precondition check (see "Config precondition"
+  above), and the corresponding default-config update in
+  `pyrs/config/pyrs.default.yml`.
 - Wire NXstress read path into `strainstressviewer/model.py` —
   `load_hidra_project_file` / `load_hidra_project_files` — so a single
   `.nxs` file replaces the N-files-per-direction pattern
@@ -45,70 +89,107 @@ single NXentry whose `NXreflections` compound peak index is extended with a
 **Out of scope:**
 - Resolving `NotImplementedError` methods in `fields.py` beyond those
   actually hit on the read path (fix only what the test exercises)
-- Append support (spec 07)
+- Append support (spec 04c) — this spec always writes a fresh file
 - Any change to the existing JSON state-save or CSV export paths
 
 ---
 
 ## PyRS Changes
 
+- `pyrs/core/workspaces.py` — add a settable `direction` `@property` to
+  `HidraWorkspace` (get/set, backed by a plain instance attribute; no
+  persistence requirement beyond what NXstress round-trips via the
+  bidirectional resolver in 04b). Matches the existing `@property`
+  convention already used for `name`, `hidra_project_file`,
+  `reduction_masks`, `calibration_file`, `sample_log_names`
+  (`pyrs/core/workspaces.py:55-1155`).
 - `pyrs/dataobjects/fields.py` — resolve any `NotImplementedError` in
   `StrainField` / `StressField` that is exercised by the read-back path
   (i.e., when reconstructing a `StressField` from the direction-indexed
   peak collections returned by `NXstress.read()`). Fix only the methods
   the round-trip test actually calls.
-- `pyrs/core/workspaces.py` — confirm `HidraWorkspace` can represent
-  (or cleanly hold) sample-log content from a direction-merged measurement.
-  If a direction-aware container is needed, design it here.
+
+_The direction-aware `HidraWorkspace` container question (previously listed
+here) is retired: 04b's `list[HidraWorkspace]` signature means the viewer
+passes one workspace per direction directly, with no merged container
+needed._
 
 ---
 
 ## NXstress Changes
 
-### Schema-driven PeakIndex extension
+_None beyond 04b/04c's own scope._ The general index-extension mechanism
+(schema check, `PeakIndex` shape, `sort_key`/`validateNoDuplicatePeaks`/
+`_init`/`init_group`/`peakCollectionsFromNexus` changes, and the
+bidirectional discriminator resolver) is built once in
+[04b](04b-multi-workspace-nxstress.md), not here. This spec's work against
+NXstress is limited to:
+- Confirm `direction: str` (values `"11"`, `"22"`, `"33"`) is a valid
+  discriminator value for 04b's mechanism, and that the new `direction`
+  property (this spec's PyRS Changes) round-trips correctly through 04b's
+  get/set resolver.
+- Add StrainStress-specific tests exercising `direction` through 04b's
+  general read/write/split path.
 
-_Subject to the schema check outcome._
+### `pyrs/config/pyrs.default.yml`
 
-Assumed baseline (direction axis on `NXreflections`):
-- Add `direction: str` field to `_peaks.py::PeakIndex` (e.g., `"11"`,
-  `"22"`, `"33"`).
-- Update `sort_key` to include direction in the ordering tuple.
-- Update `validateNoDuplicatePeaks` to treat direction as part of the
-  uniqueness key.
-- Add `direction` dataset to `NXreflections` in `_init` and `init_group`.
-- Update `peakCollectionsFromNexus` to reconstruct per-direction
-  `PeakCollection` lists.
+- Update the default `nxstress.discriminator_fields` from `[]` to
+  `["direction"]`, so multi-direction save/load works without per-deployment
+  config changes.
 
 ### `pyrs/interface/strainstressviewer/model.py`
 
+- `save_as_nxstress(filename)`: check
+  `"direction" in load_config().nxstress.discriminator_fields`; raise a
+  clear error if not present. Set `ws.direction = "11"` / `"22"` / `"33"`
+  on each of the (up to three) direction workspaces. Call
+  `NXstress(filename, "w").write([ws_11, ws_22, ws_33], peakss)` per 04b's
+  signature.
 - `load_hidra_project_file(filename, direction)`: if `*.nxs`, call
-  `NXstress(filename, "r").read()` and extract the subset of peak
-  collections matching the requested direction.
+  `NXstress(filename, "r").read()` (returning `list[HidraWorkspace]` per
+  04b, each with `.direction` already set by 04b's read-side resolver) and
+  select `next(ws for ws in wss if ws.direction == direction)`.
 - `load_hidra_project_files(filenames, direction)`: if a single `.nxs`
   file is supplied (rather than N `.h5` files), read all directions in
   one call and populate the three direction slots.
-- Add a method `save_as_nxstress(filename)` that assembles all three
-  direction workspaces and peak collections, attaches direction labels,
-  and calls `NXstress(filename, "w").write(...)`.
 
 ### `pyrs/interface/strainstressviewer/strain_stress_view.py`
 
 - Add **File → Save as NXstress…** action with filter `"NXstress (*.nxs)"`.
 - Extend the load file dialog to include `"NXstress (*.nxs)"`.
+- **Config-driven enablement (both actions, always visible, never hidden):**
+  the new **Save as NXstress…** action gets
+  `.setEnabled(load_config().nxstress.enable)`; this viewer has no existing
+  `.h5`-format "Save" action to gate (its current save paths are CSV/JSON,
+  unaffected by this spec), so there is no `legacy_io.enable` check here.
+- **Extension is imposed, not user-chosen:** `save_as_nxstress` enforces
+  `nxstress.extension` on the `QFileDialog`'s returned filename, regardless
+  of what a user types.
 
 ---
 
 ## Tests
 
+`tests/unit/pyrs/core/test_workspaces.py` (extend):
+- `direction` property: default value (unset), get/set round-trip, and that
+  setting it on one `HidraWorkspace` instance doesn't affect another.
+
 `tests/integration/test_nxstress_viewer_roundtrip.py` (extend):
 
 - Construct minimal workspaces and peak-collection lists for all three
-  directions using spec-01 fixtures.
+  directions using spec-01 fixtures; set `.direction` on each before saving.
 - Call `model.save_as_nxstress(path)`.
 - Load back with `model.load_hidra_project_files([path], direction)` for
-  each direction.
+  each direction; assert each returned workspace's `.direction` matches
+  what was requested.
 - Assert that the reconstructed `StressField` matches the CSV-summary
   output produced from the original inputs.
+- Config-precondition error: call `save_as_nxstress` with
+  `nxstress.discriminator_fields` configured to something other than
+  `["direction"]` (e.g. `[]`); assert the clear StrainStress-specific error
+  is raised, not an opaque duplicate-index error from 04b.
+- Enablement wiring: with `nxstress.enable: false`, assert
+  **Save as NXstress…** is disabled but still visible.
 
 ---
 
@@ -136,6 +217,12 @@ Assumed baseline (direction axis on `NXreflections`):
   StrainStressViewer, compute stress, **File → Save as NXstress…**, confirm
   a single `.nxs` file is written; then load the `.nxs` back and confirm
   the stress field is reproduced.
+- `pytest tests/unit/pyrs/core/test_workspaces.py` — all pass including the
+  new `direction` property tests.
 - `pytest tests/integration/test_nxstress_viewer_roundtrip.py` — all pass.
 - `pytest tests/unit/pyrs/utilities/NXstress/` — all pass including updated
-  `test_peaks.py` / `test_peaks_read.py` for the direction axis.
+  `test_peaks.py` / `test_peaks_read.py` for the direction axis, and 04b's
+  resolver-symmetry tests exercising a real get/set property (this spec's
+  `direction`) rather than only the log-fallback case.
+- Confirm the shipped `pyrs/config/pyrs.default.yml` includes
+  `nxstress.discriminator_fields: ["direction"]`.

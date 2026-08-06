@@ -68,6 +68,17 @@ through as-is to `NXstress.write`.
   slot that calls `model.save_fit_result` with a `QFileDialog` using
   filter `"NXstress (*.nxs)"`.
 - Extend the existing load filter to include `"NXstress (*.nxs)"`.
+- **Config-driven enablement (both actions, always visible, never hidden):**
+  `actionSaveAsNXstress.setEnabled(load_config().nxstress.enable)`; the
+  existing `Save` (`.h5`) action gets
+  `.setEnabled(load_config().legacy_io.enable)`. Uses Qt `setEnabled`, not
+  `setVisible` — an action stays in the menu, just grayed out, when its
+  format is disabled.
+- **Extension is imposed, not user-chosen:** each save slot enforces its
+  own section's `extension` (`nxstress.extension` / `legacy_io.extension`)
+  on whatever filename the `QFileDialog` returns — a user typing a
+  different extension does not change which writer runs or what the file
+  is named on disk.
 
 ### `pyrs/interface/texture_fitting/model.py`
 
@@ -76,7 +87,8 @@ through as-is to `NXstress.write`.
 
 ### `pyrs/interface/texture_fitting/texture_fitting_viewer.py`
 
-- Same filter and action additions as for PeakFittingViewer.
+- Same filter and action additions as for PeakFittingViewer, including the
+  config-driven enablement and extension-imposition rules above.
 
 ---
 
@@ -93,6 +105,10 @@ through as-is to `NXstress.write`.
 - **Texture round-trip:** same pattern with a multi-mask `PeakCollection`.
 - **Suffix routing:** assert that a `.h5` path still goes through the
   `HidraProjectFile` code path (no regression).
+- **Enablement wiring:** with `nxstress.enable: false`, assert
+  `actionSaveAsNXstress.isEnabled()` is `False` while the action remains
+  visible; with `legacy_io.enable: false`, assert the existing `Save`
+  action is disabled the same way.
 
 ---
 

@@ -1,48 +1,48 @@
 # Open Questions — 06 Manual Reduction PyRS Prerequisites
 
 **Spec:** [06-manual-reduction-prereqs.md](../06-manual-reduction-prereqs.md)
-**Blocking:** No — both questions are scoped as things to check during this
-spec's own implementation, not external blockers.
+**Blocking:** No — this spec is no longer on the NXstress critical path at
+all (see the spec's Overview); both questions below are now about an
+independent PyRS cleanup item, not about anything spec 07 needs.
 
 ---
 
-## Q1 — Should `save_project` delegate to, wrap, or replace `ReductionApp.save_diffraction_data`?
+## Q1 — RESOLVED: `save_project` has no callers, so delegate/wrap/replace is moot
 
-Spec text is explicit that this isn't decided yet: *"Specifically check how
-`ReductionApp.save_diffraction_data` (L348) is currently called and whether
-`save_project` should delegate to it, wrap it, or replace it."*
-
-**Why it matters:** these three options have different blast radii —
-delegating keeps `save_diffraction_data` as the single source of truth and
-risks double-invocation bugs if both are called from different code paths;
-wrapping adds a thin new code path that must stay in sync; replacing risks
-breaking whatever currently calls `save_diffraction_data` directly if other
-callers exist beyond the manual-reduction flow.
-
-**Next step:** grep all callers of `ReductionApp.save_diffraction_data`
-before deciding; if `HB2BReductionManager.save_project` is the only
-consumer, replacing/delegating is safe — if other paths call it directly,
-wrapping without touching the existing signature is safer.
+Originally: *"Specifically check how `ReductionApp.save_diffraction_data`
+(L348) is currently called and whether `save_project` should delegate to
+it, wrap it, or replace it."* Traced directly against the code: `save_project`
+(the real class is `ReductionController`, not `HB2BReductionManager` —
+that name belongs to a different, unrelated class in
+`pyrs/core/reduction_manager.py`, used internally by `ReductionApp`) has
+**zero callers anywhere in the codebase**, including the model's own
+passthrough (`manual_reduction_model.py:179-181`), which is itself never
+called. There is no double-invocation risk to weigh, because nothing
+currently invokes `save_project` at all — implement it however is cleanest.
 
 **Chris:** There was a dead code instance of `save_diffraction_data` that has been deleted in a recent PR. 
 
+**Correction:** this refers to a different, already-removed call site — the
+one at `pyrs_api.py:348`, inside `reduce_hidra_workflow`, is still live and
+actively used, both there and in 7+ integration test call sites.
+
 ---
 
-## Q2 — Are `nexus_conversion.py:118` and `:374` reachable from the manual-reduction save path, from some other path, or dead code?
+## Q2 — RESOLVED: `nexus_conversion.py:118`/`:374` are unrelated to any save path
 
-The spec frames this as a three-way branch to resolve during the audit,
-without pre-judging the answer: implement if reachable from save, file a
-separate issue if reachable elsewhere, remove if dead.
-
-**Why it matters:** this determines whether this spec's scope grows (if
-either branch is reachable from save and must be implemented here), spins
-off a separate tracked issue (if reachable elsewhere), or shrinks (if dead
-code can simply be deleted). Spec 07 blocks on this spec being "done," so
-an ambiguous or deferred answer here would silently push scope into spec 07.
-
-**Next step:** trace call graphs from `HB2BReductionManager.save_project`
-and from `ManualReductionViewer`'s other entry points into
-`nexus_conversion.py` to determine reachability for both line numbers
-before deciding which of the three branches applies.
+Originally framed as a three-way branch (implement if reachable from save,
+track separately if reachable elsewhere, remove if dead). Traced directly:
+L118 is an unsupported `TimeSeriesProperty` log type during NeXus log
+conversion; L374 rejects non-`.xml` mask files. Both are reachable from
+`reduce_hidra_workflow`'s NeXus-*conversion* step
+(`converter.convert()`, `pyrs_api.py:319-320`) — **not** from any
+save/output-format path. They have no bearing on NXstress's hookup (spec
+07, which touches `reduce_hidra_workflow`'s save step specifically) and no
+longer block anything in this plan.
 
 **Chris:** `ManualReductionViewer` is a realatively old codebase. The `ManualReductionViewer` should use `HB2BReductionManager.save_project`.
+
+**Correction:** this named the wrong class — `HB2BReductionManager` isn't
+part of `ManualReductionViewer` at all; the real class there is
+`ReductionController`. Regardless, this doesn't change the finding above:
+neither `nexus_conversion.py` branch is on the save path.

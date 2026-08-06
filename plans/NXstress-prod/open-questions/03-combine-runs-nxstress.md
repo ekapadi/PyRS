@@ -3,7 +3,7 @@
 **Spec:** [03-combine-runs-nxstress.md](../03-combine-runs-nxstress.md)
 **Blocking:** No
 
-## Q1 — Read-back completeness for the CombineRuns case
+## Q1 — RESOLVED: read-back completeness for the CombineRuns case
 
 Same plan-level caveat as spec 02 (README.md:237-241): `NXstress.read()`
 doesn't reconstruct raw counts unless `input_data` was written. This spec is
@@ -11,17 +11,19 @@ explicitly export-only (loading a `.nxs` back into CombineRunsViewer is
 out of scope), but the round-trip *test* in this spec does read the file
 back via `NXstress.read()` to assert equality.
 
-**Why it matters:** if the merged workspace's raw counts are expected to
-match after read-back in the round-trip test, and `input_data` isn't written
-by `NXstress.write` for combined runs, the test will need to special-case
-which fields it compares (sub-run counts and sample-log arrays only, per the
-spec's own Tests section) rather than a full workspace equality check.
-
-**Next step:** confirm the round-trip test's assertion scope matches what
-`NXstress.read()` can actually reconstruct — the spec's Tests section
-already narrows this to "sub-run counts and sample-log arrays," which
-suggests this was anticipated but not stated as a deliberate scoping
-decision.
-
-**Reponse from Chris:** What prevents us from testing that `NXstress.read()`
+**Response from Chris:** What prevents us from testing that `NXstress.read()`
 will reconstruct raw counts when `input_data` are present?
+
+**Resolved:** nothing prevents that as a general NXstress capability — it's
+a legitimate test, just not one this spec's own round-trip test should own.
+`CombineRunsModel.combine_project_files` calls
+`self._hidra_ws.load_hidra_project(_project, load_raw_counts=False, ...)`
+(`combine_runs_model.py:17`) — raw counts are never loaded by this viewer's
+own merge step, so the workspace this spec exports never has `input_data`
+to write in the first place. Testing "does `NXstress.read()` reconstruct
+raw counts when `input_data` is present" would require a workspace this
+spec doesn't actually produce; that test belongs at the general NXstress
+level (already exercised by other specs' fixtures, not CombineRuns-specific
+ones). This spec's round-trip test legitimately narrows to sub-run counts
+and sample-log arrays — not an arbitrary scoping choice, but a direct
+consequence of `load_raw_counts=False`.

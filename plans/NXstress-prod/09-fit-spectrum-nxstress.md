@@ -3,7 +3,7 @@
 **Plan:** [NXstress GUI Hookup](README.md)
 **Phase:** 5 (NXstress side)
 **Depends on:**
-- [07 — Append support & ManualReduction hookup](07-append-and-manual-reduction-nxstress.md)
+- [07 — ManualReductionViewer NXstress hookup](07-manual-reduction-nxstress.md)
 - [08 — Fit spectrum & calibration fidelity (PyRS)](08-fit-spectrum-prereqs.md)
 
 ---
@@ -11,10 +11,12 @@
 ## Overview
 
 Wire the PyRS capabilities added in spec 08 into the NXstress writer and
-reader, replacing the last remaining NaN placeholders with real data.
-After this spec, NXstress files produced by PyRS will be fully populated:
-fit spectra, correct detector geometry, and (if available) the beam-intensity
-profile.
+reader, replacing NaN placeholders with real data — **except
+`STRESS_FIELD`, which stays a documented gap** (spec 08 investigated it and
+found the item genuinely blocked on missing data/clarification from the
+instrument-science team, not merely unimplemented; see spec 08's Overview
+and `open-questions/08-fit-spectrum-prereqs.md` Q3). This spec's other
+three items are unaffected by that block and proceed normally.
 
 ---
 
@@ -22,20 +24,47 @@ profile.
 
 **In scope:**
 - Populate `diffractogram/fit` and `diffractogram/fit_errors` from the fit
-  engine's new reconstructed-spectrum method (`_fit.py:426-429, 486-487`)
-- Fix the L2 arm-shift round-trip in `_instrument.py:138-140` using the new
-  `DENEXDetectorGeometry.arm_shift_applied` property
-- Populate NXbeam intensity profile in `_instrument.py:127` if the workspace
-  carries one (or confirm and close as "not applicable" per spec 08 findings)
-- Fix `_sample.py:107` STRESS_FIELD dimensions using the confirmed shape
-  from spec 08
-- Update user-facing docs and release notes to remove NaN-placeholder warnings
-  added in spec 02
+  engine's new reconstructed-spectrum method. Placeholder comment at
+  `_fit.py:425-429`, actual field creation at `_fit.py:430-438` (corrected
+  from an earlier draft's imprecise "426-429, 486-487" — the latter range
+  is an unrelated docstring note in a different class, not `init_group`).
+  These fields are currently **zero-sized resizable datasets**
+  (`np.empty((0,0))`, `fillvalue=np.nan`), not pre-shaped NaN arrays — the
+  writer must resize them to the real shape before populating, not
+  index-assign into an already-correctly-shaped array (same
+  `maxshape=(None,...)` resizable pattern used elsewhere in this codebase,
+  e.g. `_peaks.py`).
+- Fix the L2 arm-shift round-trip in `_instrument.py:132-150` (the
+  calibrated/uncalibrated branch; the specific TODO + `distance =
+  geom.arm_length` line is at `:138-140`, unchanged from the earlier
+  citation) using the new `DENEXDetectorGeometry.arm_shift_applied` (and
+  the retained pre-shift arm-length value). Note: the double-counting risk
+  this item originally worried about is **already resolved at the source**
+  in spec 08 — `DENEXDetectorGeometry` itself now distinguishes base
+  distance from applied shift, so this spec's fix is a straightforward
+  consumer update, not a workaround. Confirmed still live today: both
+  `translation_z = shift.center_shift_z` (`:135`) and `distance =
+  geom.arm_length` (`:140`) are written, which is exactly the double-count
+  spec 08's fix addresses.
+- Populate the `NXbeam` intensity profile (constructed at
+  `_instrument.py:126`; the TODO comment itself is at `:127`) by reading
+  `HidraWorkspace.beam_intensity_profile` (spec 08) **unconditionally** —
+  no "if the workspace carries one" branching; the property always has a
+  value (a documented uniform/constant default when no real measurement
+  exists), so this spec's writer code has no uniform-specific logic of its
+  own.
+- Update user-facing docs and release notes to remove NaN-placeholder
+  warnings added in spec 02 — **except** for `STRESS_FIELD`, whose warning
+  stays in place; it remains a real, current limitation.
 
 **Out of scope:**
+- `_sample.py:107` `STRESS_FIELD` dimensions — **blocked**, carried over
+  unresolved from spec 08 (see Overview). Do not attempt to guess a shape
+  here; leave the existing TODO in place, updated only if spec 08's
+  blocker resolves in the meantime.
 - Any remaining `NotImplementedError` in `fields.py` not exercised by the
-  test suite at this point
-- GUI changes (all viewers already wired; no new actions needed)
+  test suite at this point.
+- GUI changes (all viewers already wired; no new actions needed).
 
 ---
 
@@ -47,38 +76,72 @@ _None_ — all PyRS-side changes were made in spec 08.
 
 ## NXstress Changes
 
-### `pyrs/utilities/NXstress/_fit.py` — fit spectrum (L426-429, L486-487)
+### `pyrs/utilities/NXstress/_fit.py` — fit spectrum (L425-429, L430-438)
 
 In `_Diffractogram.init_group(ws, maskName, peakss)`:
-- Call the new fit-engine method (from spec 08) to obtain
-  `model_intensity` and `model_variance` for each `(mask, scan_point)`.
-- Write these into the `diffractogram/fit` and `diffractogram/fit_errors`
-  NXfields instead of initializing to `NaN`.
+- The `peakss: list[PeakCollection]` parameter **already exists in this
+  method's signature** (`_fit.py:398`) but is currently unused in the body
+  — no new parameter is needed, just use the argument already being passed
+  in (caller: `_fit.py:555`).
+- Call the new fit-engine method (from spec 08) on each `PeakCollection` in
+  `peakss` to obtain `model_intensity` and `model_variance` for each
+  `(mask, scan_point)`.
+- **Resize** the `fit`/`fit_errors` fields to the real shape before writing
+  — they start as zero-sized resizable datasets, not pre-shaped NaN arrays.
 - If the method is unavailable for a given scan point (e.g., fit did not
-  converge), fall back to `NaN` for that point only with a logged warning.
+  converge), that scan point is now excluded upstream in `PeakCollection`
+  itself (spec 08's `_exclude_list` extension) — write `NaN` for excluded
+  points; no separate logging decision is needed here (see
+  `open-questions/09-fit-spectrum-nxstress.md` Q2).
 
 In `_Diffractogram.diffractogramFromNexus(dg)`:
-- Read `fit` and `fit_errors` fields if present; expose them in the return
-  value so callers can use the reconstructed spectrum (e.g., for residual
-  visualization in a future viewer feature).
+- **Change the return type to a `NamedTuple`** (e.g. `DiffractogramData`
+  with fields `scan_points, two_theta, diffractogram, diffractogram_errors,
+  fit, fit_errors`) rather than extending the current plain 4-tuple
+  `(scan_points, two_theta, diffractogram, diffractogram_errors)` to six
+  positional values. Self-documenting at the call site and avoids
+  positional ambiguity if more fields are ever added later. Update the one
+  existing caller (`NXstress.py:218`) to match.
+- Read `fit` and `fit_errors` fields (not read at all today) so callers can
+  use the reconstructed spectrum (e.g., for residual visualization in a
+  future viewer feature).
 
-### `pyrs/utilities/NXstress/_instrument.py` — L2 arm-shift (L138-140)
+### `pyrs/utilities/NXstress/_instrument.py` — L2 arm-shift (L132-150)
 
 Use `DENEXDetectorGeometry.arm_shift_applied` (from spec 08) to determine
 whether to write the raw L2 or the arm-shift-corrected L2 into the
-`NXdetector`. Update `instrumentFromNexus` correspondingly so the
-round-trip is lossless.
+`NXdetector`, and the retained pre-shift arm-length value where the raw
+distance is needed alongside the shift amount. No double-counting guard is
+needed in the writer — `DENEXDetectorGeometry` already keeps the two
+values distinct (spec 08).
 
-### `pyrs/utilities/NXstress/_instrument.py` — NXbeam profile (L127)
+**`instrumentFromNexus` (`_instrument.py:223`) needs concrete, not vague,
+reader-side work.** It currently reads `trans["distance"]` directly as
+`arm_length` and constructs `DENEXDetectorGeometry(..., arm_length,
+calibrated)` (`:253-258`), with no concept of "was a shift already folded
+into this distance." Once the writer emits `arm_shift_applied` plus the
+unshifted arm-length value, the reader must read that flag and use it to
+decide whether to call the (spec-08-fixed) `apply_shift` or use the raw
+value directly — otherwise a round-trip either double-shifts or
+under-shifts. This replaces the earlier, vaguer "update
+`instrumentFromNexus` correspondingly so the round-trip is lossless."
 
-Per the spec-08 finding: either populate the NXbeam field from the workspace
-attribute identified in spec 08, or add a one-line comment closing the TODO
-as "not applicable — no beam profile data path exists in PyRS" and remove the
-TODO marker.
+### `pyrs/utilities/NXstress/_instrument.py` — NXbeam profile (L126-127)
 
-### `pyrs/utilities/NXstress/_sample.py` — STRESS_FIELD shape (L107)
+Read `HidraWorkspace.beam_intensity_profile` (spec 08) and write it into
+`NXbeam` unconditionally — the property always returns a value (a
+documented uniform/constant default, or real data if a future reduction
+change ever populates it), so there is no "if present" branch and no
+"not applicable" closing note needed. Remove the existing TODO marker.
 
-Apply the confirmed shape from spec 08 and remove the TODO comment.
+### `pyrs/utilities/NXstress/_sample.py` — STRESS_FIELD shape (L107) — BLOCKED
+
+**Do not touch this code in this spec.** Spec 08 investigated this item and
+found it genuinely blocked — no file anywhere in the repository contains a
+usable example, and the shape/dtype remain unverified (see
+`open-questions/08-fit-spectrum-prereqs.md` Q3). Leave the existing TODO
+comment in place; update it only to note that this was actively
+investigated and remains blocked, not left untouched by oversight.
 
 ---
 
@@ -87,32 +150,46 @@ Apply the confirmed shape from spec 08 and remove the TODO comment.
 `tests/unit/pyrs/utilities/NXstress/test_fit.py` (extend):
 - Write a `.nxs` file with a fitted workspace where the fit engine returns
   a reconstructed spectrum; assert `diffractogram/fit` is not all-NaN and
-  has shape `(n_sub_runs, n_2theta)`.
-- Write a workspace where one sub-run did not converge; assert that sub-run's
-  `fit` row is NaN but others are not.
+  has shape `(n_sub_runs, n_2theta)` (confirming the resize-before-write
+  behavior, not a pre-shaped array left over from initialization).
+- Write a workspace where one sub-run is excluded (via spec 08's extended
+  `_exclude_list`, not a separate NXstress-side convergence check); assert
+  that sub-run's `fit` row is NaN but others are not.
+- Assert `diffractogramFromNexus` returns the new `NamedTuple` type
+  (`DiffractogramData`), with `fit`/`fit_errors` populated when present.
 
 `tests/unit/pyrs/utilities/NXstress/test_instrument.py` (extend):
 - Round-trip a calibrated `DENEXDetectorGeometry` through NXstress;
   assert the read-back geometry has `arm_shift_applied == True` and the
   L2 value matches the original.
+- Round-trip `beam_intensity_profile`: assert the written `NXbeam` field
+  matches whatever value the workspace carried (the documented uniform
+  default, in the absence of a real measurement).
 
 ---
 
 ## Delivered Feature
 
 > **For end users and downstream NXstress consumers:**
-> NXstress files produced by PyRS are now fully populated — no NaN placeholders
-> remain for data that PyRS actually computes:
+> NXstress files produced by PyRS are now populated with real data for
+> everything PyRS actually computes:
 >
 > - **Reconstructed fit spectra** (`diffractogram/fit`, `diffractogram/fit_errors`)
 >   are written for every sub-run where the peak fit converged. These can be
 >   used by external tools for residual analysis and quality assessment.
+>   The propagated variance is a documented approximation that neglects
+>   parameter correlations (spec 08) — not presented as exact.
 > - **Calibrated detector geometry** (L2, arm shift) round-trips correctly —
 >   a calibrated measurement read back from NXstress gives the same geometry
 >   as the original.
+> - **Beam-intensity profile** is written as a documented uniform/constant
+>   value, reflecting PyRS's existing assumption explicitly rather than
+>   leaving `NXbeam` silently empty.
 >
-> PyRS NXstress files are now fully compatible with external NXstress-aware
-> analysis software.
+> **Known limitation, carried forward from spec 08:** `STRESS_FIELD`
+> remains a documented gap, not a NaN placeholder quietly left behind —
+> spec 08 investigated it directly and found it genuinely blocked pending
+> real data or clarification from the instrument-science team.
 
 ---
 
@@ -122,7 +199,15 @@ Apply the confirmed shape from spec 08 and remove the TODO comment.
 - `pytest tests/integration/` — all pass (no regression in earlier specs).
 - Write a `.nxs` from a real HB2B dataset and inspect in a NeXus browser:
   confirm `diffractogram/fit` contains a plausible model profile.
-- Run the `nexusformat` NXstress validator (with
-  `nxstress.use_production_names = true`) on the output file — no errors.
+- Run the `nexusformat`-org's NXstress validator (with
+  `nxstress.use_production_names = true`) on the output file — no errors,
+  **once the validator and schema doc are available** (confirmed not yet
+  present in this repo or in the installed `nexusformat` package as of
+  this writing — see README's Decisions Log and spec 10's reminder to add
+  both to the repo).
 - Cross-check with `tests/scripts/cis_tests/NXstress_demo_script.py` —
-  update it to use the fully-populated output and confirm it runs cleanly.
+  update it to use the newly-populated fit-spectrum, calibration, and
+  beam-profile output and confirm it runs cleanly. `STRESS_FIELD` remains
+  unaddressed by design; confirm the demo script doesn't assert against it.
+- Confirm `_sample.py:107`'s TODO comment reads as investigated-and-blocked,
+  not silently unchanged from spec 08.

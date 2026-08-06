@@ -30,7 +30,7 @@ placeholders for sx/sy/sz are replaced with real values.
 **Out of scope:**
 - Flipping `nxstress.use_production_names` default to `true` — deferred until
   the upstream `nexusformat` validator bug is resolved; when it is, simply
-  update `config/pyrs.default.yml`.
+  update `pyrs/config/pyrs.default.yml`.
 - Any PyRS data-model changes.
 - Any GUI viewer changes.
 

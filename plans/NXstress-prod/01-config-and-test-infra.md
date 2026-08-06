@@ -27,9 +27,12 @@ starts in specs 02–03), but both are prerequisites for all later work.
 
 **In scope:**
 - `pyrs/utilities/config.py` — new config loader module
-- `config/pyrs.default.yml` — default config file, checked into the repo
+- `pyrs/config/pyrs.default.yml` — default config file, checked into the
+  repo, inside the package tree (see packaging note below)
 - `argparse` wiring on `pyrsplot`, `pyrs-calibration`, and `create-mask`
-- Pydantic `Config` model with v1 NXstress fields
+- Pydantic `Config` model with the two-section `nxstress`/`legacy_io` schema
+  (see below), including the "at least one format enabled" validation rule
+- Add `pyyaml` as an explicit dependency
 - Shared pytest fixtures in `tests/unit/pyrs/utilities/NXstress/conftest.py`
   and/or a new `tests/conftest.py` contribution
 - Test-data management conventions (temp-file helpers, fixture cleanup)
@@ -50,16 +53,35 @@ existing PyRS module.
 New files:
 - `pyrs/utilities/config.py` — `load_config(path: Path | None) -> Config`
   function plus a pydantic `Config` model.
-- `config/pyrs.default.yml` — default YAML with at minimum:
+- `pyrs/config/pyrs.default.yml` — default YAML with at minimum:
   ```yaml
   nxstress:
+    enable: true
+    extension: ".nxs"
     use_production_names: false   # true once nexusformat validator bug resolved
-    default_extension: ".nxs"
+  legacy_io:
+    enable: true
+    extension: ".h5"
   ```
+  Two fully parallel, self-contained top-level sections — one per format.
+  Each owns its own `enable` flag and its own `extension`; nothing is
+  shared or ambiguous between them. `load_config()` raises if
+  `not (nxstress.enable or legacy_io.enable)` — at least one format must be
+  writable; unlike an enum, two independent booleans don't make that state
+  unrepresentable by construction, so this is an explicit validation rule.
+  Note the location: `pyrs/config/pyrs.default.yml`, **inside** the `pyrs`
+  package, not at the repo root — `pyproject.toml`'s
+  `[tool.hatch.build.targets.wheel] packages = ["pyrs", "scripts"]` plus its
+  `pyrs/**/*.yml` artifact globs only cover paths inside the `pyrs`
+  package, so a repo-root `config/pyrs.default.yml` would not ship in the
+  installed wheel.
+- Add `pyyaml` as an explicit dependency in `pyproject.toml`
+  (`[tool.pixi.dependencies]` and run-dependencies) — it's currently only
+  present transitively via `mantid`.
 
 Modified files:
 - `scripts/pyrsplot.py` — add `argparse` with `--config <path>` (default:
-  `config/pyrs.default.yml` relative to the package root).
+  `pyrs/config/pyrs.default.yml` relative to the package root).
 - `scripts/pyrs_calibration.py` — same.
 - `scripts/create_mask.py` — same.
 
@@ -95,8 +117,8 @@ that specs 02–10 can write tests without boilerplate.
   written `.nxs` files land in a temp directory and are cleaned up; document
   the convention.
 - `default_config` — returns a `Config` object loaded from
-  `config/pyrs.default.yml`; usable in any test that exercises config-aware
-  paths.
+  `pyrs/config/pyrs.default.yml`; usable in any test that exercises
+  config-aware paths.
 
 ### Test-data hygiene
 
@@ -120,9 +142,13 @@ in `conftest.py`) documenting the fixture conventions for future contributors.
 > pyrsplot --config /path/to/my/pyrs.yml
 > ```
 >
-> A default configuration file (`config/pyrs.default.yml`) ships with the
-> package and documents all available options. NXstress field naming can be
-> switched between the current validator-safe form and the production lowercase
+> A default configuration file (`pyrs/config/pyrs.default.yml`) ships with
+> the package and documents all available options. NXstress output and
+> legacy `.h5` output are each independently controlled — `nxstress.enable`
+> and `legacy_io.enable` — and each format's file extension
+> (`nxstress.extension`, `legacy_io.extension`) is fixed by config, never
+> chosen by the user in the GUI. NXstress field naming can be switched
+> between the current validator-safe form and the production lowercase
 > form by setting `nxstress.use_production_names: true` in the config.
 >
 > Internally, the test suite for NXstress gains shared fixtures that make it
@@ -133,10 +159,18 @@ in `conftest.py`) documenting the fixture conventions for future contributors.
 ## Verification
 
 - `pyrsplot --help` shows the `--config` option.
-- `pyrsplot --config config/pyrs.default.yml` starts the GUI without error.
+- `pyrsplot --config pyrs/config/pyrs.default.yml` starts the GUI without
+  error.
 - `from pyrs.utilities.config import load_config; cfg = load_config(None)`
   returns a valid `Config` object with defaults.
+- `python -c "import pyrs; from importlib.resources import files;
+  print(files('pyrs') / 'config' / 'pyrs.default.yml')"` (or equivalent)
+  confirms the default config file is present in an *installed* (not just
+  editable/source-tree) package — the packaging concern this spec fixes.
+- A config with both `nxstress.enable: false` and `legacy_io.enable: false`
+  raises at `load_config()` time, not later.
 - `pytest tests/unit/pyrs/utilities/NXstress/` — all existing tests pass;
   new fixture-based tests pass.
 - `pytest tests/unit/pyrs/utilities/ -k config` — config-loader unit tests
-  pass (round-trip YAML parse, missing-key defaults, user override merging).
+  pass (round-trip YAML parse, missing-key defaults, user override merging,
+  the both-disabled validation error).

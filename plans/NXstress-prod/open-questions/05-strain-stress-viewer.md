@@ -1,62 +1,58 @@
 # Open Questions — 05 StrainStressViewer NXstress Hookup
 
 **Spec:** [05-strain-stress-viewer.md](../05-strain-stress-viewer.md)
-**Blocking:** **Yes** — Q1 is a hard implementation gate stated in the spec
-itself; nothing in "Schema-driven PeakIndex extension" should be built until
-it's answered.
+**Blocking:** No — Q1 and Q2 below are resolved by
+[04b — Multi-workspace NXstress I/O](../04b-multi-workspace-nxstress.md).
+04b's own schema question (see
+`open-questions/04b-multi-workspace-nxstress.md` Q1) is itself downgraded
+from a blocking gate to a tracked follow-up, so nothing here blocks this
+spec either.
 
 ---
 
-## Q1 — Is a `direction` axis on `NXreflections` schema-conformant? {#q1}
+## Q1 — RESOLVED by 04b: is a `direction` axis on `NXreflections` schema-conformant? {#q1}
 
-The spec's own warning banner (05:20-26):
-> **⚠ Schema check required before implementation begins.** Before modifying
-> `_peaks.py::PeakIndex`, verify against the canonical NXstress.xml schema
-> whether adding a `direction` axis to `NXreflections` is conformant, or
-> whether a different mechanism (multi-NXentry, dedicated stress-field
-> subgroup, etc.) is the schema-intended approach.
+Originally framed as specific to this spec's `direction` axis. Chris's
+response below (workspace-per-direction, provenance on output) is exactly
+the general N-workspace, discriminator-indexed mechanism now scoped as its
+own spec, [04b](../04b-multi-workspace-nxstress.md), with `direction` as one
+discriminator field rather than a StrainStress-specific extension.
 
-The plan's Decisions Log (README.md:448) records this as **provisional**,
-explicitly pending re-evaluation at Phase 3 kickoff.
-
-**Why it matters:** this decides the entire shape of the spec's NXstress
-Changes section — whether `PeakIndex` gains a `direction` field (current
-assumption), or whether the three directions instead live in three separate
-`NXentry` groups, or in some other subgroup structure the schema author
-intended. Getting this wrong means redoing `_peaks.py::sort_key`,
-`validateNoDuplicatePeaks`, `_init`, `init_group`, and
-`peakCollectionsFromNexus` a second time.
-
-**Next step:** locate or obtain the canonical NXstress.xml schema
-definition and check `NXreflections`' allowed fields/axes; update the
-Decisions Log entry (README.md §4, Q3) with the outcome before writing any
-`_peaks.py` code for this spec.
+The general form of this question — does `NXreflections` permit additional
+index columns at all — moved to 04b (see
+`open-questions/04b-multi-workspace-nxstress.md` Q1), where it is now
+downgraded from a blocking gate to a tracked follow-up: `_peaks.py` already
+writes non-required columns (`mask`, `scan_point`, etc.) onto
+`NXreflections`, which is the same category of extension a discriminator
+column would be. Cross-check against `NXstress.html` and the
+`nexusformat`-org validator once both are added to the repo. This spec's
+remaining, narrower question is only whether `direction` (values
+`"11"`/`"22"`/`"33"`) is the right name and semantics for one such column —
+not the schema-conformance question itself.
 
 **Response from Chris:** The `direction` can be defined based on the description logs. But the stress-strain viewer does not automatically search for this type of log. Instead, a User defines the `direction` in the GUI or API. We can auto populate anything that is then udpated when the stress-strain calculation is completed.
 
 ---
 
-## Q2 — Can `HidraWorkspace` represent direction-merged sample-log content, or does it need a new container?
+## Q2 — RESOLVED by 04b: can `HidraWorkspace` represent direction-merged sample-log content, or does it need a new container?
 
-Spec text (PyRS Changes): *"confirm `HidraWorkspace` can represent (or
-cleanly hold) sample-log content from a direction-merged measurement. If a
-direction-aware container is needed, design it here."* This is phrased as
-an open design question, not a confirmed approach.
-
-**Why it matters:** if `HidraWorkspace` can't cleanly hold three directions'
-worth of sample logs, a new container type is a nontrivial PyRS-side design
-task that isn't scoped or estimated anywhere in the plan — it would expand
-this spec's PyRS-side footprint substantially beyond "confirm and resolve
-`NotImplementedError`s."
-
-**Next step:** attempt to construct a direction-merged `HidraWorkspace` in a
-throwaway script/test early in this spec's implementation, before committing
-to the NXstress-side `PeakIndex` changes — if it doesn't fit cleanly, the
-container design becomes a prerequisite sub-task.
+Chris's response settles this: a user provides one `HidraWorkspace` per
+direction, and NXstress combines them, with provenance, on write — no
+direction-merged `HidraWorkspace` container is needed. That is exactly
+[04b](../04b-multi-workspace-nxstress.md)'s `list[HidraWorkspace]` signature.
+This spec's PyRS Changes section no longer carries a direction-aware
+container item; it depends on 04b instead.
 
 **Response from Chris:** The current approach is that a user would provide 1 `HidraWorkspace` per direction. A final NXstress output should contain the 2/3 directions with provenance about the calculation. 
 
 Could we define the nexusformat to have the following approach? A user provides 3 nexus formated files with a single direction and with a header note that states `NXstrain`. The stress calulator would offer the option to output a NXstress file with 2 or 3 directions with provenance about the calculation.
+
+**Note:** the second paragraph — N single-direction `NXstrain` files in, one
+`NXstress` file out — is a file-level concern one layer above 04b's
+workspace-level merge, and is **not** folded into 04b. It remains an open
+question for this spec to pick up at its own kickoff, carrying its own
+`definition`-field and provenance questions (not yet written up as a
+numbered question here).
 
 ---
 
@@ -79,3 +75,41 @@ than "fix only what's hit" implies at a glance.
 `NotImplementedError` tracebacks enumerate the actual method list.
 
 **Chris:** Do existing tests define the `NotImplementedError`? 
+
+---
+
+## Q4 — RESOLVED: how does `direction` actually travel between the viewer and NXstress?
+
+04b resolves discriminator values *from* the workspace object itself
+(a matching `@property`, else a `SampleLogs` fallback) — it does not accept
+them as a separate `write()` argument. But `HidraWorkspace` had no notion of
+direction at all, and the viewer tracked it purely at the model level
+(`filenames_11/22/33` slots), not on the workspace.
+
+**Decided:** this spec adds a real, settable `direction` `@property` to
+`HidraWorkspace` (get and set), per 04b's own forward-looking convention
+note. This also required a small correction to 04b itself: its discriminator
+resolver is now explicitly **bidirectional** — a "get" half at write time
+(unchanged) and a symmetric "set" half at read time, so each workspace
+`NXstress.read()` reconstructs has `.direction` already populated, letting
+the viewer select `next(ws for ws in wss if ws.direction == direction)`
+with no extra plumbing. See 04b's "Discriminator value resolution" section
+for the updated bidirectional sketch.
+
+---
+
+## Q5 — RESOLVED: config precondition and default
+
+04b raises if `discriminator_fields` is empty and more than one workspace is
+passed (unless `merge_workspaces: true`), but says nothing about the case
+where `discriminator_fields` is *non-empty but doesn't include `"direction"`*
+— which would most likely surface as an opaque duplicate-index error several
+layers removed from the real cause (all three per-direction workspaces
+resolving to the same discriminator tuple).
+
+**Decided:** `save_as_nxstress` checks
+`"direction" in load_config().nxstress.discriminator_fields` before calling
+`write()`, raising a clear, StrainStress-specific error if absent. The
+shipped default in `pyrs/config/pyrs.default.yml` (spec 01) is updated to
+`nxstress.discriminator_fields: ["direction"]` (was `[]`), so this works
+out of the box for a fresh install rather than requiring manual opt-in.
