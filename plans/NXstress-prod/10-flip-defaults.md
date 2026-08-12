@@ -126,6 +126,10 @@ legacy_io:
   extension: ".h5"
 ```
 
+(`nxstress.discriminator_fields`/`merge_workspaces` — established in the
+Phase 2/3 bridge, spec 04b — are unchanged by this flip and omitted from
+the snippet above for that reason, not because they've been removed.)
+
 ### Deprecation hint
 
 When a user successfully opens a `.h5` file in any of the four NXstress-wired
@@ -160,8 +164,11 @@ action by default. Only the deprecation-hint UI (status bars) above is new.
 - Smoke test, all four viewers (not just PeakFitting): open a legacy `.h5`
   file; confirm it loads (load is unaffected by `legacy_io.enable`);
   confirm the deprecation hint appears exactly once per session on the new
-  or existing status bar; confirm the existing "Save" (`.h5`) action is now
-  disabled (grayed out, not hidden) and "Save as NXstress…" is enabled.
+  or existing status bar. For PeakFitting, Texture, and CombineRuns:
+  confirm the existing "Save" (`.h5`) action is now disabled (grayed out,
+  not hidden) and "Save as NXstress…" is enabled. **StrainStress has no
+  `.h5` Save action to disable** (per spec 05 — its save paths are
+  CSV/JSON) — confirm only that its "Save as NXstress…" action is enabled.
 - StrainStress-specific: open `.h5` files into all three direction slots
   (e11/e22/e33) in one session; confirm the hint appears only once, not
   three times.
@@ -174,8 +181,10 @@ action by default. Only the deprecation-hint UI (status bars) above is new.
 
 > **For end users:**
 > NXstress (`.nxs`) is now the default and only enabled save format across
-> all PyRS viewers wired for it — the "Save" (`.h5`) action is grayed out
-> by default; "Save as NXstress…" is the enabled action.
+> all PyRS viewers wired for it. In PeakFitting, Texture, and CombineRuns,
+> the existing "Save" (`.h5`) action is grayed out by default; "Save as
+> NXstress…" is the enabled action. StrainStress never had a `.h5` Save
+> action — for it, "Save as NXstress…" simply becomes enabled.
 >
 > Existing `.h5` project files can still be opened (they will continue to
 > work). When you do open a legacy `.h5` file, PyRS will remind you NXstress
@@ -191,15 +200,19 @@ action by default. Only the deprecation-hint UI (status bars) above is new.
 ## Verification
 
 - `pytest tests/` — full suite passes.
-- Open a `.h5` file in each of the four affected viewers with a Save
-  action (PeakFitting, Texture, CombineRuns, StrainStress) plus
-  ManualReduction's automatic write path — confirm load succeeds and the
-  deprecation hint is shown where applicable.
-- Confirm each viewer's "Save" (`.h5`) action is disabled by default, "Save
-  as NXstress…" is enabled — the *save-action enablement logic* is
-  unchanged between Phase 1 and Phase 6, only the config default; the new
-  status bars (Texture, CombineRuns, StrainStress) are this spec's one
-  piece of new, non-enablement UI.
+- Open a `.h5` file in each of the four affected viewers (PeakFitting,
+  Texture, CombineRuns, StrainStress) plus ManualReduction's automatic
+  write path — confirm load succeeds and the deprecation hint is shown
+  where applicable.
+- For PeakFitting, Texture, and CombineRuns — the three with an existing
+  `.h5` Save action to gate — confirm it's disabled by default, "Save as
+  NXstress…" is enabled. **StrainStress has no `.h5` Save action** (per
+  spec 05); confirm only that its "Save as NXstress…" action is enabled —
+  the flip is a no-op for its (nonexistent) legacy save path. The
+  *save-action enablement logic* is otherwise unchanged between Phase 1
+  and Phase 6, only the config default; the new status bars (Texture,
+  CombineRuns, StrainStress) are this spec's one piece of new,
+  non-enablement UI.
 - Open the written `.nxs` files in a NeXus browser and run the
   `nexusformat`-org NXstress validator — no errors, **once that validator
   and the `NXstress.xml`/`.html` schema doc are added to the repo** (see

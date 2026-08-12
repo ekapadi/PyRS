@@ -34,6 +34,11 @@ three items are unaffected by that block and proceed normally.
   index-assign into an already-correctly-shaped array (same
   `maxshape=(None,...)` resizable pattern used elsewhere in this codebase,
   e.g. `_peaks.py`).
+  **By this phase, `_Diffractogram.init_group` already takes
+  `list[HidraWorkspace]`, not a single `ws`** (spec 04b lands in the
+  Phase 2/3 bridge, well before this Phase 5 spec) — the real shape to
+  resize to is the *total* concatenated scan-point count across all input
+  workspaces, not one workspace's count. See "Multi-workspace scope" below.
 - Fix the L2 arm-shift round-trip in `_instrument.py:132-150` (the
   calibrated/uncalibrated branch; the specific TODO + `distance =
   geom.arm_length` line is at `:138-140`, unchanged from the earlier
@@ -52,7 +57,10 @@ three items are unaffected by that block and proceed normally.
   no "if the workspace carries one" branching; the property always has a
   value (a documented uniform/constant default when no real measurement
   exists), so this spec's writer code has no uniform-specific logic of its
-  own.
+  own. Per 04b's Q7 clarification, this is a **per-scan-point** field, like
+  wavelength — it gets concatenated across all input workspaces alongside
+  the rest of the scan-point family, not validated for cross-workspace
+  equality.
 - Update user-facing docs and release notes to remove NaN-placeholder
   warnings added in spec 02 — **except** for `STRESS_FIELD`, whose warning
   stays in place; it remains a real, current limitation.
@@ -78,16 +86,39 @@ _None_ — all PyRS-side changes were made in spec 08.
 
 ### `pyrs/utilities/NXstress/_fit.py` — fit spectrum (L425-429, L430-438)
 
-In `_Diffractogram.init_group(ws, maskName, peakss)`:
+**Multi-workspace scope, corrected from an earlier draft:** these line
+numbers are cited against the current (pre-04b) codebase, where
+`_Diffractogram.init_group(ws, maskName, peakss)` still takes a single
+`ws: HidraWorkspace` (`_fit.py:398`). **By this phase, that's no longer
+true** — spec 04b (Phase 2/3 bridge, well before this Phase 5 spec)
+already generalizes `init_group` to `(wss: list[HidraWorkspace], maskName,
+peakss)`, concatenating the scan-point family across all N inputs. This
+spec's own work is written against that already-generalized signature,
+not the single-`ws` one an earlier draft assumed:
+
+In `_Diffractogram.init_group(wss, maskName, peakss)`:
 - The `peakss: list[PeakCollection]` parameter **already exists in this
   method's signature** (`_fit.py:398`) but is currently unused in the body
   — no new parameter is needed, just use the argument already being passed
-  in (caller: `_fit.py:555`).
+  in (caller: `_fit.py:555`). By this phase `peakss` is 04b's combined,
+  multi-workspace peak index (discriminator-first sorted).
 - Call the new fit-engine method (from spec 08) on each `PeakCollection` in
   `peakss` to obtain `model_intensity` and `model_variance` for each
   `(mask, scan_point)`.
 - **Resize** the `fit`/`fit_errors` fields to the real shape before writing
   — they start as zero-sized resizable datasets, not pre-shaped NaN arrays.
+  The real shape is the **total concatenated scan-point count across all
+  of `wss`**, not one workspace's count — matching whatever size
+  `dg["scan_point"]` ends up after 04b's concatenation.
+- **Row placement is by scan_point *value*, not position.** `peakss`'s
+  order follows the peak-index family's discriminator-first `sort_key`
+  (04b), which is not necessarily the same order the scan-point family was
+  concatenated in (plain `wss` order). For each `PeakCollection`'s
+  scan points, look up their positions in the concatenated
+  `dg["scan_point"]` array by value (the same value-based approach 04b's
+  Q7 uses to split the scan-point family back into N workspaces on read)
+  before writing into `fit`/`fit_errors` — never assume the two families'
+  row orders align.
 - If the method is unavailable for a given scan point (e.g., fit did not
   converge), that scan point is now excluded upstream in `PeakCollection`
   itself (spec 08's `_exclude_list` extension) — write `NaN` for excluded
@@ -133,6 +164,11 @@ Read `HidraWorkspace.beam_intensity_profile` (spec 08) and write it into
 documented uniform/constant default, or real data if a future reduction
 change ever populates it), so there is no "if present" branch and no
 "not applicable" closing note needed. Remove the existing TODO marker.
+**Per-workspace handling (04b's Q7):** like wavelength, this is a
+per-scan-point field, not a single entry-wide value — concatenate it
+across all of `wss` in the same order as the rest of the scan-point
+family; do **not** validate it for cross-workspace equality the way
+geometry/shift are (above).
 
 ### `pyrs/utilities/NXstress/_sample.py` — STRESS_FIELD shape (L107) — BLOCKED
 
@@ -157,6 +193,15 @@ investigated and remains blocked, not left untouched by oversight.
   that sub-run's `fit` row is NaN but others are not.
 - Assert `diffractogramFromNexus` returns the new `NamedTuple` type
   (`DiffractogramData`), with `fit`/`fit_errors` populated when present.
+- Multi-workspace fit-spectrum placement: write two workspaces (distinct
+  discriminator values, non-overlapping scan points, both with real
+  `PeakCollection`s per 04b's Q7 invariant) whose peak-index order
+  (discriminator-first) does not match their scan-point-family
+  concatenation order; assert each `PeakCollection`'s reconstructed
+  spectrum lands in the `fit`/`fit_errors` row matching its own
+  `scan_point` value, not a row implied by position alone. Confirms the
+  value-based row-lookup requirement above actually matters, not just a
+  theoretical concern.
 
 `tests/unit/pyrs/utilities/NXstress/test_instrument.py` (extend):
 - Round-trip a calibrated `DENEXDetectorGeometry` through NXstress;
@@ -165,6 +210,12 @@ investigated and remains blocked, not left untouched by oversight.
 - Round-trip `beam_intensity_profile`: assert the written `NXbeam` field
   matches whatever value the workspace carried (the documented uniform
   default, in the absence of a real measurement).
+- Multi-workspace `beam_intensity_profile`: write two workspaces with
+  *different* `beam_intensity_profile` values (not just two copies of the
+  uniform default); assert both concatenate into `NXbeam` correctly and
+  neither is rejected by a cross-workspace consistency check — confirms
+  this field is treated like wavelength (concatenated), not like geometry
+  (validated-for-equality).
 
 ---
 

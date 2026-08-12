@@ -11,14 +11,14 @@ for what's still outstanding.
 |---|---|---|---|
 | [02](02-peak-and-texture-nxstress.md) | NXstress I/O for PeakFitting & Texture viewers | No | 1 |
 | [03](03-combine-runs-nxstress.md) | NXstress I/O for CombineRuns viewer | No | 1 |
-| [04](04-nxstress-internal-cleanup.md) | NXstress internal cleanup (Phase 2 TODOs) | Partially | 4 |
-| [04b](04b-multi-workspace-nxstress.md) | Multi-workspace NXstress I/O | No | 5 |
-| [04c](04c-nxstress-append.md) | NXstress append mode (library only) | No | 4 |
+| [04](04-nxstress-internal-cleanup.md) | NXstress internal cleanup (Phase 2 TODOs) | No | 4 |
+| [04b](04b-multi-workspace-nxstress.md) | Multi-workspace NXstress I/O | No | 7 |
+| [04c](04c-nxstress-append.md) | NXstress append mode (library only) | No | 6 |
 | [05](05-strain-stress-viewer.md) | StrainStressViewer NXstress hookup | No | 5 |
 | [06](06-manual-reduction-prereqs.md) | Manual reduction PyRS prerequisites (not required for NXstress) | No | 2 |
 | [07](07-manual-reduction-nxstress.md) | ManualReductionViewer NXstress hookup | No | 3 |
 | [08](08-fit-spectrum-prereqs.md) | Reconstructed fit spectrum & calibration fidelity (PyRS) | Partially | 3 |
-| [09](09-fit-spectrum-nxstress.md) | Fit spectrum & calibration fidelity (NXstress) | No | 3 |
+| [09](09-fit-spectrum-nxstress.md) | Fit spectrum & calibration fidelity (NXstress) | No | 4 |
 | [10](10-flip-defaults.md) | Flip defaults — NXstress becomes primary | Partially | 3 |
 
 **No hard implementation gates remain in specs 01–07 or 09.**
@@ -30,7 +30,7 @@ non-required columns (`mask`, `scan_point`, etc.) onto `NXreflections`, the
 same category of extension a discriminator column would be. Verify against
 `NXstress.html` and the `nexusformat`-org validator once both are added to
 the repo — tracked as a concrete reminder in
-[10-flip-defaults.md](10-flip-defaults.md)'s Overview (see also
+[10-flip-defaults.md](../10-flip-defaults.md)'s Overview (see also
 [10, Q3](10-flip-defaults.md)), since neither artifact exists yet — and
 record the outcome; implementation of 04b, 04c, and Phase 3 proceeds in the
 meantime.

@@ -46,6 +46,37 @@ per-direction workspace before calling `write()`; 04b's read-path resolver
 workspace on `read()`, so the viewer can select `ws.direction == "11"` etc.
 with no extra plumbing.
 
+### Direction blocks are contiguous on disk, not interleaved
+
+04b's ordering rule makes discriminator values the most slowly varying
+`sort_key` coordinate — i.e., each configured discriminator's rows form one
+contiguous block, rather than being interleaved with other discriminator
+values by scan point or by phase/hkl (see
+`open-questions/04b-multi-workspace-nxstress.md` Q6). Since `direction` is
+this spec's sole discriminator, that means a saved `.nxs` file's peak-index
+contains exactly three contiguous blocks — `"11"`'s rows, then `"22"`'s,
+then `"33"`'s, in string-sorted order — never interleaved. This isn't new
+mechanism this spec builds; it falls straight out of 04b's general rule,
+applied to the one discriminator field this spec configures. It's worth
+stating explicitly here because a reader of this spec would otherwise have
+no way to know how the three directions' data actually sit relative to one
+another on disk, and it's a cheap, concrete thing to assert in this spec's
+own round-trip test (see Tests below), rather than only in 04b's more
+generic contiguity tests.
+
+### Compliance with 04b's "≥1 PeakCollection per workspace" invariant
+
+04b's Q7 documents (and enforces at write time) that every input workspace
+must contribute at least one `PeakCollection` whenever N>1 — without one,
+that workspace's discriminator value can't be recovered on read, so the
+scan-point family (sample logs, diffraction data) can't be split back out
+for it. This spec already satisfies that invariant by construction: all
+three direction workspaces always carry real peak fits (that's the whole
+point of a StrainStress calculation) — there's no code path in this spec
+that would call `save_as_nxstress` with a direction contributing zero
+peaks. Noted here only for completeness; no additional check is needed in
+this spec beyond 04b's own write-time validation.
+
 ### Config precondition
 
 04b's discriminator mechanism only works if the deployment's
@@ -128,6 +159,12 @@ NXstress is limited to:
   discriminator value for 04b's mechanism, and that the new `direction`
   property (this spec's PyRS Changes) round-trips correctly through 04b's
   get/set resolver.
+- Confirm the on-disk consequence of 04b's most-slowly-varying ordering
+  rule for this specific discriminator: the three directions' peak-index
+  rows land as three contiguous blocks, string-sorted by `direction`
+  (see "Direction blocks are contiguous on disk" above) — not a new
+  behavior to implement, just a property of 04b's mechanism to verify
+  holds for this concrete discriminator value set.
 - Add StrainStress-specific tests exercising `direction` through 04b's
   general read/write/split path.
 
@@ -190,6 +227,12 @@ NXstress is limited to:
   is raised, not an opaque duplicate-index error from 04b.
 - Enablement wiring: with `nxstress.enable: false`, assert
   **Save as NXstress…** is disabled but still visible.
+- Direction-block contiguity: after `save_as_nxstress` writes all three
+  directions, read the raw on-disk `PEAKS`/`NXreflections` arrays directly
+  (via `.nxdata`, not through `NXstress.read()`) and assert each
+  direction's rows occupy one contiguous run — `"11"`'s block, then
+  `"22"`'s, then `"33"`'s — with no direction's rows split across, or
+  interleaved with, another's.
 
 ---
 

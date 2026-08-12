@@ -1,7 +1,7 @@
 # Open Questions — 09 Fit Spectrum & Calibration Fidelity (NXstress)
 
 **Spec:** [09-fit-spectrum-nxstress.md](../09-fit-spectrum-nxstress.md)
-**Blocking:** No — both items are resolved via spec 08's investigation.
+**Blocking:** No — all items below are resolved.
 
 ---
 
@@ -75,3 +75,36 @@ gaps in the original draft:
 - **Simplification confirmed**: `_Diffractogram.init_group`'s `peakss`
   parameter already exists in the signature and is simply unused today —
   no new parameter needed to reach per-scan-point fit results.
+
+---
+
+## Q4 — RESOLVED: this spec's own multi-workspace signature was stale relative to 04b
+
+A full-tree consistency scan (checking every spec against 04b/04c's
+revised text) found that this spec's Q3 correction above — while
+accurate about line numbers — still described
+`_Diffractogram.init_group(ws, maskName, peakss)` with a single
+`ws: HidraWorkspace`. That's the *pre-04b* signature. Spec 04b lands in
+the Phase 2/3 bridge, well before this Phase 5 spec, and already
+generalizes `init_group` to `(wss: list[HidraWorkspace], maskName,
+peakss)`. This spec's own fit-spectrum/NXbeam work needed to be written
+against that already-generalized signature, not the one that predates it.
+
+**Resolved, three corrections made:**
+1. `fit`/`fit_errors` must be resized to the *total* concatenated
+   scan-point count across all of `wss`, not one workspace's count.
+2. Placing each `PeakCollection`'s reconstructed spectrum into the right
+   `fit`/`fit_errors` row requires a scan_point-*value* lookup against the
+   concatenated `dg["scan_point"]` array — `peakss`'s discriminator-first
+   order (04b) is not guaranteed to match the scan-point family's plain
+   `wss`-order concatenation, so position-based alignment between the two
+   families would be wrong in general.
+3. `beam_intensity_profile` (NXbeam) is per-scan-point, like wavelength —
+   per 04b's own Q7 clarification (found in the same full-tree scan) — so
+   it's concatenated across `wss`, never validated for cross-workspace
+   equality.
+
+No change to this spec's scope or the items it delivers — `STRESS_FIELD`
+remains blocked, the calibration/NXbeam/fit-spectrum items proceed as
+before — only the description of *how* the writer reaches the right rows
+under the signature that will actually exist by this phase.

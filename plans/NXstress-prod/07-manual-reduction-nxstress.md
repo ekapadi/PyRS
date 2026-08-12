@@ -27,11 +27,15 @@ spec 06's items (the orphaned `save_project` stub; two unrelated
 `nexus_conversion.py` input-parsing gaps) touches this save step.
 
 **No GUI action, therefore no auto-write-both-formats concern.** The other
-four NXstress-wired viewers (specs 02, 03, 05) each gate two independent,
-manually-clicked actions ("Save" for `.h5`, "Save as NXstress…" for `.nxs`)
-by `legacy_io.enable`/`nxstress.enable`, and a single click never writes
-both formats — that rule exists to protect a user's expectation of what
-*their click* does. `reduce_hidra_workflow` has no click to protect the
+NXstress-wired viewers gate independent, manually-clicked actions by
+`legacy_io.enable`/`nxstress.enable`, and a single click never writes both
+formats — that rule exists to protect a user's expectation of what *their
+click* does. Precisely: PeakFitting/Texture (spec 02) and CombineRuns
+(spec 03) each gate two such actions ("Save" for `.h5`, "Save as
+NXstress…" for `.nxs`); StrainStress (spec 05) gates only one
+(`nxstress.enable` → "Save as NXstress…") since it never had a `.h5` Save
+action to begin with — its existing save paths are CSV/JSON, unaffected by
+either config flag. `reduce_hidra_workflow` has no click to protect the
 meaning of: it writes automatically, so it simply **writes once per
 currently-enabled format** — one file if only one format is enabled, both
 files (same basename) if both are. This is not an ambiguity requiring a
@@ -58,7 +62,9 @@ raise — the extension(s) actually written are always exactly whichever of
   from the input NeXus filename if `None`), then write once per
   currently-enabled format (`legacy_io.enable` → `.h5` via
   `reducer.save_diffraction_data`; `nxstress.enable` → `.nxs` via
-  `NXstress(path, "w").write(hidra_ws, [])`).
+  `NXstress(path, "w").write([hidra_ws], [])` — a length-1 list, per 04b's
+  signature, which lands in the Phase 2/3 bridge, before this Phase 4
+  spec).
 - Config validation reuse: `load_config()`'s existing "at least one format
   enabled" rule (spec 01) already guarantees this function always writes
   at least one file.
@@ -108,7 +114,7 @@ change — the edit lives entirely in the "NXstress Changes" section below.
       reducer.save_diffraction_data(base_path + cfg.legacy_io.extension)
   if cfg.nxstress.enable:
       with NXstress(base_path + cfg.nxstress.extension, "w") as nxs:
-          nxs.write(hidra_ws, [])
+          nxs.write([hidra_ws], [])  # length-1 list, per 04b's signature
   ```
 
   (Illustrative — the existing file-exists/overwrite-permission checks at

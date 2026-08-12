@@ -7,7 +7,7 @@
 
 ## Q1 — Does `NXstress.read()`'s reconstructed subset satisfy these two viewers' load paths?
 
-The plan-level README notes (§2.4, "Read-back completeness", README.md:237-241):
+The plan-level README notes (§2.4, "Read-back completeness", README.md:353-360):
 > `NXstress.read` reconstructs wavelengths, sample logs, masks, reduced
 > diffraction data, and peak collections. It does NOT reconstruct raw counts
 > unless the optional `input_data` group was written. Verify each viewer's

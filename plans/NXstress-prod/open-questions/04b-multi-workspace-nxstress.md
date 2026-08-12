@@ -130,3 +130,93 @@ settling once so it isn't reinvented per call site inside `_peaks.py`,
 private function in `_peaks.py` (where discriminator values are consumed)
 or a new small `_discriminator.py` module if the logic ends up shared across
 more than one of `_peaks.py`/`_sample.py`/`_instrument.py`.
+
+---
+
+## Q6 — RESOLVED: discriminators as the most slowly varying sort-key coordinates
+
+The user proposed making discriminator fields the most slowly varying
+coordinates of the combined peak index (i.e. `sort_key` prepends them,
+rather than appending or interleaving them), based on the observation that
+sorting was never actually required by the NXstress reader — only a
+"nice to have."
+
+**Verified directly, and confirmed correct.** `_Peaks.peakCollectionRanges`
+(`_peaks.py:246-338`) — the only reader-side splitter — enforces only
+contiguity of each compound key's run and monotonic `scan_point` within a
+run, never global order; the monotonic-`scan_point` invariant is itself
+guaranteed upstream by `SubRuns.set` (`sample_logs.py:164-166`), not by
+NXstress's `sorted()` calls. See `04c`'s `open-questions` Q5 for the full
+verification writeup (shared across both specs).
+
+**Resolved, adopted as the ordering rule** — `sort_key` returns
+`(*discriminator_values, phase_name, h, k, l, mask)`. This makes each
+input workspace's rows one contiguous super-block in every position-aligned
+group, which in turn simplifies the read-side workspace split (a `groupby`
+over already-contiguous ranges, not new indexing machinery) and keeps the
+scan-point family's existing exact-match reader (`_input_data.py:70-72`)
+working unchanged, since each workspace's slice of the concatenated array
+equals its own `get_sub_runs()` verbatim.
+
+**Confirmed orthogonal to Q2's name-keyed discriminator-value
+representation:** name-keying governs value *attribution*; this rule
+governs write-time row *order*. The reader detects boundaries by "the key
+changed," not by re-deriving the writer's sort order, so
+`nxstress.discriminator_fields` being reordered between a write and a
+later read — the exact scenario name-keying (Q2) protects against — still
+cannot corrupt anything under this ordering rule either.
+
+**Also flagged for correction at implementation time:** `_peaks.py:44-45`'s
+docstring currently states global lexicographic sorting as a format
+guarantee ("the entire index set will be sorted lexographically prior to
+output... makes the append operation more complicated, but provides
+robustness against duplicates"). That framing is now known to be
+inaccurate on two counts: the actual guarantee is the two invariants above
+(not a specific global order), and the robustness against duplicates it
+credits to sorting is actually delivered by `validateNoDuplicatePeaks`
+and the contiguity check, independent of sort order.
+
+---
+
+## Q7 — RESOLVED: how does `read()` split the scan-point family back into N workspaces, and what does that require of `peakss`?
+
+A full-tree consistency scan (checking every other spec against 04b/04c's
+revised text) found a real gap in 04b itself, not just a downstream
+propagation miss: the write side concatenates the **scan-point family**
+(raw counts, sample logs, diffractogram, wavelength) across all N input
+workspaces, but 04b never specified how `read()` recovers which rows of
+that concatenated data belong to which workspace. The only on-disk
+discriminator-value record is the PEAKS/`NXreflections` group, attached to
+`PeakCollection` rows — the scan-point family carries no independent
+marker of its own.
+
+**Why it matters:** without a stated mechanism, this was an implicit
+assumption load-bearing for the plan's *only* two multi-workspace-relevant
+consumers — spec 05 (three real per-direction workspaces) needs sample
+logs and diffraction data correctly split per direction for its
+`StressField` reconstruction test to mean anything, and any future
+consumer could violate the assumption with no error to signal it.
+
+**Resolved, direct from the user:** (1) recover each workspace's scan-point
+*set* from the already-split PEAKS ranges (union of that workspace's
+`PeakCollection`s' scan points), then slice the scan-point family's
+concatenated arrays by value-set membership, not position — robust
+regardless of write-time concatenation order. (2) This requires every
+input workspace to contribute **at least one `PeakCollection`** whenever
+N>1 (spec 03's `peakss=[]` is unaffected — it's always `N == 1`, so the
+whole discriminator mechanism never engages). (3) Per the user's explicit
+follow-up — *"we also should validate it on the write side!"* — this isn't
+merely documented: `write()` raises via the same
+`_validateWorkspaceAndPeaksData` extension that already catches the
+no-overlap violation, so a caller violating the invariant gets a clear
+error immediately, not a silently-unsplittable file discovered later at
+`read()`.
+
+**Related, found while re-verifying `_instrument.py` directly against this
+question:** the Scope/NXstress-Changes bullets describing
+`_Instrument.init_group`'s "validate consistency across N inputs" claim
+incorrectly grouped wavelength with geometry/shift/calibration-state.
+Wavelength is per-scan-point (`_instrument.py:103`) and belongs to the
+scan-point family's concatenation pattern instead — corrected in the spec
+text; see the new "Reconstructing N workspaces from the scan-point family"
+subsection.

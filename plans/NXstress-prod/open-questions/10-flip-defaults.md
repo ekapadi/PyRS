@@ -19,7 +19,7 @@ None of the three currently has a concrete owner, a defined "scientist"
 signing off, or a tracked bug list to check against "no open correctness
 bugs." This mirrors the plan-level README's own note that Phase 6
 acceptance criteria are "to be defined at the end of Phase 1"
-(README.md:224, :419) — as of this writing that definition still hasn't
+(README.md:288, :667) — as of this writing that definition still hasn't
 happened.
 
 **Why it matters:** without a concrete checklist and named sign-off owner,
@@ -95,8 +95,11 @@ two real corrections:
   three direction slots share one load handler that could otherwise fire
   the hint three times per session.
 - **The `nexusformat` NXstress validator referenced in this spec's (and
-  specs 02's and 09's) Verification sections does not exist as an
+  specs 04's and 09's) Verification sections does not exist as an
   installed capability, and no schema doc exists in the repo either.**
+  (Corrected from an earlier draft's "02" — spec 02 has no validator
+  reference anywhere; spec 04's Verification section is the one that
+  does.)
   Confirmed directly: the installed `nexusformat` 1.0.8 package has no
   `validate` module or `nxvalidate` script; no `NXstress.html`/`.xml`/
   `.nxdl` file exists anywhere in the repo. This traces back to spec 04b's

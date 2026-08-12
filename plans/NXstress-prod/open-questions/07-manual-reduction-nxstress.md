@@ -12,9 +12,10 @@ ManualReductionViewer hookup, and this file previously carried two
 questions about append's write-mode API and overlap-conflict policy. Both
 are resolved for *this* spec: `reduce_hidra_workflow` always writes fresh
 (it has no notion of an existing entry to extend), so append is never
-invoked from this pathway. The underlying questions still matter for the
-append capability itself; they live in
-`open-questions/04c-nxstress-append.md` Q1 and Q2.
+invoked from this pathway. The underlying questions (write-mode API and
+overlap-conflict policy) still matter for the append capability itself;
+they both live in `open-questions/04c-nxstress-append.md` Q1 (Q2 there is
+a separate matter — append's family scope — not either of these two).
 
 **Chris:** My inital thought is that we an data reduction pathway should create a fresh file.
 

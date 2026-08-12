@@ -32,26 +32,77 @@ entry point in this pass**. This spec delivers append as a tested library
 capability only — usable by future callers (tests, scripts, or a future GUI
 action) without a corresponding menu action anywhere in the GUI today.
 
-### Architecture: in-place resize/insert, not read-merge-rewrite
+### Relaxed sortedness: "locally sorted, globally segmented," not globally sorted
 
-Two designs were considered:
+04b established that the reader (`_Peaks.peakCollectionRanges`,
+`_peaks.py:246-338`) only ever required two invariants — each compound key
+occupies one contiguous run (R1), and `scan_point` increases within a run
+(R2, already guaranteed upstream by `SubRuns.set`,
+`sample_logs.py:164-166`) — never global lexicographic order. Sortedness
+beyond that was incidental, not a schema requirement.
+
+This spec adopts that directly: a **single-step write** (all
+`HidraWorkspace`/`PeakCollection` present at the `write()` call, 04b's
+existing case) still produces a fully sorted combined index, exactly as
+today — there's no reason to give that up when everything is available at
+once. **Append does not re-sort the file.** It sorts only the incoming
+batch internally (so the new data's own rows are self-consistent) and adds
+it to the file without reordering what's already on disk. A file that has
+been appended to is therefore "locally sorted, globally segmented" rather
+than globally sorted — R1 and R2 still hold throughout, which is all the
+reader has ever required.
+
+**The non-overlapping-scan-points/index-rows invariant is unchanged and
+still fully enforced** — relaxing global sortedness is not a relaxation of
+that invariant; see Conflict policy below.
+
+### Architecture: in-place tail-append, not read-merge-rewrite, and not general insertion
+
+Two designs were considered for how append touches the *existing* entry:
 1. Read the existing entry back into `HidraWorkspace`/`PeakCollection`
    objects (reusing `NXstress.read()`), append the new data to that list in
    memory, and rewrite the entry using 04b's N-workspace merge-and-write path
    wholesale.
-2. Resize and insert directly into each affected on-disk dataset, computing
-   insertion positions from the existing arrays without ever reconstructing
-   the existing entry as `HidraWorkspace`/`PeakCollection` objects.
+2. Operate directly against the on-disk `NXfield` arrays (via `.nxdata`) to
+   determine conflicts, without ever reconstructing the existing entry as
+   `HidraWorkspace`/`PeakCollection` objects.
 
 **Decided: (2).** The concern driving this is that a normal reduction/append
 cycle should not have to round-trip the *existing* entry's data through
 PyRS's outer types just to grow it — particularly raw detector counts, which
-can be large. Append therefore operates directly against the on-disk
-`NXfield` arrays (via `.nxdata`) to determine conflicts and insertion points,
-and resizes/inserts in place. The **new** data being appended is still
-supplied the normal way — `list[HidraWorkspace]` + `list[PeakCollection]`,
-matching 04b's `write()` signature — only the *existing* side of the merge
-avoids the round-trip.
+can be large.
+
+Relaxed sortedness (above) further narrows what "(2)" needs to do. R1
+(contiguity) splits append into two cases:
+- **Case A — the incoming data introduces compound keys not already on
+  disk** (the normal case: a new workspace, distinguished by a new
+  discriminator value per 04b's ordering rule, or a genuinely new
+  phase/hkl/mask). A **tail-append** — grow each affected array and write
+  the new rows after the current end — satisfies both R1 and R2 without
+  touching any existing row.
+- **Case B — the incoming data extends a compound key already present on
+  disk** (more scan points for a workspace/key that's already in the
+  file). R1 forces those new rows into the middle of that key's existing
+  run — a true insertion, not a tail-append.
+
+**Decided (scope cut): this spec implements Case A only.** Case B is
+detected (see Conflict policy) and rejected with `NotImplementedError` —
+not silently mishandled, but explicitly deferred as a follow-up, since it
+is a different and more invasive operation than what a normal
+reduction/append cycle needs today. This falls directly out of relaxing
+global sortedness (above): without a global-sort obligation, the common
+case that actually needs to work — "append a new workspace's worth of
+data" — reduces to code that already exists (see
+`_Peaks._append_peak`, `_fit.py`'s `_PeakParameters._append_peak`, both
+already written as `cur = shape[0]; resize(cur+N); arr[cur:] = …`, per the
+`# TODO` at `_peaks.py:180-181`). No new insertion-position machinery is
+needed for the case this spec actually delivers.
+
+The **new** data being appended is still supplied the normal way —
+`list[HidraWorkspace]` + `list[PeakCollection]`, matching 04b's `write()`
+signature — sorted internally among themselves as 04b already does; only
+the *existing* side of the operation avoids both the round-trip and any
+mid-array mutation.
 
 ### Scope: all position-aligned groups, not just input_data and peaks
 
@@ -66,10 +117,13 @@ family that isn't position-sensitive at all:
 
 **Decided:** this spec covers the full peak-index family and the full
 scan-point family, coordinated so that append never leaves one group's rows
-inserted without the corresponding rows in every other group in its family.
+grown without the corresponding rows in every other group in its family.
 A partial append (e.g., growing `detector_counts` without growing the
 diffractogram) would leave the entry internally inconsistent — not an
-acceptable interim state for a correctness-focused library feature.
+acceptable interim state for a correctness-focused library feature. Per
+the Case-A-only scope decision above, "grown" means **tail-appended**, not
+inserted — both families' new rows are added after each dataset's current
+end, in lockstep across every group in the family.
 
 ### Entry targeting
 
@@ -78,45 +132,91 @@ acceptable interim state for a correctness-focused library feature.
 needs no extra argument. An optional `entry_number` targets a specific
 earlier entry instead: `NXstress(path, "a", entry_number=N)`.
 
-### Conflict policy
+### Conflict policy, and Case A/Case B classification
 
-If any scan point (scan-point family) or full compound-index row
-(peak-index family) in the new data would duplicate one already present in
-the target entry, the append is rejected: raise `RuntimeError` — not the
-`ValueError` `validateNoDuplicatePeaks` raises for the analogous fresh-write
-duplicate case, since this represents a violated invariant on already-
-committed data, not an expected/anticipated bad-input case a caller would
-routinely hit and want to catch. The conflict check runs against **all**
-affected groups before any resize/insert call is made, so a rejected append
-is a true no-op — the on-disk entry is left byte-for-byte unchanged.
+The same pass that reads the existing on-disk key arrays to check for
+conflicts also classifies each incoming compound key, at no extra cost:
 
-After raising, the `NXstress` instance is left unusable for any further
-`write()` call in the same session — the caller must re-open rather than
-continue against a session that already detected a corrupted assumption
-about the target entry's contents.
+- **New key relative to what's on disk (Case A):** no conflict — proceeds
+  as a tail-append, **subject to two preconditions inherited directly from
+  04b's Q7** (never previously carried into this spec's own text):
+  1. **The new workspace must itself contribute at least one
+     `PeakCollection`.** Exactly 04b's write-time invariant, restated for
+     append: without one, this workspace's discriminator value can't be
+     recovered on a later `read()`, and the resulting file would be
+     silently unsplittable. Raise `RuntimeError` if violated, before any
+     mutation — same failure mode as the fresh-write case, just checked
+     here too.
+  2. **The target entry must already have a discriminator scheme
+     established** — i.e., its `PEAKS` group already carries discriminator
+     column(s) from an earlier 04b-mechanism write. Appending a
+     genuinely new, distinguishable workspace to an entry that was
+     originally written as a bare `N == 1`/no-discriminator write isn't
+     possible without adding a new on-disk column, which this spec's
+     tail-append design does not do (no schema restructuring, only
+     resize-and-append into existing datasets). Raise `RuntimeError` if
+     the target entry has no discriminator columns at all.
+- **Key already present on disk, new scan point(s) under it (Case B):**
+  **rejected**, distinctly from a true duplicate — raise
+  `NotImplementedError` (not `RuntimeError`; see below), since this isn't
+  a corrupted-data condition, it's a real operation this spec deliberately
+  doesn't implement (see the Architecture section above). The on-disk
+  entry is left unchanged; the instance is *not* invalidated for this
+  case specifically, since nothing was detected to be wrong with it —
+  only unsupported.
+- **Exact duplicate** (same key *and* same scan point, or the same
+  peak-index row) already present in the target entry: the true conflict
+  case. Raise `RuntimeError` — not the `ValueError`
+  `validateNoDuplicatePeaks` raises for the analogous fresh-write duplicate
+  case, since this represents a violated invariant on already-committed
+  data, not an expected/anticipated bad-input case a caller would
+  routinely hit and want to catch.
+
+The classification/conflict check runs against **all** affected groups
+before any resize/append call is made — including the two Case-A
+preconditions above (≥1 `PeakCollection` for the new workspace; a
+discriminator scheme already established in the target entry) — so a
+rejected (`RuntimeError`) and an unsupported (`NotImplementedError`)
+append are both true no-ops — the on-disk entry is left byte-for-byte
+unchanged either way.
+
+After a `RuntimeError` (an exact duplicate, or either of Case A's two
+preconditions failing), the `NXstress` instance is left unusable for any
+further `write()` call in the same session — the caller must re-open
+rather than continue against a session that already detected a corrupted
+assumption about the target entry's contents. A `NotImplementedError`
+(Case B) does **not** invalidate the instance — the caller may still make
+other, Case-A-only, append calls in the same session.
 
 ---
 
 ## Scope
 
 **In scope:**
-- Peak-index family: implement the append/insertion path for `_peaks.py`'s
-  compound index (the `# TODO` at `_peaks.py:180-181`) and, in lockstep, for
+- Peak-index family: implement the **tail-append** path for `_peaks.py`'s
+  compound index (the `# TODO` at `_peaks.py:180-181` already describes
+  code written in a form that allows this) and, in lockstep, for
   `_fit.py::_PeakParameters.init_group` / `_BackgroundParameters.init_group` —
-  the same computed insertion positions must be applied to all three.
-- Scan-point family: implement the append/insertion path for
+  all three grow by the same new-row count, appended after their current end.
+- Scan-point family: implement the tail-append path for
   `_input_data.py:44-46,63-72` (`detector_counts`, on both write and read),
   `_sample.py`'s per-scan-point logs, and `_fit.py::_Diffractogram.init_group`
-  — the same computed insertion positions must be applied to all three.
+  — all three grow by the same new-row count, appended after their current
+  end.
 - `NXstress.py`: remove the guard at `NXstress.py:151-152` for the append
   case; add entry targeting (`entry_number`, defaulting to the last entry);
-  dispatch `write()` to the append-in-place path when opened with mode `"a"`.
-- Conflict detection: compare new scan points / index rows against the
+  dispatch `write()` to the tail-append path when opened with mode `"a"`.
+- Conflict/classification: compare new scan points / index rows against the
   existing on-disk arrays (read via `.nxdata`, not reconstructed as
-  `HidraWorkspace`/`PeakCollection`) before any mutation; raise `RuntimeError`
-  and invalidate the instance on conflict, per the policy above.
-- Round-trip test: write, then append, into the same entry; verify all five
-  groups' contents are combined and mutually consistent.
+  `HidraWorkspace`/`PeakCollection`) before any mutation; classify each
+  incoming key as Case A (new — proceed, subject to its two preconditions:
+  ≥1 `PeakCollection` for the new workspace, and a discriminator scheme
+  already established in the target entry), Case B (extends an existing
+  key — raise `NotImplementedError`), or exact duplicate (raise
+  `RuntimeError`, invalidate the instance), per the policy above.
+- Round-trip test: write, then append a new (Case A) workspace, into the
+  same entry; verify all five groups' contents are combined and mutually
+  consistent.
 
 **Out of scope:**
 - Any GUI menu action, file-dialog filter, or viewer wiring. No viewer in
@@ -125,6 +225,12 @@ about the target entry's contents.
   [07 — ManualReduction hookup](07-manual-reduction-nxstress.md)).
 - `_instrument.py::_Masks` — already append-capable, name-keyed, no change
   needed.
+- **Case B (extending a compound key already present in the file with more
+  scan points)** — genuinely different from Case A: it requires a true
+  mid-array insertion, not a tail-append, since contiguity (R1) forces the
+  new rows into the middle of that key's existing run. Raises
+  `NotImplementedError`; not silently mishandled, but deferred as a
+  follow-up should a future caller need it.
 - Fit-spectrum data (spec 09).
 - Detector-calibration fidelity fixes (spec 09).
 
@@ -142,76 +248,115 @@ on-disk NXstress structures and the new data's `HidraWorkspace`/
 
 ### `pyrs/utilities/NXstress/_peaks.py`
 
-- `init_group` — implement the insertion path described in the `# TODO` at
-  L180-181: given the existing on-disk `PeakIndex` arrays (read via
+- `init_group` — implement the tail-append path described in the `# TODO`
+  at L180-181, reusing the existing `_append_peak` (`_peaks.py:190-244`)
+  against an existing on-disk `PeakIndex` group instead of a freshly
+  `_init`-ed one: read the existing on-disk `PeakIndex` arrays (via
   `.nxdata`, using 04b's name-keyed discriminator resolution to reconstruct
-  each existing row's sort key) and the new, sorted incoming index entries,
-  compute insertion positions via the shared sort key (`PeakIndex.sort_key`,
-  extended for discriminators per 04b) and resize/insert at those positions.
-- Expose the computed insertion positions (or an equivalent shared helper)
-  so `_fit.py`'s peak-index-family groups can apply the identical positions.
+  each existing row's key) to classify the incoming, sorted batch as Case
+  A/B/duplicate (see Conflict policy above); for Case A rows, `_append_peak`
+  already does `cur = shape[0]; resize(cur+N); arr[cur:] = …` — no change
+  to its resize/assign logic, only to what group it's called against.
+- No insertion-position computation or cross-module position-sharing is
+  needed — tail-append means every peak-index-family group grows by the
+  same row count, from its own current end.
 
 ### `pyrs/utilities/NXstress/_fit.py`
 
 - `_PeakParameters.init_group`, `_BackgroundParameters.init_group` — accept
-  an existing `NXparameters` group and the insertion positions computed by
-  `_peaks.py`; resize and insert each parameter dataset at those same
-  positions.
-- `_Diffractogram.init_group` — accept an existing `NXdata` group and the
-  scan-point-family insertion positions; resize and insert
-  `diffractogram`/`diffractogram_errors`/`scan_point` at those positions.
+  an existing `NXparameters` group; their existing `_append_peak` methods
+  (already the same `resize(cur+N); arr[cur:] = …` shape, e.g.
+  `_fit.py:~92-137`) tail-append the new (Case A) rows after the current
+  end — same row count and order as `_peaks.py`'s append, so positional
+  alignment is preserved automatically.
+- `_Diffractogram.init_group` — accept an existing `NXdata` group; tail-append
+  `diffractogram`/`diffractogram_errors`/`scan_point` after the current end.
 
 ### `pyrs/utilities/NXstress/_sample.py`
 
-- `init_group` — accept an existing `NXsample` group; compute scan-point
-  insertion positions (shared with `_input_data.py` and `_Diffractogram`)
-  and resize/insert each per-scan-point log field at those positions.
+- `init_group` — accept an existing `NXsample` group; tail-append each
+  per-scan-point log field after the current end.
 
 ### `pyrs/utilities/NXstress/_input_data.py`
 
-- `init_group(ws, data=None)` — when `data` is an existing `NXdata` group
-  (append mode), compute scan-point insertion positions and extend
-  `detector_counts`/`scan_point` at those positions rather than raising.
-- `readSubruns(ws, data)` — unaffected by this spec's write-side scope, but
+- `init_group(wss, data=None)` — by this phase (Phase 3, after 04b's
+  Phase 2/3 bridge) this already takes `list[HidraWorkspace]`, not a
+  single `ws` — an earlier draft of this bullet cited the pre-04b
+  signature. When `data` is an existing `NXdata` group (append mode),
+  tail-append `detector_counts`/`scan_point` after the current end,
+  rather than raising; the new data being appended is still `wss`, per
+  04b's own signature (a length-1 list for the common single-new-workspace
+  append case).
+- `readSubruns(ws, data)` — this one keeps its single-`ws` signature
+  unchanged, since it's called once per *reconstructed* workspace against
+  an already-sliced `data` view (04b's Q7 value-set-membership split
+  happens in the caller, before `readSubruns` is invoked per workspace —
+  not inside this method). Unaffected by this spec's write-side scope, but
   confirm it still reads a post-append file correctly (the on-disk layout
-  after append is just a larger, still-sorted array — no reader change
-  should be needed).
+  after append is a larger array, locally sorted per key but not globally
+  re-sorted — no reader change should be needed, since the reader never
+  required global order; see the Relaxed sortedness section above).
 
 ### `pyrs/utilities/NXstress/NXstress.py`
 
 - `__init__(path, mode, *, entry_number: int | None = None)` — `entry_number`
   is only meaningful with `mode="a"`; defaults to the last existing entry.
 - `write(wss, peakss)` — when opened in append mode, resolve the target
-  entry, run the conflict check across all affected groups first (raise
-  `RuntimeError` and mark the instance invalid on any conflict, before any
-  mutation), then delegate to the append-aware `init_group` methods for both
-  families, passing the shared computed insertion positions where required.
-  When opened in `"w"` mode, behavior is unchanged from 04b.
+  entry, run the conflict/classification check across all affected groups
+  first (Case A/B/duplicate per the policy above — raise `NotImplementedError`
+  for Case B or `RuntimeError` and mark the instance invalid for a
+  duplicate, before any mutation), then delegate to the append-aware
+  `init_group` methods for both families, each simply tail-appending its
+  own new rows. When opened in `"w"` mode, behavior is unchanged from 04b.
 
 ---
 
 ## Tests
 
 `tests/integration/test_nxstress_append.py` (new):
-- Write a minimal dataset to a new `.nxs` file; append a second,
-  non-overlapping dataset to the same entry (default "last entry" target).
+- Write a minimal dataset to a new `.nxs` file; append a second (Case A —
+  a new discriminator value/workspace), non-overlapping dataset to the
+  same entry (default "last entry" target).
 - Read back; assert combined scan-point count equals the sum of both writes;
-  assert peak-index entries from both writes are present, correctly ordered,
-  and that `peak_parameters`/`background_parameters`/`diffractogram` rows
-  are still positionally aligned with the peaks index after the insert.
+  assert peak-index entries from both writes are present — file is "locally
+  sorted, globally segmented" (each write's own rows sorted among
+  themselves; the second write's block simply follows the first's, not
+  interleaved into it) — and that `peak_parameters`/`background_parameters`/
+  `diffractogram` rows are still positionally aligned with the peaks index
+  after the tail-append.
 - `entry_number` override: write two entries, append to the first (not the
   last) via explicit `entry_number`; confirm only the targeted entry grew.
-- Conflict case: attempt to append a scan point (or peak-index row, under
-  the same discriminator value) that duplicates one already in the target
-  entry; assert `RuntimeError` is raised, the on-disk entry is unchanged
-  (byte-for-byte, or field-by-field equality check), and a subsequent
-  `write()` call on the same `NXstress` instance also raises.
+- Case B rejection: attempt to append more scan points under a compound key
+  (discriminator value + phase/hkl/mask) that's already present in the
+  target entry; assert `NotImplementedError` is raised, the on-disk entry
+  is unchanged (byte-for-byte, or field-by-field equality check), and the
+  same `NXstress` instance can still make a subsequent Case-A append.
+- Exact-duplicate conflict case: attempt to append a scan point (or
+  peak-index row, under the same discriminator value) that duplicates one
+  already in the target entry; assert `RuntimeError` is raised, the
+  on-disk entry is unchanged, and a subsequent `write()` call on the same
+  `NXstress` instance also raises.
+- Case-A precondition 1 (empty `PeakCollection`s): attempt to append a
+  new workspace with `peakss=[]` to an entry that already holds another
+  workspace; assert `RuntimeError` is raised (its discriminator value
+  would be unrecoverable on a later `read()`), the on-disk entry is
+  unchanged, and the instance is invalidated (same treatment as an exact
+  duplicate — a violated invariant, not an unsupported operation).
+- Case-A precondition 2 (no discriminator scheme in target entry): write
+  a fresh entry with `N == 1` (no discriminators engaged, per 04b's
+  empty-config policy), then attempt to append a second, distinguishable
+  workspace to it; assert `RuntimeError` is raised (the target has no
+  discriminator columns to attach the new workspace's value to) rather
+  than silently merging or corrupting the entry.
 
 `tests/unit/pyrs/utilities/NXstress/test_peaks.py`, `test_fit.py`,
 `test_sample.py`, `test_input_data.py` (extend):
-- Insertion-point correctness for each family, independent of the
-  integration-level round-trip (e.g., inserting into the middle of an
-  existing sorted array, not just at the end).
+- Tail-append correctness for each family, independent of the
+  integration-level round-trip: appending to an existing (non-empty) group
+  grows each dataset by exactly the new row count, with existing rows
+  byte-for-byte unchanged and new rows correctly appended after them.
+- Case A/B/duplicate classification, given a small existing on-disk index
+  and various incoming batches.
 
 ---
 
@@ -220,13 +365,18 @@ on-disk NXstress structures and the new data's `HidraWorkspace`/
 > **For downstream NXstress consumers (not yet user-facing):**
 > An `NXentry` can now be incrementally grown: `NXstress(path, "a")` extends
 > the last-written entry (or a specifically targeted one, via
-> `entry_number`) with more scan points, rather than requiring a fresh file
-> or a fresh entry per write. All five position-aligned data groups (raw
-> counts, sample logs, diffractogram, peak index, and fit parameters) stay
-> mutually consistent after an append. This pass ships the capability as a
-> tested library feature only — no PyRS viewer currently exposes an "append"
-> action. Wiring a GUI entry point (if a future use case needs one) is a
-> separate, not-yet-scheduled follow-up.
+> `entry_number`) with a new workspace's worth of scan points, rather than
+> requiring a fresh file or a fresh entry per write. All five
+> position-aligned data groups (raw counts, sample logs, diffractogram,
+> peak index, and fit parameters) stay mutually consistent after an
+> append, via a tail-append that never re-sorts what's already on disk.
+> Growing an already-present workspace/key with more scan points (rather
+> than adding a new one) is not yet supported (`NotImplementedError`) —
+> that's a genuinely different, insertion-shaped operation, deferred as a
+> follow-up. This pass ships the capability as a tested library feature
+> only — no PyRS viewer currently exposes an "append" action. Wiring a GUI
+> entry point (if a future use case needs one) is a separate,
+> not-yet-scheduled follow-up.
 
 ---
 
@@ -237,7 +387,9 @@ on-disk NXstress structures and the new data's `HidraWorkspace`/
   from 04b.
 - Confirm (by inspection, not test) that no GUI file exists that calls
   `NXstress(..., "a")` — this spec is library-only by design.
-- Manual check: append into the middle of an existing sorted index (not
-  just the end) and confirm ordering and family-alignment are preserved —
-  the integration test above should cover this, but is worth a direct
-  `h5dump`/`nexusformat` inspection at least once during implementation.
+- Manual check: append a new workspace, then open the resulting file with
+  `nexusformat`/`h5dump` and confirm each group is "locally sorted,
+  globally segmented" — the first write's rows sorted among themselves,
+  the appended batch's rows sorted among themselves and following as a
+  second contiguous block, not interleaved into the first — and that no
+  group claims or implies a single global sort across the whole file.

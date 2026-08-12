@@ -111,12 +111,16 @@ These are things the NXstress implementation itself cannot yet do. Some are
 self-contained fixes; others require upstream PyRS changes (scheduled in the
 phases below).
 
-- **Appending to an existing entry / workspace** — `_input_data.py:44,63` and
+- **Appending to an existing entry** — `_input_data.py:44,63` and
   `NXstress.py:151-152` raise on any operation that would extend an existing
   `NXentry`. Each write must currently be a fresh entry (save-as). Scheduled:
-  Phase 3 (spec 04c) — as a library capability only; no GUI wiring is
-  scheduled for append in this pass, since spec 07's reduction pathway is
-  decided to always write a fresh file.
+  Phase 3 (spec 04c) — as a library capability only, and only for adding a
+  genuinely *new* workspace/compound key (tail-append); extending an
+  existing key already in the file with more scan points remains
+  unsupported (`NotImplementedError`) even after Phase 3 — a real,
+  currently-unscheduled gap, not something Phase 3 fully closes. No GUI
+  wiring is scheduled for append in this pass, since spec 07's reduction
+  pathway is decided to always write a fresh file.
 - **NXbeam intensity profile empty** — `_instrument.py:127`. Fine for Phase 1;
   readers must tolerate absence. Scheduled: Phase 5 (depends on reduction
   pipeline producing a profile).
@@ -314,13 +318,30 @@ workaround cleanly. Scheduled: Phase 1.
   validated by this decision — 04b does add an explicit write-time check for
   it, and raises if asked to combine more than one workspace with no
   discriminator fields configured, unless `nxstress.merge_workspaces` opts
-  into silently merging instead.
-- **Append mode, library-only (new)** — append (spec 04c) ships as a tested
-  `NXstress(path, "a")` capability with **no GUI entry point** in this pass.
-  The one pathway that might have used it (ManualReductionViewer, spec 07)
-  is decided to always write a fresh file instead, so append and the
-  ManualReduction hookup are no longer bundled (they were, in an earlier
-  draft of spec 07).
+  into silently merging instead. Discriminator values are the most slowly
+  varying coordinate of the combined index (`sort_key` prepends them) — not
+  because the schema requires global sorting (it doesn't; the reader only
+  requires each compound key's run to be contiguous, `_peaks.py:246-338`),
+  but because it makes each workspace one contiguous super-block, which is
+  what keeps the read-side split and the scan-point family's exact-match
+  reader (`_input_data.py:70-72`) simple. See
+  `open-questions/04b-multi-workspace-nxstress.md` Q6.
+- **Append mode, library-only, tail-append-only (new)** — append (spec 04c)
+  ships as a tested `NXstress(path, "a")` capability with **no GUI entry
+  point** in this pass. The one pathway that might have used it
+  (ManualReductionViewer, spec 07) is decided to always write a fresh file
+  instead, so append and the ManualReduction hookup are no longer bundled
+  (they were, in an earlier draft of spec 07). **Sortedness is relaxed for
+  append**: a single-step write still produces a fully sorted index, but
+  append sorts only its own incoming batch and does not re-sort the file —
+  "locally sorted, globally segmented." This is safe because the reader
+  never required global order (only run-contiguity and monotonic
+  `scan_point`, both still enforced). It also narrows what 04c needs to
+  implement to a plain tail-append for the common case (a new workspace);
+  extending scan points on a workspace/key already in the file is a
+  different, insertion-shaped operation this pass explicitly does not
+  implement (`NotImplementedError`). See
+  `open-questions/04c-nxstress-append.md` Q5.
 - **Multi-NXentry semantics (unchanged)** — multiple NXentry within a single
   `.nxs` file remain reserved for "distinct data-reduction or sample
   conditions" (`NXstress.py:107-125`). The compound peak index is the axis for
@@ -329,7 +350,13 @@ workaround cleanly. Scheduled: Phase 1.
   logs, masks, reduced diffraction data, and peak collections. It does NOT
   reconstruct raw counts unless the optional `input_data` group was written.
   Verify each viewer's load path is satisfied by this subset during Phase 1
-  wiring.
+  wiring. **Post-04b, `read()` returns `list[HidraWorkspace]`, not a single
+  `HidraWorkspace`** — each reconstructed workspace's sample logs, raw
+  counts, and diffraction data are recovered by splitting the concatenated
+  scan-point family via value-set membership against that workspace's own
+  scan points (recovered, in turn, from the peak-index split) — see 04b's
+  Q7 for the mechanism and the invariant it depends on (every input
+  workspace needs at least one `PeakCollection` when N>1).
 
 ---
 
@@ -451,10 +478,16 @@ These two specs sit between Phase 2 (internal cleanup, which touches the same
   `list[HidraWorkspace]`; resolve discriminator field names from
   `nxstress.discriminator_fields` via `pyrs.utilities.config.load_config()`;
   add a name-keyed discriminator slot to `_peaks.py::PeakIndex` (not
-  positional — robust to config reordering between write and read); update
+  positional — robust to config reordering between write and read),
+  **prepended** to `sort_key` so discriminator values are the most slowly
+  varying coordinate (each workspace forms one contiguous super-block —
+  not a schema requirement, but what keeps the read-side split and the
+  scan-point family's exact-match reader simple; see
+  `open-questions/04b-multi-workspace-nxstress.md` Q6); update
   `sort_key`, `validateNoDuplicatePeaks`, `_init`, `init_group`,
   `peakCollectionsFromNexus`; merge logic across workspaces in
-  `_InputData`/`_Sample`/`_Instrument`/`_Fit` `init_group`; raise if asked to
+  `_InputData`/`_Sample`/`_Instrument`/`_Fit` `init_group` (plain
+  concatenation in workspace order); raise if asked to
   combine more than one workspace with no discriminator fields configured,
   unless `nxstress.merge_workspaces` is `true`; update specs 02/03 call
   sites to the new (length-1-list-compatible) signature.
@@ -462,25 +495,34 @@ These two specs sit between Phase 2 (internal cleanup, which touches the same
   scheduled under Phase 3 — see the Decisions Log update below.
 
 **[04c — NXstress append mode, library only](04c-nxstress-append.md):**
-- **Required PyRS changes:** none. Append resizes/inserts directly against
+- **Required PyRS changes:** none. Append tail-appends directly against
   on-disk NXstress arrays — it does not reconstruct the existing entry as
   `HidraWorkspace`/`PeakCollection` to avoid round-tripping potentially
   large existing raw-count data through PyRS's outer types.
-- **Required NXstress extensions:** implement coordinated append across both
-  position-aligned families — peak-index family (`_peaks.py`'s compound
-  index at `_peaks.py:180-181`, plus `_fit.py::_PeakParameters`/
+- **Required NXstress extensions:** implement coordinated **tail-append**
+  (not general insertion — see below) across both position-aligned
+  families — peak-index family (`_peaks.py`'s compound index at
+  `_peaks.py:180-181`, reusing the existing `_append_peak`
+  `resize(cur+N); arr[cur:] = …` shape, plus `_fit.py::_PeakParameters`/
   `_BackgroundParameters`, which are positionally aligned with it, not
   independently keyed) and scan-point family (`_input_data.py:44-46,63-72`
   `detector_counts`, `_sample.py`'s per-scan-point logs, and
   `_fit.py::_Diffractogram`). `_instrument.py::_Masks` needs no change — it's
   name-keyed and already append-capable. `NXstress.py`: add entry targeting
   (`entry_number`, defaulting to the last entry) and remove the guard at
-  `NXstress.py:151-152` for the append case. Conflict policy: reject with
-  `RuntimeError` (checked across all affected groups before any mutation;
-  invalidates the instance for further writes on conflict). **No GUI
+  `NXstress.py:151-152` for the append case. Conflict/classification
+  policy: a new compound key (Case A — a new workspace) proceeds as a
+  tail-append; an exact duplicate raises `RuntimeError` (invalidates the
+  instance); a key already on disk that would need more scan points
+  inserted mid-run (Case B) raises `NotImplementedError` — that's a
+  different, insertion-shaped operation this pass deliberately doesn't
+  implement. Global sortedness is not maintained across an append — files
+  become "locally sorted, globally segmented" — since the reader never
+  required it (only run-contiguity and monotonic `scan_point`, both still
+  enforced); see `open-questions/04c-nxstress-append.md` Q5. **No GUI
   wiring** — no viewer in this plan calls append in this pass.
-- Round-trip test: write, then append, into the same entry; verify combined
-  contents.
+- Round-trip test: write, then append a new workspace, into the same entry;
+  verify combined contents.
 
 ---
 
@@ -540,7 +582,8 @@ this plan.)
   (`pyrs/interface/manual_reduction/pyrs_api.py`): write once per
   currently-enabled format (`legacy_io.enable` → `.h5` via the existing
   `reducer.save_diffraction_data` call; `nxstress.enable` → `.nxs` via
-  `NXstress(path, "w").write(hidra_ws, [])`), same basename for both when
+  `NXstress(path, "w").write([hidra_ws], [])` — a length-1 list, per 04b's
+  signature, which lands before this phase), same basename for both when
   both are enabled. No new GUI dialog or menu action — this viewer has none
   to extend. An explicit `project_file_name`'s extension, if given, is
   stripped and ignored; only its basename is used.
@@ -589,14 +632,21 @@ instrument-science team).
 - Populate `_fit.py:425-429,430-438` diffractogram `fit` / `fit_errors` from
   the new fit-engine method — these fields are zero-sized resizable
   datasets, so the writer must resize them to the real shape first, not
-  index-assign into a pre-shaped array.
+  index-assign into a pre-shaped array. By this phase, `_Diffractogram.init_group`
+  already takes `list[HidraWorkspace]` (04b) — resize to the *total*
+  concatenated scan-point count across all input workspaces, and place
+  each `PeakCollection`'s reconstructed spectrum by scan_point-*value*
+  lookup against the concatenated `scan_point` array, not by position
+  (see 04b's Q7).
 - Change `_Diffractogram.diffractogramFromNexus`'s return from a plain
   4-tuple to a `NamedTuple` (`DiffractogramData`, six fields including
   `fit`/`fit_errors`); update its one caller (`NXstress.py:218`) to match.
 - Populate `NXbeam` intensity profile in `_instrument.py:126` (construction;
   TODO at `:127`) by reading `HidraWorkspace.beam_intensity_profile`
   unconditionally — no "if measured" branch; the property always has a
-  value.
+  value. Per-scan-point, like wavelength (04b's Q7 clarification) — this
+  spec concatenates it across `wss` alongside the rest of the scan-point
+  family, it does not validate it for cross-workspace equality.
 - Fix the L2 arm-shift round-trip in `_instrument.py:132-150` (the
   calibrated/uncalibrated branch; TODO + `distance = arm_length` at
   `:138-140`) using the new `DENEXDetectorGeometry` accessors — the
@@ -651,15 +701,17 @@ hookup is planned unless a downstream requirement emerges.
 | 5 | Priority ordering | **Keep drafted order.** Phase 1 hooks up PeakFitting, Texture, and CombineRuns (data model matches `NXstress.write` 1:1, zero upstream changes). StrainStressViewer comes in Phase 3, after Phase 2 stabilizes NXstress internals and after the 04b multi-workspace mechanism lands. | Ship something quickly, learn from real use, then tackle the harder integration. |
 | 6 | Multi-workspace I/O & round-trip symmetry | **Decided:** `NXstress.write`/`read` generalize to `list[HidraWorkspace]`, round-trip symmetric — `read` recovers the same N workspaces `write` was given. Workspace boundaries are recovered from discriminator field(s) named by the new `nxstress.discriminator_fields` config key, resolved per workspace via a property-or-`SampleLogs`-fallback resolver and carried name-keyed (not positionally); the specific field names any deployment configures are decided at spec 04b's implementation kickoff, not here. | New capability, not in the original plan. Spec: [04b](04b-multi-workspace-nxstress.md). Assumes the existing no-overlap invariant (each input workspace contributes only unique scan points and/or other index fields); 04b adds an explicit write-time check for it, and raises on N>1 with no discriminator fields configured unless `nxstress.merge_workspaces` opts into merging instead. No new `HidraWorkspace` method — resolution logic is NXstress-internal. |
 | 7 | Append mode scope | **Decided:** append ships as a tested library capability (`NXstress(path, "a")`) with **no GUI entry point** in this pass. The ManualReductionViewer hookup (spec 07) always writes a fresh file instead, so it no longer depends on append. | New capability, not in the original plan; also un-bundles what was previously one spec (append + ManualReduction). Spec: [04c](04c-nxstress-append.md). |
-| 8 | Append architecture & scope | **Decided:** append resizes/inserts directly against on-disk arrays (no round-trip through `HidraWorkspace`/`PeakCollection` for the existing entry); covers both position-aligned families — peak-index (peaks + peak_parameters + background_parameters) and scan-point (detector_counts + sample logs + diffractogram) — not just the originally-scoped `_input_data.py`/`_peaks.py` pair. `NXstress(path, "a")` targets the last entry by default, with `entry_number` as an explicit override. Overlap conflicts raise `RuntimeError` and invalidate the instance for further writes. | Spec: [04c](04c-nxstress-append.md). Corrects an under-scoped original draft: `_fit.py::_PeakParameters`/`_BackgroundParameters` build rows in the same sort order as the peaks index (`_fit.py:87`), so a partial append would desynchronize the entry. |
+| 8 | Append architecture & scope | **Decided (superseded in part by item 17 — see there for the current scope):** append operates directly against on-disk arrays (no round-trip through `HidraWorkspace`/`PeakCollection` for the existing entry); covers both position-aligned families — peak-index (peaks + peak_parameters + background_parameters) and scan-point (detector_counts + sample logs + diffractogram) — not just the originally-scoped `_input_data.py`/`_peaks.py` pair. `NXstress(path, "a")` targets the last entry by default, with `entry_number` as an explicit override. **As of item 17, this is tail-append only, not general insertion**, and the conflict outcome is three-way, not binary: a new compound key (Case A) proceeds; a key already on disk needing more scan points inserted mid-run (Case B) raises `NotImplementedError` without invalidating the instance; only an exact duplicate raises `RuntimeError` and invalidates it. | Spec: [04c](04c-nxstress-append.md). Corrects an under-scoped original draft: `_fit.py::_PeakParameters`/`_BackgroundParameters` build rows in the same sort order as the peaks index (`_fit.py:87`), so a partial append would desynchronize the entry. |
 | 9 | `direction` storage & config default | **Decided:** `HidraWorkspace` gains a settable `direction` `@property` (get/set) — `HidraWorkspace` previously had no notion of direction at all; the viewer tracked it only at the model level (`filenames_11/22/33`), which doesn't fit 04b's workspace-resolved discriminator mechanism. 04b's discriminator resolver is corrected to be bidirectional: "get" from the workspace at write time (as before), "set" onto each reconstructed workspace at read time (new) — so any property-backed discriminator round-trips with no NXstress-side special-casing. `pyrs/config/pyrs.default.yml`'s `nxstress.discriminator_fields` default changes from `[]` to `["direction"]`; `save_as_nxstress` validates this precondition and raises a clear error if unmet. | Spec: [05](05-strain-stress-viewer.md); the resolver correction lands in [04b](04b-multi-workspace-nxstress.md). |
 | 10 | CombineRuns keeps its pre-merge | **Decided:** spec 03's `.nxs` export path does **not** switch to 04b's N-workspace mechanism. `HidraWorkspace.append_hidra_project` (used by `combine_project_files`) already discards per-run boundaries the same way `nxstress.merge_workspaces: true` would — same resulting semantics, already implemented at the PyRS layer. The existing `.h5` export path still needs the single merged workspace regardless, so switching only `.nxs` would mean two data paths through `CombineRunsModel` for an identical output file. The `.nxs` branch passes the already-merged workspace as a length-1 list: `NXstress.write([self._hidra_ws], [])`. No `discriminator_fields`/`merge_workspaces` config is touched by this spec. | Spec: [03](03-combine-runs-nxstress.md). Retires `open-questions/04b-multi-workspace-nxstress.md` Q3, which had floated this as a possible simplification. |
 | 11 | Config schema: two independent format sections | **Decided:** replaces the single `nxstress.default_extension` key with two fully parallel, self-contained top-level sections — `nxstress` and `legacy_io` — each owning its own `enable` flag and its own `extension`. Each viewer's save action reads its own format's `enable` to decide whether it's clickable (`setEnabled`, never `setVisible` — the action stays visible, grayed out when disabled), and each action *imposes* its own format's `extension` on whatever a user types, rather than accepting a user-chosen extension. `load_config()` raises if neither format is enabled. No single GUI action ever auto-writes both formats — a user with both enabled invokes the two independent actions manually, one at a time. | Spec: [01](01-config-and-test-infra.md). Two earlier framings were tried and corrected first: an `output_mode` enum where "both" meant one action auto-writing two formats (rejected — bad UI design); a single `mode` enum plus one shared `default_extension` (rejected — doesn't make sense once two independently-enabled formats each need their own extension). |
 | 12 | ManualReductionViewer: automatic write, not a GUI action | **Decided:** `reduce_hidra_workflow` has no button click to protect the meaning of (it saves automatically, as an inherent side effect of every reduction) — so the "never auto-write both formats" rule from item 11 does not apply to it. It simply writes once per currently-enabled format: one file if only one is enabled, both files (same basename) if both are. No tie-break, no ambiguity. An explicit caller-supplied `project_file_name`'s extension is stripped and ignored — never validated against, never a reason to raise; only its basename is used, exactly as for the auto-derived case. | Spec: [07](07-manual-reduction-nxstress.md). Considered and explicitly deferred: giving this viewer a real Save/Save-As action, and a shared `Viewer` ABC across all five viewers — legitimate future architecture work, but a workflow change unrelated to NXstress, not entangled with this rollout. |
 | 13 | Specs 06/07 decoupled; spec 07 hookup point corrected | **Decided:** spec 07 does not depend on spec 06 at all. Tracing the actual code found two errors in the original drafts: the class is `ReductionController`, not `HB2BReductionManager` (an unrelated class in `pyrs/core/reduction_manager.py`); and `ReductionController.save_project` — spec 06's target — has **zero callers anywhere in the codebase**, so implementing it unblocks nothing. The real, currently-functional save path is `reduce_hidra_workflow`'s automatic `ReductionApp.save_diffraction_data` call, which spec 07 now hooks into directly. Spec 06's other item (`nexus_conversion.py:118,374`) is also confirmed unrelated — both branches are on the NeXus-*conversion* step, not the save path. | Specs: [06](06-manual-reduction-prereqs.md) (re-scoped to an independent, optional PyRS cleanup item, not scheduled in this plan's phases), [07](07-manual-reduction-nxstress.md). |
-| 14 | Spec 08 corrected: calibration fix scope, beam-profile mechanism, STRESS_FIELD blocked | **Decided, three parts.** (a) The `file_object.py:510` FIXME cited in the original draft doesn't exist there — the real gap is entirely within `DENEXDetectorGeometry` (discards its `calibrated` arg; `apply_shift` is dead code that would raise `AttributeError` if called; destructively overwrites `arm_length` with no way to recover the pre-shift value). Fix stays scoped to that class + NXstress; **no `.h5` format change** in this pass — explicitly flagged as a strong future need, not dropped. (b) No beam-intensity data path exists anywhere in PyRS (confirmed); rather than NXstress hardcoding a uniform placeholder, `HidraWorkspace` gains a `beam_intensity_profile` property (`direction`-style convention) that NXstress reads unconditionally — forward-compatible with a future real beam-monitor path for free. (c) `STRESS_FIELD` shape verification is **blocked, not resolved** — the three example files a stakeholder named are real but contain no `STRESS_FIELD` log, only an unrelated `StrainDirection` label; strain and stress are physically distinct quantities, so that label is not a valid substitute. Documented as an explicit, tracked blocker rather than guessed at. | Specs: [08](08-fit-spectrum-prereqs.md), [09](09-fit-spectrum-nxstress.md) (carries the `STRESS_FIELD` block forward; the other three items proceed normally). |
+| 14 | Spec 08 corrected: calibration fix scope, beam-profile mechanism, STRESS_FIELD blocked | **Decided, three parts.** (a) The `file_object.py:510` FIXME cited in the original draft doesn't exist there — the real gap is entirely within `DENEXDetectorGeometry` (discards its `calibrated` arg; `apply_shift` is dead code that would raise `AttributeError` if called; destructively overwrites `arm_length` with no way to recover the pre-shift value). Fix stays scoped to that class + NXstress; **no `.h5` format change** in this pass — explicitly flagged as a strong future need, not dropped. (b) No beam-intensity data path exists anywhere in PyRS (confirmed); rather than NXstress hardcoding a uniform placeholder, `HidraWorkspace` gains a `beam_intensity_profile` property (`direction`-style convention) that NXstress reads unconditionally, per-scan-point, concatenated across `wss` like wavelength (not validated for cross-workspace equality — see item 18) — forward-compatible with a future real beam-monitor path for free. (c) `STRESS_FIELD` shape verification is **blocked, not resolved** — the three example files a stakeholder named are real but contain no `STRESS_FIELD` log, only an unrelated `StrainDirection` label; strain and stress are physically distinct quantities, so that label is not a valid substitute. Documented as an explicit, tracked blocker rather than guessed at. | Specs: [08](08-fit-spectrum-prereqs.md), [09](09-fit-spectrum-nxstress.md) (carries the `STRESS_FIELD` block forward; the other three items proceed normally). |
 | 15 | Spec 09 corrected: line numbers, `NamedTuple` return, concrete reader scope | **Decided, three parts.** (a) Cited line numbers in the original draft were imprecise (off by a few; one citation pointed at an unrelated docstring note) — corrected against the current code. (b) `diffractogramFromNexus`'s return type changes from a plain (and now-growing) positional tuple to a `NamedTuple` (`DiffractogramData`) — self-documenting, avoids positional ambiguity as more fields are added; its one existing caller (`NXstress.py:218`) is updated to match. (c) `instrumentFromNexus`'s reader-side scope, previously vague ("update... correspondingly"), is now concrete: it must read the new `arm_shift_applied` flag and use it to decide whether to call `apply_shift` or use the raw arm-length value, or a round-trip double-shifts. Also confirmed as a simplification: `_Diffractogram.init_group`'s `peakss` parameter already exists, unused — no new parameter needed. | Spec: [09](09-fit-spectrum-nxstress.md). |
-| 16 | Spec 10 corrected: status-bar UI gap, validator/schema-doc unavailability | **Decided, two parts.** (a) Only `PeakFittingViewer` has a status bar today — `TextureFittingViewer`, `CombineRunsViewer`, and `StrainStressViewer` have none, only modal dialogs. Spec 10 now explicitly adds a status bar to the three that lack one (cheap — `self.statusBar()` creates it lazily), for consistent non-blocking deprecation-hint UX across all four; this is the one piece of genuinely new UI in an otherwise pure config-flip spec. `StrainStressViewer`'s one-time hint flag must live at the window level, since its three direction slots share one load handler. (b) The `nexusformat`-org NXstress validator and the `NXstress.xml`/`.html` schema doc — referenced in specs 02's, 09's, and 10's Verification sections since spec 04b's open questions — are confirmed **not yet added to the repo**; the installed `nexusformat` 1.0.8 package has no validator capability at all. A reminder is added to spec 10's Overview to add both (the validator as a link to its separate repository; the schema doc under `docs/developer/source/design/nexus/`, linked from that directory's `IO_prototype.rst`) — not fabricated in this planning pass. | Specs: [02](02-peak-and-texture-nxstress.md), [09](09-fit-spectrum-nxstress.md), [10](10-flip-defaults.md). |
+| 16 | Spec 10 corrected: status-bar UI gap, validator/schema-doc unavailability | **Decided, two parts.** (a) Only `PeakFittingViewer` has a status bar today — `TextureFittingViewer`, `CombineRunsViewer`, and `StrainStressViewer` have none, only modal dialogs. Spec 10 now explicitly adds a status bar to the three that lack one (cheap — `self.statusBar()` creates it lazily), for consistent non-blocking deprecation-hint UX across all four; this is the one piece of genuinely new UI in an otherwise pure config-flip spec. `StrainStressViewer`'s one-time hint flag must live at the window level, since its three direction slots share one load handler. (b) The `nexusformat`-org NXstress validator and the `NXstress.xml`/`.html` schema doc — referenced in specs 04's, 09's, and 10's Verification sections since spec 04b's open questions (corrected from an earlier draft's "02" — spec 02 has no validator reference at all; spec 04's is the one that does) — are confirmed **not yet added to the repo**; the installed `nexusformat` 1.0.8 package has no validator capability at all. A reminder is added to spec 10's Overview to add both (the validator as a link to its separate repository; the schema doc under `docs/developer/source/design/nexus/`, linked from that directory's `IO_prototype.rst`) — not fabricated in this planning pass. | Specs: [04](04-nxstress-internal-cleanup.md), [09](09-fit-spectrum-nxstress.md), [10](10-flip-defaults.md). |
+| 17 | Specs 04b/04c simplified: discriminators most-slowly-varying, sortedness relaxed for append | **Decided, following direct verification that global sortedness was never a reader requirement.** `_Peaks.peakCollectionRanges` (`_peaks.py:246-338`) — the only reader-side splitter — enforces only that each compound key's run is contiguous and `scan_point` increases within a run; the latter is guaranteed upstream by `SubRuns.set` (`sample_logs.py:164-166`) regardless of NXstress's own sort. Three changes follow: (a) `sort_key` now **prepends** discriminator values (most slowly varying), so each input workspace forms one contiguous super-block — this turns 04b's read-side workspace split into a `groupby` over already-contiguous ranges and keeps the scan-point family's exact-match reader (`_input_data.py:70-72`) working via plain concatenation, no new indexing machinery. (b) A single-step write still produces a fully sorted index, as today. (c) Append no longer re-sorts the file — "locally sorted, globally segmented" — which, combined with (a), reduces the common append case (adding a new workspace) to a plain tail-append using code (`_append_peak`'s `resize(cur+N); arr[cur:] = …` shape) that already exists. **04c's scope is cut accordingly:** it now covers only appending a genuinely new compound key; extending scan points on a key already in the file raises `NotImplementedError` rather than being implemented via mid-array insertion — removing the insertion-position computation, cross-group position-sharing, and associated tests the original draft required. The non-overlap invariant is unchanged and still fully enforced throughout. | Specs: [04b](04b-multi-workspace-nxstress.md), [04c](04c-nxstress-append.md). See `open-questions/04b-multi-workspace-nxstress.md` Q6 and `open-questions/04c-nxstress-append.md` Q5 for the full verification writeup. |
+| 18 | 04b architectural gap closed: scan-point-family read-split mechanism, write-time invariant, wavelength/geometry clarification | **A full-tree consistency scan (triggered by a stale single-workspace signature spotted in spec 09) found that 04b never specified how `read()` splits the *scan-point family* (raw counts, sample logs, diffractogram, wavelength) back into N workspaces** — only the peak-index family's split (via PEAKS/`NXreflections`) was specified. **Decided, per direct discussion:** (a) recover each workspace's scan-point set from the already-split peak-index ranges, then slice the scan-point family by value-set membership, not position; (b) this requires every input workspace to contribute at least one `PeakCollection` whenever N>1 — spec 05 already satisfies this, spec 03 is exempt because it's always `N == 1`; (c) **per explicit follow-up, this is enforced, not just documented** — `write()` raises via `_validateWorkspaceAndPeaksData` if the invariant is violated, rather than silently producing an unsplittable file. **Separately, re-reading `_instrument.py` directly surfaced a related imprecision:** 04b's original "validate geometry/shift/wavelength consistency across N inputs" bullet incorrectly grouped wavelength with geometry — wavelength (and, later, spec 08/09's `beam_intensity_profile`) is stored per-scan-point and belongs to the scan-point family's concatenation pattern, not a cross-workspace equality check; only geometry/shift/calibration-state are genuinely single, entry-wide values requiring that check. Both corrections are documentation-and-validation-only — no new on-disk schema. | Spec: [04b](04b-multi-workspace-nxstress.md). See `open-questions/04b-multi-workspace-nxstress.md` Q7. Also propagated to README §2.1/§2.4/§6, Decisions Log item 8, and specs 05/09/10 — see those files' own corrections. |
 
 ---
 
@@ -690,7 +742,8 @@ Tests to extend/add:
 
 - **Round-trip pytest** — for each viewer connected, load an existing
   `HidraProjectFile`, do the workflow, save as NXstress, reload from NXstress,
-  assert equality of `HidraWorkspace` and `list[PeakCollection]`.
+  assert equality of `list[HidraWorkspace]` (post-04b — a single workspace
+  is just the `N == 1` case) and `list[PeakCollection]`.
 - **Schema validation** — run each written file through the NXstress validator
   (via `nexusformat`) with `nxstress.use_production_names = true` once the
   upstream validator bug is resolved (Phase 2).

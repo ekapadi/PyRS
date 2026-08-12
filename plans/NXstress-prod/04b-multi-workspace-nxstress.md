@@ -27,6 +27,53 @@ The specific field names in use for any given deployment are a config-level
 policy decision, not a per-call argument, and are deliberately not fixed by
 this spec — see `open-questions/04b-multi-workspace-nxstress.md` Q2.
 
+**Ordering rule: discriminators are the most slowly varying coordinates of
+the combined index.** `PeakIndex.sort_key` returns
+`(*discriminator_values, phase_name, h, k, l, mask)` — discriminator
+values first, existing columns unchanged and still last. This is a direct
+consequence of checking what the reader actually requires, against the
+current code:
+
+- The only reader-side splitter, `_Peaks.peakCollectionRanges`
+  (`_peaks.py:246-338`), enforces exactly two invariants: each compound
+  key occupies one *contiguous* run (raises `"Interleaved blocks
+  detected"` at `_peaks.py:313`/`:332` otherwise), and `scan_point`
+  increases within a run (`_peaks.py:306`/`:326`). It never checks that
+  the runs themselves are globally ordered — there is no
+  `searchsorted`/`argsort`/binary search anywhere in the module. The
+  three `sorted(peakss, key=_Peaks.PeakIndex.sort_key)` calls
+  (`_peaks.py:184`, `_fit.py:87`, `_fit.py:287`) exist only to give the
+  peak-index-family groups a **shared, deterministic block order** so
+  their rows stay positionally aligned with each other — any commonly
+  agreed order satisfies that, not specifically lexicographic.
+- The monotonic-`scan_point`-within-a-run invariant is guaranteed
+  upstream by PyRS itself, not by this sort:
+  `SubRuns.set` (`pyrs/dataobjects/sample_logs.py:164-166`) already
+  raises `"subruns are not sorted in increasing order"` unless
+  `np.all(value[:-1] < value[1:])`, so every `PeakCollection.sub_runs`
+  and `HidraWorkspace.get_sub_runs()` is strictly increasing by
+  construction, independent of NXstress's `sorted()` call.
+- Putting discriminators first means each input workspace's rows form
+  one contiguous **super-block** in every position-aligned group. That
+  is what makes the read-side split and the scan-point-family merge
+  both trivial — see the corresponding Scope bullets below — rather than
+  requiring new indexing machinery.
+- Consequently, `_peaks.py:44-45`'s docstring (which currently states
+  the index is *"sorted lexographically prior to output"* as a format
+  guarantee, specifically to support append) should be corrected during
+  implementation: the actual guarantee is the two invariants above, not
+  a specific sort order, and the append cost the docstring warns about is
+  addressed instead by [04c](04c-nxstress-append.md)'s tail-append-only
+  scope.
+- **Orthogonal to name-keyed discriminator values (below):** name-keying
+  governs how a discriminator *value* is attributed to a field name;
+  this ordering rule governs only *write-time row order*. The reader
+  detects workspace boundaries by "the key changed," not by re-deriving
+  the writer's sort order, so `nxstress.discriminator_fields` being
+  reordered between a write and a later read cannot corrupt anything —
+  the same property that already makes name-keying safe against config
+  drift.
+
 This spec retires `open-questions/05-strain-stress-viewer.md` Q2:
 StrainStressViewer's "one `HidraWorkspace` per direction in; one `.nxs` file
 with provenance out" is exactly this mechanism, with `direction` as one
@@ -86,11 +133,24 @@ machinery.
   by either key.
 - Merge logic across workspaces in `_InputData.init_group` (concatenate raw
   counts, if present, across inputs), `_Sample.init_group` (concatenate
-  sample logs), `_Instrument.init_group` (single shared instrument geometry /
-  wavelength — validate consistency across inputs rather than silently
-  picking one), and `_Fit.init_group` (concatenate reduced diffraction data
+  sample logs), `_Instrument.init_group` (see the geometry-vs-wavelength
+  split below — this is **not** a single uniform rule), and `_Fit.init_group`
+  (concatenate reduced diffraction data
   per mask, filling `NaN` for scan points a given input doesn't contribute to
-  a given mask, consistent with existing single-workspace behavior).
+  a given mask, consistent with existing single-workspace behavior). This is
+  **plain concatenation in workspace order** —
+  `concat(ws0.get_sub_runs(), ws1.get_sub_runs(), …)` — not a merge-and-sort:
+  `_Diffractogram.init_group` already writes
+  `dg["scan_point"] = NXfield(ws.get_sub_runs())` verbatim (`_fit.py:410`),
+  `_InputData.init_group` iterates `ws._raw_counts.keys()` in workspace
+  order (`_input_data.py:36`), and `_InputData.readSubruns`'s exact-match
+  check — `if ws.get_sub_runs() != scan_points: raise RuntimeError(...)`
+  (`_input_data.py:70-72`) — keeps working unchanged specifically *because*
+  each workspace's slice of the concatenated array equals its own
+  `get_sub_runs()` as-is. A global-`scan_point` merge order would have
+  interleaved workspaces with interleaving scan ranges (e.g. `[1,3,5]` and
+  `[2,4,6]`) and broken that exact-match check; the slowest-varying
+  discriminator rule above avoids that case entirely.
 - Extend `_validateWorkspaceAndPeaksData` to validate across the full set of
   input workspaces (no-overlap invariant; required logs present in each).
 - Update the spec-02/03 call sites (`PeakFittingModel`, `TextureFittingModel`,
@@ -150,7 +210,10 @@ resolver picks it up automatically, with no change to NXstress itself.
   reordered between when a file is written and when it's later read; a
   positional tuple would silently misattribute values in that case, while a
   name-keyed representation resolves correctly regardless of list order.
-- `sort_key` includes the discriminator tuple in the ordering key.
+- `sort_key` prepends the discriminator tuple to the ordering key — i.e.
+  `(*discriminator_values, phase_name, h, k, l, mask)` — so discriminator
+  values are the most slowly varying coordinate and each input workspace's
+  rows form one contiguous block (see the Overview's ordering-rule note).
 - `validateNoDuplicatePeaks` treats the discriminator tuple as part of the
   uniqueness key, so the same `(phase, h, k, l, mask)` arriving from two
   different input workspaces is not flagged as a duplicate as long as their
@@ -161,9 +224,14 @@ resolver picks it up automatically, with no change to NXstress itself.
   On-disk, each discriminator field becomes one `NXfield` on `NXreflections`,
   named via the existing `allowed_identifier()` sanitizer
   (`_definitions.py:221-231`).
-- `peakCollectionsFromNexus` reconstructs the flattened index as today, plus
-  a new method that splits the result by discriminator value into N
-  per-workspace peak-collection lists.
+- `peakCollectionsFromNexus` reconstructs the flattened index as today. The
+  per-workspace split is a `groupby` over the discriminator-value prefix of
+  the ranges `peakCollectionRanges` already returns — not a new indexing
+  mechanism — because the slowest-varying ordering rule above guarantees
+  each workspace's ranges are contiguous. The existing block-detection
+  algorithm (`_peaks.py:246-338`) generalizes by *prepending* the
+  discriminator columns to its key tuple; the contiguity/monotonicity
+  checks it already performs are otherwise unchanged.
 - Collision guard: raise if a configured discriminator field name collides
   with an existing reserved `NXreflections` column (`h`, `k`, `l`, `mask`,
   `scan_point`, `center`, `center_errors`, `center_type`, `sx`, `sy`, `sz`,
@@ -233,10 +301,67 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
   `list[HidraWorkspace]`; concatenate along the scan-point axis. Reuse the
   merge logic `HidraWorkspace.append_hidra_project` already implements
   in-memory (`pyrs/core/workspaces.py:497`) rather than re-deriving it.
-- `_Instrument.init_group` additionally validates that instrument geometry,
-  detector shift (if calibrated), and wavelength are consistent across all N
-  input workspaces; raise a clear error if they are not (mixed-instrument or
-  mixed-calibration merges are not supported by this spec).
+- `_Instrument.init_group` treats two genuinely different kinds of field:
+  - **Geometry, detector shift, and calibration state** are single,
+    entry-wide values — validate they're consistent across all N input
+    workspaces; raise a clear error if they are not (mixed-instrument or
+    mixed-calibration merges are not supported by this spec).
+  - **Wavelength is not** one of these, even though an earlier draft of
+    this bullet grouped it with geometry. It's stored per-scan-point
+    (`mono["wavelength"] = NXfield(wavelength, ...)`, `_instrument.py:103`)
+    and can already legitimately vary *within* a single workspace under
+    existing PyRS semantics (`HidraWorkspace.get_wavelength` can return a
+    per-subrun dict). It belongs to the scan-point family's concatenation
+    pattern (like `_Diffractogram`'s `scan_point`/`diffractogram`), not to
+    a cross-workspace equality check — concatenate it in the same
+    workspace order as everything else in that family. The same
+    distinction will apply to spec 08/09's `beam_intensity_profile` once
+    it exists: per-scan-point, concatenated, never validated-for-equality.
+
+### Reconstructing N workspaces from the scan-point family (read side) — new invariant
+
+The write side above concatenates the scan-point family (raw counts,
+sample logs, diffractogram, wavelength) across all N input workspaces, but
+there is no on-disk field that independently records which workspace a
+given scan-point-family row came from — the *only* place a discriminator
+value is ever written is the PEAKS/`NXreflections` group, attached to
+`PeakCollection` rows. This has a direct, previously-unstated consequence
+for `read()`:
+
+- **Read-side mechanism:** first split the PEAKS group into per-workspace
+  `PeakCollection` lists (already specified above — a `groupby` over the
+  discriminator-value prefix of `peakCollectionRanges`'s contiguous
+  ranges). For each resulting workspace, take the **union of its
+  `PeakCollection`s' scan points** as that workspace's scan-point *set*.
+  Then slice the scan-point family's concatenated arrays by testing
+  membership in that set (`np.isin`-style boolean mask), not by position —
+  this is robust regardless of what order `write()` happened to
+  concatenate workspaces in, and regardless of whether that order matches
+  the peak-index family's discriminator-sorted order.
+- **New invariant, now made explicit: every input workspace must
+  contribute at least one `PeakCollection` whenever N>1.** Without at
+  least one `PeakCollection`, a workspace's discriminator value — and
+  therefore its scan-point set — is not recoverable from anything on
+  disk. Spec 05's three per-direction workspaces already satisfy this
+  (every direction has real peak fits). Spec 03's `peakss=[]` is fine
+  *only* because it's always `N == 1` (the discriminator mechanism never
+  engages at all in that case — see
+  `open-questions/04b-multi-workspace-nxstress.md` Q3). This was previously an
+  implicit assumption, not a stated requirement.
+- **This invariant is enforced, not just documented:** `write()` raises a
+  clear error — via the same `_validateWorkspaceAndPeaksData` extension
+  that already checks the no-overlap invariant — if `len(wss) > 1` and any
+  input workspace contributes zero `PeakCollection`s. This is a
+  correctness gate, not an optional convention: violating it would not
+  fail loudly at write time, only produce a silently-unsplittable file
+  discovered later at `read()` — exactly the kind of gap this plan's
+  "raise a clear error" pattern exists to close elsewhere (see, e.g., the
+  discriminator/reserved-column collision guard above).
+- No new on-disk schema surface is needed for this — the fix is
+  read-algorithm-plus-write-time-validation, not a new field.
+
+See `open-questions/04b-multi-workspace-nxstress.md` Q7 for the full
+writeup of how this gap was found.
 
 ### `pyrs/utilities/NXstress/NXstress.py`
 
@@ -246,7 +371,12 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
 - `_validateWorkspaceAndPeaksData` extended to the N-workspace case,
   including the empty-`discriminator_fields`/`merge_workspaces` branch: raise
   on `len(wss) > 1` with no discriminator fields configured, unless
-  `merge_workspaces` is `true`.
+  `merge_workspaces` is `true`; **and** raise on `len(wss) > 1` if any
+  input workspace contributes zero `PeakCollection`s (see "Reconstructing N
+  workspaces from the scan-point family" above — without at least one
+  `PeakCollection`, that workspace's discriminator value can't be
+  recovered on read, so this must be caught at write time, not discovered
+  later as a silent read-side misattribution).
 
 ---
 
@@ -278,6 +408,19 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
   `discriminator_fields = ["a", "b"]`, then read with
   `discriminator_fields = ["b", "a"]` (simulating config drift between write
   and read) — assert values still resolve correctly by name, not position.
+- Empty-`PeakCollection` invariant: `write()` with N>1 workspaces where one
+  contributes zero `PeakCollection`s raises a clear error (not a silent,
+  later-discovered read-side misattribution); confirm the same call with
+  `N == 1` and zero `PeakCollection`s (spec 03's case) does **not** raise.
+- Scan-point-family read-split correctness: write two workspaces whose
+  scan-point *values* interleave numerically (e.g. workspace A has
+  `[1, 3, 5]`, workspace B has `[2, 4, 6]` — their rows are still
+  positionally contiguous per workspace in the concatenated array, since
+  the write side never interleaves *positions*, but their values
+  interleave when compared) — read back and assert each reconstructed
+  workspace's sample logs, wavelength, and diffraction data contain
+  exactly its own scan points, recovered via value-set membership, not by
+  assuming the reader independently knows position boundaries.
 
 `tests/integration/test_nxstress_viewer_roundtrip.py` (extend):
 - CombineRuns regression: confirm `export_project_files`'s `.nxs` branch

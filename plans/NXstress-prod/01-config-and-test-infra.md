@@ -40,8 +40,9 @@ starts in specs 02–03), but both are prerequisites for all later work.
 **Out of scope:**
 - Any NXstress writer/reader changes
 - Any GUI viewer changes
-- The production-names flip (that happens in spec 04 once the upstream
-  `nexusformat` validator bug is resolved)
+- The production-names flip (that happens in spec 10, not spec 04 —
+  corrected cross-reference; spec 04 explicitly lists this flip as out of
+  its own scope)
 
 ---
 

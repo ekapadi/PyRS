@@ -1,8 +1,12 @@
 # Open Questions — 04 NXstress Internal Cleanup (Phase 2 TODOs)
 
 **Spec:** [04-nxstress-internal-cleanup.md](../04-nxstress-internal-cleanup.md)
-**Blocking:** Partially — Q5 blocks flipping the production-names default,
-but not the rest of this spec's scope.
+**Blocking:** No. (Corrected: this header previously referenced a "Q5"
+blocking the production-names default flip — no such question exists in
+this file, only Q1–Q4 below, none of which claim to block anything. The
+production-names flip is spec 10's concern, not this spec's — spec 04
+itself lists it as out of scope. This was a stale leftover, likely from
+before specs 04/10 were split apart.)
 
 ---
 

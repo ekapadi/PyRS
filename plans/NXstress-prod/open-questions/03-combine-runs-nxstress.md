@@ -5,7 +5,7 @@
 
 ## Q1 — RESOLVED: read-back completeness for the CombineRuns case
 
-Same plan-level caveat as spec 02 (README.md:237-241): `NXstress.read()`
+Same plan-level caveat as spec 02 (README.md:353-360): `NXstress.read()`
 doesn't reconstruct raw counts unless `input_data` was written. This spec is
 explicitly export-only (loading a `.nxs` back into CombineRunsViewer is
 out of scope), but the round-trip *test* in this spec does read the file
