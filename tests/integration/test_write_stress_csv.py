@@ -69,6 +69,7 @@ def test_write_csv_none_stress():
         assert "Error: stress input must be of type StressField" in str(exception_info.value)
 
 
+@pytest.mark.integration
 def test_write_csv_incorrect_filename(test_data_dir: str):
     with pytest.raises(RuntimeError) as exception_info:
         sample11 = StrainField(test_data_dir + "/HB2B_1320.h5")
@@ -87,6 +88,7 @@ EXPECTED_FILE_SUMMARY_CSV_1320 = "tests/data/HB2B_StressStrain_peak0_Summary_exp
     [([1320, 1320, 1320], EXPECTED_FILE_SUMMARY_CSV_1320)],
     ids=["HB2B_1320_SUMMARY_CSV"],
 )
+@pytest.mark.integration
 def test_write_summary_csv(test_data_dir: str, project_tags: str, expected_file: str):
     sample11 = StrainField(test_data_dir + "/HB2B_{}.h5".format(project_tags[0]))
     sample22 = StrainField(test_data_dir + "/HB2B_{}.h5".format(project_tags[1]))
@@ -115,6 +117,7 @@ EXPECTED_FILE_SUMMARY_CSV_1320_33Calculated = (
     [([1320, 1320], EXPECTED_FILE_SUMMARY_CSV_1320_33Calculated)],
     ids=["HB2B_1320_SUMMARY_CSV_33INPLAINSTRAIN"],
 )
+@pytest.mark.integration
 def test_write_summary_33calculated_csv(test_data_dir: str, project_tags: str, expected_file: str):
     sample11 = StrainField(test_data_dir + "/HB2B_" + str(project_tags[0]) + ".h5")
     sample22 = StrainField(test_data_dir + "/HB2B_" + str(project_tags[1]) + ".h5")
@@ -141,6 +144,7 @@ EXPECTED_FILE_SUMMARY_CSV_1320_33Calculated = (
     [([1320, 1320], EXPECTED_FILE_SUMMARY_CSV_1320_33Calculated)],
     ids=["HB2B_1320_SUMMARY_CSV_33INPLAINSTRESS"],
 )
+@pytest.mark.integration
 def test_write_summary_33inplanestress_csv(test_data_dir: str, project_tags: str, expected_file: str):
     sample11 = StrainField(test_data_dir + "/HB2B_" + str(project_tags[0]) + ".h5")
     sample22 = StrainField(test_data_dir + "/HB2B_" + str(project_tags[1]) + ".h5")
@@ -157,6 +161,7 @@ def test_write_summary_33inplanestress_csv(test_data_dir: str, project_tags: str
     remove(stress_csv_filename)
 
 
+@pytest.mark.integration
 def test_write_summary_33calculated_nan_csv(test_data_dir: str):
     sample11 = StrainField(test_data_dir + "/HB2B_1331.h5", peak_tag="peak0")
     sample22 = StrainField(test_data_dir + "/HB2B_1332.h5", peak_tag="peak0")
@@ -178,6 +183,7 @@ EXPECTED_FILE_FULL_CSV_1320 = "tests/data/HB2B_StressStrain_peak0_Full_expected_
 @pytest.mark.parametrize(
     "project_tags, expected_file", [([1320, 1320, 1320], EXPECTED_FILE_FULL_CSV_1320)], ids=["HB2B_1320_FULL_CSV"]
 )
+@pytest.mark.integration
 def test_write_full_csv(test_data_dir: str, project_tags: str, expected_file: str):
     sample11 = StrainField(test_data_dir + "/HB2B_{}.h5".format(project_tags[0]))
     sample22 = StrainField(test_data_dir + "/HB2B_{}.h5".format(project_tags[1]))
@@ -204,6 +210,7 @@ EXPECTED_FILE_FULL_CSV_1320_33Calculated = "tests/data/HB2B_StressStrain_peak0_F
     [([1320, 1320], EXPECTED_FILE_FULL_CSV_1320_33Calculated)],
     ids=["HB2B_1320_FULL_CSV_33Calculated"],
 )
+@pytest.mark.integration
 def test_write_full_33calculated_csv(test_data_dir: str, project_tags: str, expected_file: str):
     sample11 = StrainField(test_data_dir + "/HB2B_" + str(project_tags[0]) + ".h5")
     sample22 = StrainField(test_data_dir + "/HB2B_" + str(project_tags[1]) + ".h5")
@@ -228,6 +235,7 @@ EXPECTED_FILE_FULL_CSV_1320_33Calculated = "tests/data/HB2B_StressStrain_peak0_F
     [([1320, 1320], EXPECTED_FILE_FULL_CSV_1320_33Calculated)],
     ids=["HB2B_1320_FULL_CSV_33INPLAINSTRESS"],
 )
+@pytest.mark.integration
 def test_write_full_33inplanestress_csv(test_data_dir: str, project_tags: str, expected_file: str):
     sample11 = StrainField(test_data_dir + "/HB2B_" + str(project_tags[0]) + ".h5")
     sample22 = StrainField(test_data_dir + "/HB2B_" + str(project_tags[1]) + ".h5")
@@ -244,6 +252,7 @@ def test_write_full_33inplanestress_csv(test_data_dir: str, project_tags: str, e
     remove(stress_csv_filename)
 
 
+@pytest.mark.integration
 def test_write_full_33calculated_nan_csv(test_data_dir: str):
     sample11 = StrainField(test_data_dir + "/HB2B_1331.h5", peak_tag="peak0")
     sample22 = StrainField(test_data_dir + "/HB2B_1332.h5", peak_tag="peak0")

@@ -691,6 +691,7 @@ class TestStrainFieldSingle:
         # There should be no strain, since the observed lattice plane spacings are the reference spacings
         assert_allclose(strain_single_object_0.values, np.zeros(8), atol=1.0e-5)
 
+    @pytest.mark.integration
     def test_get_peak_params(self, strain_field_samples):
         strain = strain_field_samples["strain with two points per direction"]  # mock object
 
@@ -715,6 +716,7 @@ class Test_StrainField:
                 assert isinstance(s, StrainFieldSingle)
             self._strains = strains
 
+    @pytest.mark.integration
     def test_eq(self, strain_field_samples):
         strains_single_scan = copy.deepcopy(list(strain_field_samples.values()))
         # single-scan strains
@@ -860,6 +862,7 @@ class Test_StrainField:
 
 
 class TestStrainField:
+    @pytest.mark.integration
     def test_peak_collection(self, strain_field_samples):
         strain = strain_field_samples["strain with two points per direction"]
         assert isinstance(strain.peak_collections, list)
@@ -867,11 +870,13 @@ class TestStrainField:
         assert isinstance(strain.peak_collections[0], PeakCollection)
         # TODO: test the RuntimeError when the strain is a composite
 
+    @pytest.mark.integration
     def test_peak_collections(self, strain_field_samples):
         strain = strain_field_samples["strain with two points per direction"]
         assert len(strain.peak_collections) == 1
         assert isinstance(strain.peak_collections[0], PeakCollection)
 
+    @pytest.mark.integration
     def test_coordinates(self, strain_field_samples):
         strain = strain_field_samples["strain with two points per direction"]
         coordinates = np.array(
@@ -888,6 +893,7 @@ class TestStrainField:
         )
         assert np.allclose(strain.coordinates, coordinates)
 
+    @pytest.mark.integration
     def test_fuse_with(self, strain_field_samples):
         strain1 = strain_field_samples["HB2B_1320_peak0"]
         strain2 = strain_field_samples["strain with two points per direction"]
@@ -899,6 +905,7 @@ class TestStrainField:
         # fusing a scan with itself creates a new copy of the strain
         assert strain.peak_collections[0] == strain1.peak_collections[0]
 
+    @pytest.mark.integration
     def test_add(self, strain_field_samples):
         strain1 = strain_field_samples["HB2B_1320_peak0"]
         strain2 = strain_field_samples["strain with two points per direction"]
@@ -1009,6 +1016,7 @@ class TestStrainField:
             assert stacked.point_list == orig.point_list
         """
 
+    @pytest.mark.integration
     def test_create_strain_field_from_file_no_peaks(self, test_data_dir):
         # this project file doesn't have peaks in it
         file_path = os.path.join(test_data_dir, "HB2B_1060_first3_subruns.h5")
@@ -1018,6 +1026,7 @@ class TestStrainField:
         except IOError:
             pass  # this is what should happen
 
+    @pytest.mark.integration
     def test_from_file(self, test_data_dir):
         file_path = os.path.join(test_data_dir, "HB2B_1320.h5")
         strain = StrainField(filename=file_path, peak_tag="peak0")
@@ -1026,6 +1035,7 @@ class TestStrainField:
         assert strain.field
         assert strain.get_effective_peak_parameter("Center")
 
+    @pytest.mark.integration
     def test_fuse_strains(self, strain_field_samples):
         # TODO HB2B_1320_peak0 and HB2B_1320_ are the same scan. We need two different scans
         strain1 = strain_field_samples["HB2B_1320_peak0"]
@@ -1141,6 +1151,7 @@ class TestStrainField:
             assert_allclose(strain.get_d_reference().values[:-3], d_reference_old.values[:-3])
             assert_allclose(strain.get_d_reference().values[-3:], [9, 9, 9])
 
+    @pytest.mark.integration
     def test_stack_strains(self, strain_field_samples, allclose_with_sorting):
         strain1 = strain_field_samples["HB2B_1320_peak0"]
         strain2 = strain_field_samples["HB2B_1320_"]
@@ -1173,6 +1184,7 @@ class TestStrainField:
             nan_measurements_count = len(np.where(np.isnan(strain_stacked.values))[0])
             assert nan_measurements_count == len(strain_other)
 
+    @pytest.mark.integration
     def test_fuse_and_stack_strains(self, strain_field_samples, allclose_with_sorting):
         # TODO HB2B_1320_peak0 and HB2B_1320_ are the same scan. We need two different scans
         strain1 = strain_field_samples["HB2B_1320_peak0"]
@@ -1191,6 +1203,7 @@ class TestStrainField:
         assert strain1_stacked.peak_collections[0] == strain1.peak_collections[0]
         assert strain23_stacked.peak_collections == [strain2.peak_collections[0], strain3.peak_collections[0]]
 
+    @pytest.mark.integration
     def test_to_md_histo_workspace(self, strain_field_samples):
         strain = strain_field_samples["HB2B_1320_peak0"]
         histo = strain.to_md_histo_workspace(method="linear", resolution=DEFAULT_POINT_RESOLUTION)
@@ -1823,6 +1836,7 @@ def test_stack_scalar_field_samples(
     assert allclose_with_sorting(sample3.values, sample3_values, equal_nan=True)
 
 
+@pytest.mark.integration
 def test_stress_field_from_files(test_data_dir):
     HB2B_1320_PROJECT = os.path.join(test_data_dir, "HB2B_1320.h5")
     YOUNG = 200.0

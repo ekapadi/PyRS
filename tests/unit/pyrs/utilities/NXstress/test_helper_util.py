@@ -1,8 +1,11 @@
 # ruff: noqa: F841
 from pathlib import Path
 
+import pytest
+
 from pyrs.projectfile.file_object import HidraProjectFile
 
+pytestmark = pytest.mark.integration
 
 PROJECT_FILE = "HB2B_1628.h5"
 

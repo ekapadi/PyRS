@@ -19,6 +19,7 @@ class TestFit:
     PROJECT_FILE_B = "HB2B_1628.h5"  # instrument, mask, reduced data, but no input data
     PROJECT_FILE_C = "HB2B_1017_w_mask.h5"  # instrument, mask, input data, reduced data
 
+    @pytest.mark.integration
     def test_PeakParameters_data_values(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -65,6 +66,7 @@ class TestFit:
         expected_form_factor = (1.0 - params_value["Mixing"]).astype(np.float64)
         np.testing.assert_array_almost_equal(peak_params["form_factor"].nxdata, expected_form_factor)
 
+    @pytest.mark.integration
     def test_PeakParameters_multiple_peaks(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -101,6 +103,7 @@ class TestFit:
         # Should have 2 * N_subrun rows
         assert peak_params["center"].shape[0] == 2 * N_subrun
 
+    @pytest.mark.integration
     def test_PeakParameters_mismatched_profile_raises(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -135,6 +138,7 @@ class TestFit:
         with pytest.raises(ValueError, match=r".*must share the same peak profile.*"):
             _PeakParameters.init_group([peak0, peak1])
 
+    @pytest.mark.integration
     def test_BackgroundParameters_data_values(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -172,6 +176,7 @@ class TestFit:
                 bg_params[f"{param}_errors"].nxdata, params_error[param].astype(np.float64)
             )
 
+    @pytest.mark.integration
     def test_BackgroundParameters_multiple_peaks(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -208,6 +213,7 @@ class TestFit:
         # Should have 2 * N_subrun rows
         assert bg_params["A0"].shape[0] == 2 * N_subrun
 
+    @pytest.mark.integration
     def test_BackgroundParameters_mismatched_type_raises(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -254,6 +260,7 @@ class TestFit:
 
         assert data_key == "my_mask"
 
+    @pytest.mark.integration
     def test_Diffractogram_init_no_reduced_data_raises(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -269,6 +276,7 @@ class TestFit:
         with pytest.raises(RuntimeError, match=r".*doesn't include any reduced data.*"):
             _Diffractogram._init(ws)
 
+    @pytest.mark.integration
     def test_Diffractogram_init_group_missing_mask_raises(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -294,6 +302,7 @@ class TestFit:
         with pytest.raises(RuntimeError, match=r".*is not present in the workspace.*"):
             _Diffractogram.init_group(ws, "non_existent_mask", [peak0])
 
+    @pytest.mark.integration
     def test_Diffractogram_data_values(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -337,6 +346,7 @@ class TestFit:
         assert dgram["fit"].shape == (0, 0)
         assert dgram["fit_errors"].shape == (0, 0)
 
+    @pytest.mark.integration
     def test_Fit_init_fields(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -359,6 +369,7 @@ class TestFit:
         assert fit["date"] == "2024-01-15T10:30:00"
         assert isinstance(fit["DESCRIPTION"], NXnote)
 
+    @pytest.mark.integration
     def test_Fit_multiple_masks(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -397,6 +408,7 @@ class TestFit:
         # For now, we'll skip this as it's hard to trigger in practice
         pass
 
+    @pytest.mark.integration
     def test_validateWorkspaceAndPeaksData_valid(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -421,6 +433,7 @@ class TestFit:
         # Should not raise
         _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
+    @pytest.mark.integration
     def test_validateWorkspaceAndPeaksData_missing_scan_points(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -453,6 +466,7 @@ class TestFit:
         with pytest.raises(ValueError, match=r".*not present in workspace.*"):
             _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
+    @pytest.mark.integration
     def test_validateWorkspaceAndPeaksData_missing_mask_data(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -480,6 +494,7 @@ class TestFit:
         with pytest.raises(ValueError, match=r".*not present in the workspace.*"):
             _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
+    @pytest.mark.integration
     def test_peakParametersForRange_intensity_error_roundtrip(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):

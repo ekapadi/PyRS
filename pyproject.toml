@@ -304,6 +304,9 @@ docs-autobuild = { cmd = "sphinx-autobuild docs/user/source docs/_build/user --h
 
 # Testing tasks
 test = { cmd = "python scripts/development/run_tests.py --cov=pyrs --cov-report=xml --cov-report=term ./tests", description = "Run the tests with coverage" }
+test-unit = { cmd = "python scripts/development/run_tests.py -m 'not integration and not gui' ./tests", description = "Run fast tests only: no file I/O, no GUI" }
+test-integration = { cmd = "python scripts/development/run_tests.py -m 'integration and not gui' ./tests", description = "Run tests that read/write real data" }
+test-gui = { cmd = "python scripts/development/run_tests.py -m gui ./tests", description = "Run tests that drive Qt widgets (requires a display)" }
 test-import-framework = { cmd = "python -c 'import pyrs'; python -c 'import qtpy'; python -c 'import mantidqt'", description = "Test import of main dependencies" }
 
 # MISC
@@ -322,6 +325,11 @@ namespace_packages = true
 
 [tool.pytest.ini_options]
 norecursedirs = ["tests/scripts/cis_tests"]
+addopts = "--strict-markers"
+markers = [
+    "integration: exercises real file I/O (tests/data, /HFIR archive) or a multi-component workflow",
+    "gui: constructs or drives Qt widgets; requires a display (xvfb or offscreen)",
+]
 
 [tool.ruff]
 line-length = 119

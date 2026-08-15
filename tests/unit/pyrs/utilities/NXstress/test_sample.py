@@ -12,6 +12,8 @@ from pyrs.dataobjects.constants import HidraConstants
 from pyrs.utilities.NXstress._sample import _Sample
 from pyrs.utilities.NXstress._definitions import FIELD_DTYPE
 
+pytestmark = pytest.mark.integration
+
 
 class TestSample:
     """Test suite for _sample.py"""

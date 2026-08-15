@@ -6,3 +6,6 @@ the combined index; (2) deliver the *sorted* combined-index *only* in single-ste
 that the combined index be sorted.  (To avoid any possible confusion: we still *DO* enforce the non-overlapping values invariant!) Note that this sorting really had nothing to do with the `NXstress` schema, and was only considered to be a "nice to have"
 attribute.  I don't want to drop sorting entirely, but it should be OK to relax it for "append" mode.
 Please do an analysis and let me know if this helps to simplify what's going on in the 04 subspec[s]?
+
+Modify the existing 'NXstress' test fixtures, so that they do not *taint* the unit tests?  Then let's unmark those tests that were only marked "integration" due to the tainting fixtures?
+

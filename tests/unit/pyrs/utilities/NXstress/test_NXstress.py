@@ -74,6 +74,7 @@ class TestNXstress:
         # teardown follows ...
         pass
 
+    @pytest.mark.integration
     def test_NXstress_context_manager(
         self,
         tmp_path: Path,
@@ -109,6 +110,7 @@ class TestNXstress:
             assert nx._root is not None
         assert file_path.exists()
 
+    @pytest.mark.integration
     def test_NXentry_fields(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -131,6 +133,7 @@ class TestNXstress:
         for key in required_datasets:
             assert key in entry
 
+    @pytest.mark.integration
     def test_NXentry_subgroups(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -170,6 +173,7 @@ class TestNXstress:
             assert key in entry
             assert isinstance(entry[key], NXclass_)
 
+    @pytest.mark.integration
     def test_NXentry_input_data(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -203,6 +207,7 @@ class TestNXstress:
         assert key in entry
         assert isinstance(entry[key], NXclass_)
 
+    @pytest.mark.integration
     def test_NXentry_input_data_optional(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -243,6 +248,7 @@ class TestNXstress:
         assert isinstance(entry[key], NXclass_)
         assert len(entry[key]["scan_point"]) == 0
 
+    @pytest.mark.integration
     def test_NXentry_multiple(
         self,
         tmp_path: Path,
@@ -295,6 +301,7 @@ class TestNXstress:
         # *** DEBUG *** : for validation:
         # shutil.copy2(file_path, Path('${workspaces}/ORNL-work/PyRS/tmp/validation'))
 
+    @pytest.mark.integration
     def test__Instrument_fields_and_subgroups(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -325,6 +332,7 @@ class TestNXstress:
             assert key in inst
             assert isinstance(inst[key], NXclass_)
 
+    @pytest.mark.integration
     def test__Masks_fields_and_subgroups(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -348,6 +356,7 @@ class TestNXstress:
             assert key in masks
             assert isinstance(masks[key], NXclass_)
 
+    @pytest.mark.integration
     def test__Sample_fields_and_subgroups(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -374,6 +383,7 @@ class TestNXstress:
             assert key in sample
             assert isinstance(sample[key], NXclass_)
 
+    @pytest.mark.integration
     def test__Fit_fields_and_subgroups(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -411,6 +421,7 @@ class TestNXstress:
             assert key in fit
             assert isinstance(fit[key], NXclass_)
 
+    @pytest.mark.integration
     def test_write_without_context_manager(
         self,
         tmp_path: Path,
@@ -441,6 +452,7 @@ class TestNXstress:
         with pytest.raises(RuntimeError, match=r".*only usage as context manager is supported.*"):
             nx.write(ws, [peak0])
 
+    @pytest.mark.integration
     def test_NXentry_init_fallback_timestamps(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -462,6 +474,7 @@ class TestNXstress:
         assert "start_time" in entry
         assert "end_time" in entry
 
+    @pytest.mark.integration
     def test_validateWorkspaceAndPeaksData_valid(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -486,6 +499,7 @@ class TestNXstress:
         # Should not raise
         NXstress._validateWorkspaceAndPeaksData(ws, [peak0])
 
+    @pytest.mark.integration
     def test_NXentry_definition_value(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -499,6 +513,7 @@ class TestNXstress:
         assert entry["definition"] == "NXstress"
         assert entry["processing_type"] == "d-spacing"
 
+    @pytest.mark.integration
     def test__PeakParameters_fields_and_subgroups(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -545,6 +560,7 @@ class TestNXstress:
             FIELD_DTYPE.FLOAT_DATA.value
         )
 
+    @pytest.mark.integration
     def test__BackgroundParameters_fields_and_subgroups(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -584,6 +600,7 @@ class TestNXstress:
         for key in required_fields:
             assert key in background_parameters
 
+    @pytest.mark.integration
     def test__Diffractogram_fields_and_subgroups(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -626,6 +643,7 @@ class TestNXstress:
             assert key in dgram
             assert isinstance(dgram[key], NXclass_)
 
+    @pytest.mark.integration
     def test__Peaks_fields_and_subgroups(
         self,
         tmp_path: Path,
@@ -706,6 +724,7 @@ class TestNXstress:
             # must contain a phase substring
             _phase, (_h, _k, _l) = _Peaks._parse_peak_tag("102030")
 
+    @pytest.mark.integration
     def test__InputData_fields_and_subgroups(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -729,6 +748,7 @@ class TestNXstress:
             assert key in data
             assert isinstance(data[key], NXclass_)
 
+    @pytest.mark.integration
     def test__InputData_omitted(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],

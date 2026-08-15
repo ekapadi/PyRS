@@ -100,6 +100,8 @@ def roundtrip_nxstress(load_HidraWorkspace, createPeakCollection, tmp_path):
 class TestWorkspaceRoundtrip:
     """Test suite for workspace reading via roundtrip"""
 
+    pytestmark = pytest.mark.integration
+
     def test_workspace_roundtrip_sample_logs(self, roundtrip_nxstress):
         """Verify sample log names and values match between original and readback"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -249,6 +251,8 @@ class TestWorkspaceRoundtrip:
 
 class TestReadErrors:
     """Test error handling in read operations"""
+
+    pytestmark = pytest.mark.integration
 
     def test_read_nonexistent_entry(self, load_HidraWorkspace, tmp_path):
         """Attempt to read non-existent entry → KeyError"""

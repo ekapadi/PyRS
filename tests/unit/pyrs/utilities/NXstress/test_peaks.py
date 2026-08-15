@@ -6,10 +6,13 @@ Tests for pyrs/utilities/NXstress/_peaks.py
 from collections.abc import Callable
 import numpy as np
 from nexusformat.nexus import NXreflections
+import pytest
 
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.utilities.NXstress._peaks import _Peaks
+
+pytestmark = pytest.mark.integration
 
 
 class TestPeaks:

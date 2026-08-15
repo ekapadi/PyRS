@@ -18,6 +18,8 @@ from pyrs.utilities.NXstress._definitions import FIELD_DTYPE, GROUP_NAME
 class TestPeakCollectionRanges:
     """Test suite for _Peaks.peakCollectionRanges"""
 
+    pytestmark = pytest.mark.integration
+
     def test_peakCollectionRanges_happy_path(self, load_HidraWorkspace, createPeakCollection):
         """Write 3 PeakCollections with distinct keys, read ranges, verify count and span"""
         ws = load_HidraWorkspace(
@@ -326,6 +328,8 @@ class TestBackgroundParametersForRange:
 class TestPeakCollectionsFromNexus:
     """Test suite for full round-trip read/write"""
 
+    pytestmark = pytest.mark.integration
+
     def test_peakCollectionsFromNexus_roundtrip(self, load_HidraWorkspace, createPeakCollection):
         """Write PeakCollections via NXstress.write(), read back via peakCollectionsFromNexus, verify match"""
         ws = load_HidraWorkspace(
@@ -479,6 +483,8 @@ class TestPeakCollectionsFromNexus:
 
 class TestValidateNoDuplicatePeaksIntegration:
     """Test validateNoDuplicatePeaks integration in NXstress.write()"""
+
+    pytestmark = pytest.mark.integration
 
     def test_validateNoDuplicatePeaks_integration_in_write(self, load_HidraWorkspace, createPeakCollection):
         """NXstress.write() with duplicates → ValueError before any file content written"""

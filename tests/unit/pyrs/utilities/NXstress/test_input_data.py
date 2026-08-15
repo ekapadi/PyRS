@@ -11,6 +11,8 @@ import pytest
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.NXstress._input_data import _InputData
 
+pytestmark = pytest.mark.integration
+
 
 class TestInputData:
     """Test suite for _input_data.py"""
