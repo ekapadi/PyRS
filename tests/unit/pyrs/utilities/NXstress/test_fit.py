@@ -20,6 +20,7 @@ class TestFit:
     PROJECT_FILE_C = "HB2B_1017_w_mask.h5"  # instrument, mask, input data, reduced data
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_PeakParameters_data_values(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -67,6 +68,7 @@ class TestFit:
         np.testing.assert_array_almost_equal(peak_params["form_factor"].nxdata, expected_form_factor)
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_PeakParameters_multiple_peaks(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -104,6 +106,7 @@ class TestFit:
         assert peak_params["center"].shape[0] == 2 * N_subrun
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_PeakParameters_mismatched_profile_raises(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -139,6 +142,7 @@ class TestFit:
             _PeakParameters.init_group([peak0, peak1])
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_BackgroundParameters_data_values(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -177,6 +181,7 @@ class TestFit:
             )
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_BackgroundParameters_multiple_peaks(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -214,6 +219,7 @@ class TestFit:
         assert bg_params["A0"].shape[0] == 2 * N_subrun
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_BackgroundParameters_mismatched_type_raises(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -261,6 +267,7 @@ class TestFit:
         assert data_key == "my_mask"
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Diffractogram_init_no_reduced_data_raises(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -277,6 +284,7 @@ class TestFit:
             _Diffractogram._init(ws)
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Diffractogram_init_group_missing_mask_raises(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -303,6 +311,7 @@ class TestFit:
             _Diffractogram.init_group(ws, "non_existent_mask", [peak0])
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Diffractogram_data_values(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -347,6 +356,7 @@ class TestFit:
         assert dgram["fit_errors"].shape == (0, 0)
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Fit_init_fields(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -370,6 +380,7 @@ class TestFit:
         assert isinstance(fit["DESCRIPTION"], NXnote)
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Fit_multiple_masks(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -409,6 +420,7 @@ class TestFit:
         pass
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_validateWorkspaceAndPeaksData_valid(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -434,6 +446,7 @@ class TestFit:
         _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_validateWorkspaceAndPeaksData_missing_scan_points(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -467,6 +480,7 @@ class TestFit:
             _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_validateWorkspaceAndPeaksData_missing_mask_data(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -495,6 +509,7 @@ class TestFit:
             _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_peakParametersForRange_intensity_error_roundtrip(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):

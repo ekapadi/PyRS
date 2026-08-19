@@ -20,6 +20,7 @@ class TestPeakCollectionRanges:
 
     pytestmark = pytest.mark.integration
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_peakCollectionRanges_happy_path(self, load_HidraWorkspace, createPeakCollection):
         """Write 3 PeakCollections with distinct keys, read ranges, verify count and span"""
         ws = load_HidraWorkspace(
@@ -79,6 +80,7 @@ class TestPeakCollectionRanges:
             assert start == expected_start
             expected_start = end
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_peakCollectionRanges_interleaved_blocks(self, load_HidraWorkspace):
         """Construct NXreflections with non-contiguous blocks for same key → RuntimeError"""
         ws = load_HidraWorkspace(
@@ -119,6 +121,7 @@ class TestPeakCollectionRanges:
         with pytest.raises(RuntimeError, match="Interleaved blocks detected"):
             _Peaks.peakCollectionRanges(peaks)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_peakCollectionRanges_scan_point_order_violation(self, load_HidraWorkspace):
         """Non-increasing scan points within block → RuntimeError"""
         ws = load_HidraWorkspace(
@@ -330,6 +333,7 @@ class TestPeakCollectionsFromNexus:
 
     pytestmark = pytest.mark.integration
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_peakCollectionsFromNexus_roundtrip(self, load_HidraWorkspace, createPeakCollection):
         """Write PeakCollections via NXstress.write(), read back via peakCollectionsFromNexus, verify match"""
         ws = load_HidraWorkspace(
@@ -430,6 +434,7 @@ class TestPeakCollectionsFromNexus:
                     orig_eff_errs[field], recon_eff_errs[field], atol=1e-5, err_msg=f"Mismatch in {field} errors"
                 )
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_peak_tag_roundtrip_multidigit_miller(self, load_HidraWorkspace, createPeakCollection):
         """PeakCollection with peak_tag='Fe120100' (h=12,k=1,l=0) round-trips correctly"""
         ws = load_HidraWorkspace(
@@ -486,6 +491,7 @@ class TestValidateNoDuplicatePeaksIntegration:
 
     pytestmark = pytest.mark.integration
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_validateNoDuplicatePeaks_integration_in_write(self, load_HidraWorkspace, createPeakCollection):
         """NXstress.write() with duplicates → ValueError before any file content written"""
         ws = load_HidraWorkspace(

@@ -22,6 +22,7 @@ class TestSample:
     PROJECT_FILE_B = "HB2B_1628.h5"  # instrument, mask, reduced data, but no input data
     PROJECT_FILE_C = "HB2B_1017_w_mask.h5"  # instrument, mask, input data, reduced data
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_scan_point_and_coordinates(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -50,6 +51,7 @@ class TestSample:
             assert sample[coord].shape == (N_scan,)
             assert sample[coord].dtype == FIELD_DTYPE.FLOAT_DATA.value
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_chemical_formula_present(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -70,6 +72,7 @@ class TestSample:
         # _Sample takes the first value from the log
         assert sample["chemical_formula"] == "Fe3O4"
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_chemical_formula_absent(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -88,6 +91,7 @@ class TestSample:
         assert "chemical_formula" in sample
         assert sample["chemical_formula"] == "unknown"
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_temperature_present(self, load_HidraWorkspace: Callable[..., HidraWorkspace]):
         """Verify temperature field and units when TEMPERATURE log is present"""
         ws = load_HidraWorkspace(
@@ -109,6 +113,7 @@ class TestSample:
         assert sample["temperature"].dtype == FIELD_DTYPE.FLOAT_DATA.value
         assert sample["temperature"].attrs["units"] == "K"
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_temperature_absent(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -126,6 +131,7 @@ class TestSample:
 
         assert "temperature" not in sample
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_stress_field_present(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -157,6 +163,7 @@ class TestSample:
         else:
             assert direction_val == "z"
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_stress_field_shape_mismatch(self, load_HidraWorkspace: Callable[..., HidraWorkspace]):
         """Verify RuntimeError when stress_field first axis != N_scan"""
         ws = load_HidraWorkspace(
@@ -174,6 +181,7 @@ class TestSample:
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
             _Sample.init_group(ws._sample_logs)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_coordinate_shape_mismatch(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -196,6 +204,7 @@ class TestSample:
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
             _Sample.init_group(ws._sample_logs)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_extra_logs(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],

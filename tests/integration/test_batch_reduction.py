@@ -14,11 +14,7 @@ import tempfile
 import numpy as np
 import pytest
 
-from pyrs.interface.manual_reduction.manual_reduction_model import (
-    ManualReductionModel,
-    is_run_specification,
-    parse_run_numbers,
-)
+from pyrs.interface.manual_reduction.manual_reduction_model import ManualReductionModel
 
 NEXUS_DIR = "/HFIR/HB2B/IPTS-22731/nexus"
 RUN_A = 1017
@@ -35,32 +31,12 @@ pytestmark = pytest.mark.skipif(not hfir_available(), reason="HFIR archive not a
 
 
 # ---------------------------------------------------------------------------
-# parse_run_numbers / is_run_specification — pure-logic tests, no HFIR needed
-# ---------------------------------------------------------------------------
-
-
-def test_parse_run_numbers_range():
-    """A dash range is expanded to inclusive list."""
-    assert parse_run_numbers("1017-1019") == [1017, 1018, 1019]
-
-
-def test_parse_run_numbers_comma_and_range():
-    """Mixed comma and range parses correctly."""
-    assert parse_run_numbers("1017,1019-1021") == [1017, 1019, 1020, 1021]
-
-
-def test_is_run_specification_run_numbers():
-    assert is_run_specification("1017")
-    assert is_run_specification("1017-1019")
-    assert is_run_specification("1017, 1019")
-
-
-def test_is_run_specification_rejects_path():
-    assert not is_run_specification(NEXUS_A)
-
-
-# ---------------------------------------------------------------------------
 # reduce_runs — integration tests against real HB2B data
+#
+# The pure-logic tests for parse_run_numbers / is_run_specification that used to
+# live here (no HFIR access needed) moved to
+# tests/unit/pyrs/interface/test_manual_reduction_runspec.py, alongside the other
+# tests of the same two functions — see plans/test-framework.md.
 # ---------------------------------------------------------------------------
 
 

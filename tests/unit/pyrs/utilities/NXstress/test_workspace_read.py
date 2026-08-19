@@ -102,6 +102,7 @@ class TestWorkspaceRoundtrip:
 
     pytestmark = pytest.mark.integration
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_sample_logs(self, roundtrip_nxstress):
         """Verify sample log names and values match between original and readback"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -125,6 +126,7 @@ class TestWorkspaceRoundtrip:
         # Verify subruns match
         assert np.array_equal(ws_original.get_sub_runs().raw_copy(), ws_readback.get_sub_runs().raw_copy())
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_wavelength(self, roundtrip_nxstress):
         """Verify wavelength round-trips correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -142,6 +144,7 @@ class TestWorkspaceRoundtrip:
             assert wl_readback is not None
             np.testing.assert_allclose(list(wl_original.values()), list(wl_readback.values()), rtol=1e-6)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_instrument(self, roundtrip_nxstress):
         """Verify instrument geometry and detector shift round-trip"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -172,6 +175,7 @@ class TestWorkspaceRoundtrip:
         else:
             assert shift_readback is None
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_masks(self, roundtrip_nxstress):
         """Verify masks round-trip correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -190,6 +194,7 @@ class TestWorkspaceRoundtrip:
             mask_read = ws_readback.get_detector_mask(is_default=False, mask_id=mask_id)
             assert np.array_equal(mask_orig, mask_read), f"Mask {mask_id} doesn't match"
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_reduced_data(self, roundtrip_nxstress):
         """Verify reduced diffraction data round-trips correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -217,6 +222,7 @@ class TestWorkspaceRoundtrip:
             assert orig_var.shape == read_var.shape
             np.testing.assert_allclose(orig_var, read_var, atol=1e-5)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_raw_counts(self, roundtrip_nxstress):
         """Verify raw counts round-trip correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -230,6 +236,7 @@ class TestWorkspaceRoundtrip:
             assert orig_counts.shape == read_counts.shape
             np.testing.assert_allclose(orig_counts, read_counts, atol=1e-5)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_full_roundtrip(self, roundtrip_nxstress):
         """Comprehensive test: verify workspace and peaks together"""
         ws_original, peaks_original, ws_readback, peaks_readback = roundtrip_nxstress
@@ -254,6 +261,7 @@ class TestReadErrors:
 
     pytestmark = pytest.mark.integration
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_read_nonexistent_entry(self, load_HidraWorkspace, tmp_path):
         """Attempt to read non-existent entry → KeyError"""
         ws = load_HidraWorkspace(
@@ -277,6 +285,7 @@ class TestReadErrors:
             with NXstress(nxstress_file, mode="r") as nxs:
                 nxs.read(entry_number=99)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_read_outside_context_manager(self, load_HidraWorkspace, tmp_path):
         """Call read() outside context manager → RuntimeError"""
         # First create a valid NXstress file

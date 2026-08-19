@@ -20,6 +20,7 @@ class TestPeaks:
 
     PROJECT_FILE_B = "HB2B_1628.h5"  # instrument, mask, reduced data, but no input data
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_init_empty(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -60,6 +61,7 @@ class TestPeaks:
         assert "center_type" in peaks
         assert peaks["center_type"].nxdata == "d-spacing"
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_init_group_data_values(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -110,6 +112,7 @@ class TestPeaks:
         # scan_point should match subruns
         np.testing.assert_array_equal(peaks["scan_point"].nxdata, subruns)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_init_group_multiple_peaks(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -170,6 +173,7 @@ class TestPeaks:
         assert all(peaks["k"].nxdata[:N_subrun] == k)
         assert all(peaks["l"].nxdata[:N_subrun] == l)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_PeakIndex_sort_key(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -213,6 +217,7 @@ class TestPeaks:
         assert key0 != key1
         assert (key0 < key1) or (key0 > key1)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_qxyz_nan(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
@@ -245,6 +250,7 @@ class TestPeaks:
         assert peaks["qy"].shape[0] == 0
         assert peaks["qz"].shape[0] == 0
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_sxyz_nan(
         self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):

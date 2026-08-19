@@ -20,6 +20,7 @@ class TestInputData:
     PROJECT_FILE_A = "HB2B_1017.h5"  # instrument, input data, reduced data, no mask
     PROJECT_FILE_C = "HB2B_1017_w_mask.h5"  # instrument, mask, input data, reduced data
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_InputData_init_group_raises_on_existing_data(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -35,6 +36,7 @@ class TestInputData:
         with pytest.raises(RuntimeError, match=r".*not implemented: append detector_counts data to NXstress file.*"):
             _InputData.init_group(ws, data=existing_data)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_InputData_init_group_data_values(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -65,6 +67,7 @@ class TestInputData:
         # Verify scan_point values match
         np.testing.assert_array_equal(data["scan_point"], scan_points)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_InputData_readSubruns(
         self,
         tmp_path: Path,
@@ -110,6 +113,7 @@ class TestInputData:
             read_counts = ws_read.get_detector_counts(scan_point)
             np.testing.assert_array_equal(read_counts, original_counts)
 
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_InputData_readSubruns_raises_on_scanpoint_mismatch(
         self,
         tmp_path: Path,

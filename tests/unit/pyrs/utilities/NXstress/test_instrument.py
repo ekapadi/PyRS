@@ -36,6 +36,7 @@ class TestInstrument:
         assert isinstance(masks["solid_angle"], NXcollection)
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Masks_init_group_with_default_mask(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -52,6 +53,7 @@ class TestInstrument:
         assert DEFAULT_TAG in masks["detector"]
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Masks_init_group_append(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -83,6 +85,7 @@ class TestInstrument:
         assert len(masks["names"]) >= initial_count
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Masks_init_group_duplicate_raises(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -117,6 +120,7 @@ class TestInstrument:
         assert inst["name"].attrs["short_name"] == "HB2B"
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Instrument_detector_module_fields(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
@@ -146,6 +150,7 @@ class TestInstrument:
         assert det_module["data_size"].dtype == np.int64
 
     @pytest.mark.integration
+    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Instrument_transformations_chain(
         self,
         load_HidraWorkspace: Callable[..., HidraWorkspace],
