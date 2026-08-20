@@ -11,24 +11,16 @@ import pytest
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.NXstress._input_data import _InputData
 
-pytestmark = pytest.mark.integration
-
 
 class TestInputData:
     """Test suite for _input_data.py"""
 
-    PROJECT_FILE_A = "HB2B_1017.h5"  # instrument, input data, reduced data, no mask
-    PROJECT_FILE_C = "HB2B_1017_w_mask.h5"  # instrument, mask, input data, reduced data
-
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_InputData_init_group_raises_on_existing_data(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify RuntimeError when trying to append detector_counts data"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_A, name="test_workspace", load_raw_counts=True, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True)
 
         # Create an existing NXdata group
         existing_data = NXdata()
@@ -36,15 +28,12 @@ class TestInputData:
         with pytest.raises(RuntimeError, match=r".*not implemented: append detector_counts data to NXstress file.*"):
             _InputData.init_group(ws, data=existing_data)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_InputData_init_group_data_values(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify detector_counts shape and scan_point values match workspace"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_A, name="test_workspace", load_raw_counts=True, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True)
 
         data = _InputData.init_group(ws)
 
@@ -67,20 +56,14 @@ class TestInputData:
         # Verify scan_point values match
         np.testing.assert_array_equal(data["scan_point"], scan_points)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_InputData_readSubruns(
         self,
         tmp_path: Path,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify readSubruns round-trip: write then read back"""
-        # Load workspace with raw counts
-        ws_write = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_A,
-            name="test_workspace_write",
-            load_raw_counts=True,
-            load_reduced_diffraction=True,
-        )
+        # Build workspace with raw counts
+        ws_write = minimal_HidraWorkspace(name="test_workspace_write", with_instrument=True, with_raw_counts=True)
 
         # Create input data
         data = _InputData.init_group(ws_write)
@@ -113,17 +96,14 @@ class TestInputData:
             read_counts = ws_read.get_detector_counts(scan_point)
             np.testing.assert_array_equal(read_counts, original_counts)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_InputData_readSubruns_raises_on_scanpoint_mismatch(
         self,
         tmp_path: Path,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify RuntimeError when workspace has subruns that don't match those from input data"""
-        # Load workspace with data
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_A, name="test_workspace", load_raw_counts=True, load_reduced_diffraction=True
-        )
+        # Build workspace with data
+        ws = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True)
 
         # Create input data and write to file
         data = _InputData.init_group(ws)

@@ -27,37 +27,12 @@ import pytest
 
 
 @pytest.fixture
-def roundtrip_nxstress(load_HidraWorkspace, createPeakCollection, tmp_path):
+def roundtrip_nxstress(minimal_HidraWorkspace, createPeakCollection, tmp_path):
     """Fixture that writes and reads back a workspace with peaks"""
 
-    # Load a workspace with instrument geometry
-    ws_original = load_HidraWorkspace(
-        file_name="HB2B_1017_w_mask.h5", name="test_workspace", load_raw_counts=True, load_reduced_diffraction=True
+    ws_original = minimal_HidraWorkspace(
+        with_instrument=True, with_masks=True, with_raw_counts=True, with_reduced_diffraction=True
     )
-
-    # Set up instrument geometry if not present
-    if ws_original._instrument_setup is None:
-        from pyrs.core.instrument_geometry import DENEXDetectorGeometry, DENEXDetectorShift
-
-        geometry = DENEXDetectorGeometry(
-            num_rows=512,
-            num_columns=512,
-            pixel_size_x=0.001,  # 1 mm in meters
-            pixel_size_y=0.001,  # 1 mm in meters
-            arm_length=2.0,  # 2 meters
-            calibrated=True,
-        )
-        ws_original.set_instrument_geometry(geometry)
-
-        # Set detector shift for calibrated geometry
-        shift = DENEXDetectorShift(
-            shift_x=0.01, shift_y=0.02, shift_z=0.03, rotation_x=1.0, rotation_y=2.0, rotation_z=3.0, tth_0=0.5
-        )
-        ws_original.set_detector_shift(shift)
-
-    # Set wavelength if not present (test data may lack monochromator settings)
-    if ws_original.get_wavelength(calibrated=True, throw_if_not_set=False) is None:
-        ws_original.set_wavelength(1.486, calibrated=True)
 
     # Create 2 PeakCollection objects
     subruns = ws_original._sample_logs.subruns.raw_copy()
@@ -100,9 +75,6 @@ def roundtrip_nxstress(load_HidraWorkspace, createPeakCollection, tmp_path):
 class TestWorkspaceRoundtrip:
     """Test suite for workspace reading via roundtrip"""
 
-    pytestmark = pytest.mark.integration
-
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_sample_logs(self, roundtrip_nxstress):
         """Verify sample log names and values match between original and readback"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -126,7 +98,6 @@ class TestWorkspaceRoundtrip:
         # Verify subruns match
         assert np.array_equal(ws_original.get_sub_runs().raw_copy(), ws_readback.get_sub_runs().raw_copy())
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_wavelength(self, roundtrip_nxstress):
         """Verify wavelength round-trips correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -144,7 +115,6 @@ class TestWorkspaceRoundtrip:
             assert wl_readback is not None
             np.testing.assert_allclose(list(wl_original.values()), list(wl_readback.values()), rtol=1e-6)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_instrument(self, roundtrip_nxstress):
         """Verify instrument geometry and detector shift round-trip"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -175,7 +145,6 @@ class TestWorkspaceRoundtrip:
         else:
             assert shift_readback is None
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_masks(self, roundtrip_nxstress):
         """Verify masks round-trip correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -194,7 +163,6 @@ class TestWorkspaceRoundtrip:
             mask_read = ws_readback.get_detector_mask(is_default=False, mask_id=mask_id)
             assert np.array_equal(mask_orig, mask_read), f"Mask {mask_id} doesn't match"
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_reduced_data(self, roundtrip_nxstress):
         """Verify reduced diffraction data round-trips correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -222,7 +190,6 @@ class TestWorkspaceRoundtrip:
             assert orig_var.shape == read_var.shape
             np.testing.assert_allclose(orig_var, read_var, atol=1e-5)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_workspace_roundtrip_raw_counts(self, roundtrip_nxstress):
         """Verify raw counts round-trip correctly"""
         ws_original, _, ws_readback, _ = roundtrip_nxstress
@@ -236,7 +203,6 @@ class TestWorkspaceRoundtrip:
             assert orig_counts.shape == read_counts.shape
             np.testing.assert_allclose(orig_counts, read_counts, atol=1e-5)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_full_roundtrip(self, roundtrip_nxstress):
         """Comprehensive test: verify workspace and peaks together"""
         ws_original, peaks_original, ws_readback, peaks_readback = roundtrip_nxstress
@@ -259,23 +225,9 @@ class TestWorkspaceRoundtrip:
 class TestReadErrors:
     """Test error handling in read operations"""
 
-    pytestmark = pytest.mark.integration
-
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
-    def test_read_nonexistent_entry(self, load_HidraWorkspace, tmp_path):
+    def test_read_nonexistent_entry(self, minimal_HidraWorkspace, tmp_path):
         """Attempt to read non-existent entry → KeyError"""
-        ws = load_HidraWorkspace(
-            file_name="HB2B_1017.h5", name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
-
-        # Set up instrument geometry if not present
-        if ws._instrument_setup is None:
-            from pyrs.core.instrument_geometry import DENEXDetectorGeometry
-
-            geometry = DENEXDetectorGeometry(
-                num_rows=512, num_columns=512, pixel_size_x=0.001, pixel_size_y=0.001, arm_length=2.0, calibrated=False
-            )
-            ws.set_instrument_geometry(geometry)
+        ws = minimal_HidraWorkspace(with_instrument=True)
 
         nxstress_file = tmp_path / "test_nonexistent.nxs"
         with NXstress(nxstress_file, mode="w") as nxs:
@@ -285,22 +237,10 @@ class TestReadErrors:
             with NXstress(nxstress_file, mode="r") as nxs:
                 nxs.read(entry_number=99)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
-    def test_read_outside_context_manager(self, load_HidraWorkspace, tmp_path):
+    def test_read_outside_context_manager(self, minimal_HidraWorkspace, tmp_path):
         """Call read() outside context manager → RuntimeError"""
-        # First create a valid NXstress file
-        ws = load_HidraWorkspace(
-            file_name="HB2B_1017.h5", name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
-
-        # Set up instrument geometry if not present
-        if ws._instrument_setup is None:
-            from pyrs.core.instrument_geometry import DENEXDetectorGeometry
-
-            geometry = DENEXDetectorGeometry(
-                num_rows=512, num_columns=512, pixel_size_x=0.001, pixel_size_y=0.001, arm_length=2.0, calibrated=False
-            )
-            ws.set_instrument_geometry(geometry)
+        # Build a valid NXstress file
+        ws = minimal_HidraWorkspace(with_instrument=True)
 
         nxstress_file = tmp_path / "test_outside_context.nxs"
         with NXstress(nxstress_file, mode="w") as nxs:

@@ -12,25 +12,16 @@ from pyrs.dataobjects.constants import HidraConstants
 from pyrs.utilities.NXstress._sample import _Sample
 from pyrs.utilities.NXstress._definitions import FIELD_DTYPE
 
-pytestmark = pytest.mark.integration
-
 
 class TestSample:
     """Test suite for _sample.py"""
 
-    PROJECT_FILE_A = "HB2B_1017.h5"  # instrument, input data, reduced data, no mask
-    PROJECT_FILE_B = "HB2B_1628.h5"  # instrument, mask, reduced data, but no input data
-    PROJECT_FILE_C = "HB2B_1017_w_mask.h5"  # instrument, mask, input data, reduced data
-
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_scan_point_and_coordinates(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify scan_point matches subruns and vx,vy,vz have correct shape/dtype"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         sample = _Sample.init_group(ws._sample_logs)
 
@@ -51,15 +42,12 @@ class TestSample:
             assert sample[coord].shape == (N_scan,)
             assert sample[coord].dtype == FIELD_DTYPE.FLOAT_DATA.value
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_chemical_formula_present(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify chemical_formula field when CHEMICAL_FORMULA log is present"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         # Add chemical formula to logs - must match number of subruns
         subruns = ws._sample_logs.subruns.raw_copy()
@@ -72,15 +60,12 @@ class TestSample:
         # _Sample takes the first value from the log
         assert sample["chemical_formula"] == "Fe3O4"
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_chemical_formula_absent(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify chemical_formula defaults to 'unknown' when not in logs"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         # Ensure chemical formula is not in logs
         if HidraConstants.CHEMICAL_FORMULA in ws._sample_logs:
@@ -91,12 +76,9 @@ class TestSample:
         assert "chemical_formula" in sample
         assert sample["chemical_formula"] == "unknown"
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
-    def test_Sample_temperature_present(self, load_HidraWorkspace: Callable[..., HidraWorkspace]):
+    def test_Sample_temperature_present(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
         """Verify temperature field and units when TEMPERATURE log is present"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         # Add temperature data to logs with units using tuple syntax
         subruns = ws._sample_logs.subruns.raw_copy()
@@ -113,15 +95,12 @@ class TestSample:
         assert sample["temperature"].dtype == FIELD_DTYPE.FLOAT_DATA.value
         assert sample["temperature"].attrs["units"] == "K"
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_temperature_absent(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify no temperature field when TEMPERATURE log is absent"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         # Ensure temperature is not in logs
         if HidraConstants.TEMPERATURE in ws._sample_logs:
@@ -131,15 +110,12 @@ class TestSample:
 
         assert "temperature" not in sample
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_stress_field_present(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify stress_field field, shape, and direction attr when present"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         # Add stress field data to logs
         subruns = ws._sample_logs.subruns.raw_copy()
@@ -163,12 +139,9 @@ class TestSample:
         else:
             assert direction_val == "z"
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
-    def test_Sample_stress_field_shape_mismatch(self, load_HidraWorkspace: Callable[..., HidraWorkspace]):
+    def test_Sample_stress_field_shape_mismatch(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
         """Verify RuntimeError when stress_field first axis != N_scan"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         # Add stress field with wrong shape
         subruns = ws._sample_logs.subruns.raw_copy()
@@ -181,15 +154,12 @@ class TestSample:
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
             _Sample.init_group(ws._sample_logs)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_coordinate_shape_mismatch(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify RuntimeError when coordinate array axis != N_scan"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         # Corrupt vx to have wrong size by directly manipulating the logs
         subruns = ws._sample_logs.subruns.raw_copy()
@@ -204,15 +174,12 @@ class TestSample:
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
             _Sample.init_group(ws._sample_logs)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Sample_extra_logs(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify logs not in NXstress_logs go to logs NXcollection with local_name"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         # Add a custom log with ':' in the name and units using tuple syntax
         custom_log_name = "HB2B:CS:CustomValue"

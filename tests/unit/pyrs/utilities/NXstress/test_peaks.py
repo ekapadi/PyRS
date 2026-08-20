@@ -12,23 +12,16 @@ from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.utilities.NXstress._peaks import _Peaks
 
-pytestmark = pytest.mark.integration
-
 
 class TestPeaks:
     """Test suite for _peaks.py"""
 
-    PROJECT_FILE_B = "HB2B_1628.h5"  # instrument, mask, reduced data, but no input data
-
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_init_empty(
         self,
-        load_HidraWorkspace: Callable[..., HidraWorkspace],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
         """Verify _Peaks._init creates empty datasets with correct dtypes/units"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         logs = ws._sample_logs
         peaks = _Peaks._init(logs)
@@ -61,14 +54,11 @@ class TestPeaks:
         assert "center_type" in peaks
         assert peaks["center_type"].nxdata == "d-spacing"
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_init_group_data_values(
-        self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
         """Verify one PeakCollection creates N_scan rows with correct values"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         subruns = ws._sample_logs.subruns.raw_copy()
         N_subrun = len(subruns)
@@ -112,14 +102,11 @@ class TestPeaks:
         # scan_point should match subruns
         np.testing.assert_array_equal(peaks["scan_point"].nxdata, subruns)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_init_group_multiple_peaks(
-        self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
         """Verify two PeakCollections create 2×N_scan rows in lexicographic sort order"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         subruns = ws._sample_logs.subruns.raw_copy()
         N_subrun = len(subruns)
@@ -173,14 +160,11 @@ class TestPeaks:
         assert all(peaks["k"].nxdata[:N_subrun] == k)
         assert all(peaks["l"].nxdata[:N_subrun] == l)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_PeakIndex_sort_key(
-        self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
         """Verify PeakIndex.sort_key returns correct tuple for sorting"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         subruns = ws._sample_logs.subruns.raw_copy()
         N_subrun = len(subruns)
@@ -217,14 +201,11 @@ class TestPeaks:
         assert key0 != key1
         assert (key0 < key1) or (key0 > key1)
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_qxyz_nan(
-        self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
         """Verify qx, qy, qz fields exist but remain empty after init_group since implementation doesn't populate them"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         subruns = ws._sample_logs.subruns.raw_copy()
         N_subrun = len(subruns)
@@ -250,14 +231,11 @@ class TestPeaks:
         assert peaks["qy"].shape[0] == 0
         assert peaks["qz"].shape[0] == 0
 
-    # TODO: this is a unit test: load_HidraWorkspace fixture taints test (marked as 'integration').
     def test_Peaks_sxyz_nan(
-        self, load_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
     ):
         """Verify sx, sy, sz are filled with NaN after init_group"""
-        ws = load_HidraWorkspace(
-            file_name=self.PROJECT_FILE_B, name="test_workspace", load_raw_counts=False, load_reduced_diffraction=True
-        )
+        ws = minimal_HidraWorkspace(with_instrument=False)
 
         subruns = ws._sample_logs.subruns.raw_copy()
         N_subrun = len(subruns)
