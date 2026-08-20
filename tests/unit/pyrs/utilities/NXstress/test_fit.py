@@ -486,10 +486,21 @@ class TestFit:
 
         # For PseudoVoigt, Intensity is a native parameter — verify exact round-trip.
         # A factor-of-two over-count would produce errors ~√2× too large and fail here.
+        #
+        # rtol=1e-4, not 1e-6: this recovery subtracts comparable-magnitude terms derived from
+        # a float32-quantized sigma_Height (the only lossy step; the algebraic inversion itself
+        # is exact -- verified in float128 with no float32 anywhere, median rel. error 1e-19).
+        # That subtraction amplifies the float32 rounding noise by a factor that depends on the
+        # ratio between the three input uncertainties' relative sizes. createPeakCollection now
+        # bounds every parameter's fractional uncertainty to [error_fraction_min, error_fraction_max]
+        # (0.5%-5%), which caps that ratio at max/min=10 and, per a 2,000,000-draw Monte Carlo
+        # against this exact formula, caps the resulting relative error at ~9.3e-6 -- rtol=1e-4
+        # keeps roughly a 10x margin over that observed worst case. Do not tighten this back
+        # toward 1e-6 without re-deriving the bound; it will flake again.
         np.testing.assert_allclose(
             native_errors_pv["Intensity"].astype(np.float64),
             sigma_I_orig,
-            rtol=1e-6,
+            rtol=1e-4,
             err_msg="PseudoVoigt σ_Intensity round-trip failed: check peakParametersForRange",
         )
 

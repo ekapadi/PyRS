@@ -120,7 +120,9 @@ class TestSample:
         # Add stress field data to logs
         subruns = ws._sample_logs.subruns.raw_copy()
         N_scan = len(subruns)
-        stress_values = np.random.randn(N_scan, 3)
+        # Local, freshly-seeded generator -- not the implicit global numpy RNG state, which is
+        # shared process-wide and would couple this test's values to unrelated tests' draws.
+        stress_values = np.random.default_rng(seed=0).standard_normal((N_scan, 3))
 
         ws._sample_logs[HidraConstants.STRESS_FIELD] = stress_values
         # Direction is stored as array with same value for each subrun
@@ -146,7 +148,8 @@ class TestSample:
         # Add stress field with wrong shape
         subruns = ws._sample_logs.subruns.raw_copy()
         N_scan = len(subruns)
-        wrong_shape_stress = np.random.randn(N_scan + 5, 3)  # Wrong first dimension
+        # Local, freshly-seeded generator -- see test_Sample_stress_field_present for why.
+        wrong_shape_stress = np.random.default_rng(seed=0).standard_normal((N_scan + 5, 3))  # Wrong first dimension
 
         # Set `_data` dict directly, otherwise `SampleLogs.__setitem__` itself will raise an exception.
         ws._sample_logs._data[HidraConstants.STRESS_FIELD] = wrong_shape_stress
