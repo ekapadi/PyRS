@@ -109,8 +109,8 @@ _None._
   `"NXstress (*.nxs)"` and calls `model.export_project_files`.
 - **Config-driven enablement (both actions, always visible, never hidden):**
   the new NXstress export button/action gets
-  `.setEnabled(load_config().nxstress.enable)`; the existing `.h5` `Export`
-  action gets `.setEnabled(load_config().legacy_io.enable)`. Qt
+  `.setEnabled(Config["nxstress.enable"])`; the existing `.h5` `Export`
+  action gets `.setEnabled(Config["legacy_io.enable"])`. Qt
   `setEnabled`, not `setVisible` — grayed out, not removed, when disabled.
 - **Extension is imposed, not user-chosen:** each export slot enforces its
   own section's `extension` (`nxstress.extension` / `legacy_io.extension`)

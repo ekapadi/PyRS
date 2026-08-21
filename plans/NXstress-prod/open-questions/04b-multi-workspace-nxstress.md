@@ -42,7 +42,8 @@ It should be possible to write the spec without yet having the specifics."
 The **mechanism** is now settled (see the spec's Overview, Scope, and
 NXstress Changes sections): field names come from a new PyRS config key,
 `nxstress.discriminator_fields: list[str]`, resolved via
-`pyrs.utilities.config.load_config()` inside NXstress itself — not from
+`pyrs.utilities.config.Config["nxstress.discriminator_fields"]` inside
+NXstress itself — not from
 NXstress's own defaults and not from a per-`write()`-call argument. Values
 are resolved per workspace via a property-or-`SampleLogs`-fallback resolver,
 and carried internally name-keyed (not positionally), so config reordering

@@ -101,8 +101,8 @@ machinery.
 ## Scope
 
 **In scope:**
-- Two new config keys under `nxstress` (land in whichever file spec 01
-  delivers, e.g. `pyrs/config/pyrs.default.yml`):
+- Two new config keys under `nxstress` (land in `pyrs/resources/application.yml`,
+  delivered by spec 01):
   - `discriminator_fields: list[str]` (default `[]`) — names of the fields
     that discriminate input workspaces from one another.
   - `merge_workspaces: bool` (default `false`) — see the empty-config policy
@@ -289,8 +289,9 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
   workspace, and `read()` writes it back onto each reconstructed one, with
   no NXstress-side special-casing per field name.
 - `NXstress.py`/`_peaks.py` resolve `discriminator_fields` (and
-  `merge_workspaces`) by calling `pyrs.utilities.config.load_config()`
-  directly — this module is PyRS's own implementation of NXstress and
+  `merge_workspaces`) by reading `pyrs.utilities.config.Config` directly
+  (e.g. `Config["nxstress.discriminator_fields"]`) — this module is PyRS's
+  own implementation of NXstress and
   already imports `HidraWorkspace`, `PeakCollection`, and `SampleLogs`
   throughout, so a direct dependency on PyRS's config module is consistent
   with the existing coupling, not a new architectural boundary crossing.

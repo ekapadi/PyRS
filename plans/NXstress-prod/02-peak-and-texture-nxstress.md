@@ -69,9 +69,9 @@ through as-is to `NXstress.write`.
   filter `"NXstress (*.nxs)"`.
 - Extend the existing load filter to include `"NXstress (*.nxs)"`.
 - **Config-driven enablement (both actions, always visible, never hidden):**
-  `actionSaveAsNXstress.setEnabled(load_config().nxstress.enable)`; the
+  `actionSaveAsNXstress.setEnabled(Config["nxstress.enable"])`; the
   existing `Save` (`.h5`) action gets
-  `.setEnabled(load_config().legacy_io.enable)`. Uses Qt `setEnabled`, not
+  `.setEnabled(Config["legacy_io.enable"])`. Uses Qt `setEnabled`, not
   `setVisible` — an action stays in the menu, just grayed out, when its
   format is disabled.
 - **Extension is imposed, not user-chosen:** each save slot enforces its

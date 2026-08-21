@@ -65,9 +65,9 @@ raise — the extension(s) actually written are always exactly whichever of
   `NXstress(path, "w").write([hidra_ws], [])` — a length-1 list, per 04b's
   signature, which lands in the Phase 2/3 bridge, before this Phase 4
   spec).
-- Config validation reuse: `load_config()`'s existing "at least one format
-  enabled" rule (spec 01) already guarantees this function always writes
-  at least one file.
+- Config validation reuse: `pyrs.utilities.config.validate_config()`'s
+  existing "at least one format enabled" rule (spec 01) already guarantees
+  this function always writes at least one file.
 - Round-trip test: reduce a run with only `nxstress.enable: true`, confirm
   `.nxs` is written and readable; with both enabled, confirm both files are
   written with the same basename.
@@ -100,7 +100,7 @@ change — the edit lives entirely in the "NXstress Changes" section below.
 - `reduce_hidra_workflow(nexus, output_dir, progressbar, ..., project_file_name=None)`:
 
   ```python
-  cfg = load_config()
+  from pyrs.utilities.config import Config
 
   if project_file_name is None:
       basename = os.path.basename(nexus).split(".")[0]
@@ -110,10 +110,10 @@ change — the edit lives entirely in the "NXstress Changes" section below.
 
   # ... existing NeXus conversion + reduction unchanged ...
 
-  if cfg.legacy_io.enable:
-      reducer.save_diffraction_data(base_path + cfg.legacy_io.extension)
-  if cfg.nxstress.enable:
-      with NXstress(base_path + cfg.nxstress.extension, "w") as nxs:
+  if Config["legacy_io.enable"]:
+      reducer.save_diffraction_data(base_path + Config["legacy_io.extension"])
+  if Config["nxstress.enable"]:
+      with NXstress(base_path + Config["nxstress.extension"], "w") as nxs:
           nxs.write([hidra_ws], [])  # length-1 list, per 04b's signature
   ```
 

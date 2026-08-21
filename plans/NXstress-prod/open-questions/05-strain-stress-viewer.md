@@ -108,8 +108,8 @@ layers removed from the real cause (all three per-direction workspaces
 resolving to the same discriminator tuple).
 
 **Decided:** `save_as_nxstress` checks
-`"direction" in load_config().nxstress.discriminator_fields` before calling
+`"direction" in Config["nxstress.discriminator_fields"]` before calling
 `write()`, raising a clear, StrainStress-specific error if absent. The
-shipped default in `pyrs/config/pyrs.default.yml` (spec 01) is updated to
+shipped default in `pyrs/resources/application.yml` (spec 01) is updated to
 `nxstress.discriminator_fields: ["direction"]` (was `[]`), so this works
 out of the box for a fresh install rather than requiring manual opt-in.

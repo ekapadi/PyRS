@@ -207,17 +207,25 @@ Missing capabilities in PyRS proper that NXstress cannot fill in on its own:
   tracked as an independent PyRS item (spec 06), not scheduled in this
   plan's phases.
 
-### 2.3 New capability: YAML Config
+### 2.3 New capability: Config (via `neutrons_standard`)
 
 PyRS has no runtime configuration file. The installed scripts (`pyrsplot`,
 `pyrs-calibration`, `create-mask`) use either no CLI flags or positional
-arguments only; no `argparse` + `--config` plumbing exists. This work adds:
+arguments only; no `argparse` + `--config` plumbing exists, and this work
+does not add any — a plan reviewer asked that PyRS instead build on the
+shared `Config` singleton from `neutrons_standard`
+(`github.com/neutrons/PythonCommons`, `neutrons` pixi channel), which is
+`env`-var driven, not CLI-driven. This work adds:
 
-- A YAML config file parsed with `pyyaml` (add as an explicit dependency —
-  currently only present transitively via `mantid`). Two fully parallel,
-  self-contained top-level sections, one per output format — each owns its
-  own `enable` flag and its own `extension`; nothing is shared or ambiguous
-  between them:
+- The `neutrons` pixi channel and `neutrons_standard` dependency
+  (`[tool.pixi.dependencies]` / run-dependencies) — no `pyyaml` dependency
+  needed; `neutrons_standard.Config` handles its own YAML I/O internally.
+- A YAML config file at `pyrs/resources/application.yml` — this exact
+  filename and location (a genuine `pyrs.resources` subpackage) is a hard
+  requirement of `neutrons_standard`, not a PyRS convention. Two fully
+  parallel, self-contained top-level sections, one per output format — each
+  owns its own `enable` flag and its own `extension`; nothing is shared or
+  ambiguous between them:
   ```yaml
   nxstress:
     enable: true
@@ -238,10 +246,10 @@ arguments only; no `argparse` + `--config` plumbing exists. This work adds:
     extension. **Imposed, never user-chosen:** every save action enforces
     its own section's extension on whatever filename a `QFileDialog`
     returns; a user cannot type a different extension and have it honored.
-  - `load_config()` raises if `not (nxstress.enable or legacy_io.enable)` —
-    at least one format must be writable. Unlike an enum, two independent
-    booleans don't make this state unrepresentable by construction, so
-    this is an explicit validation rule.
+  - `pyrs.utilities.config.validate_config()` raises if
+    `not (nxstress.enable or legacy_io.enable)` — at least one format must
+    be writable. `neutrons_standard.Config` provides no schema validation
+    of its own; this is PyRS's own rule, run eagerly at import time.
   - `nxstress.use_production_names: bool` — toggle between the current
     validator-safe generic group names and the production lowercase forms.
   - `nxstress.discriminator_fields: list[str]` (default `[]`) — names of the
@@ -253,19 +261,25 @@ arguments only; no `argparse` + `--config` plumbing exists. This work adds:
     instead of raising (spec 04b).
   - Reserved namespace for future flags (`nxstress.write_raw_counts`,
     `nxstress.strict_schema_validation`, etc.).
-- Default config location: `pyrs/config/pyrs.default.yml` — **inside** the
-  `pyrs` package, not at the repo root (`pyproject.toml`'s
-  `[tool.hatch.build.targets.wheel] packages = ["pyrs", "scripts"]` plus its
-  `pyrs/**/*.yml` artifact globs only cover paths inside the `pyrs`
-  package; a repo-root `config/pyrs.default.yml` would not ship in the
-  installed wheel). The loader also honors `~/.config/pyrs/config.yml` if
-  present and merges it over the default.
-- A shared loader at `pyrs/utilities/config.py` returning a validated
-  (pydantic) `Config` object, injected at NXstress callsites that read the
-  flags.
-- `argparse` wiring on each installed script — `pyrsplot --config <path>`
-  (analogously for `pyrs-calibration`, `create-mask`). When `--config` is
-  absent, fall back to the default location.
+- Packaging: no change needed — `pyproject.toml`'s existing
+  `[tool.hatch.build.targets.wheel] artifacts` glob `"pyrs/**/*.yml"`
+  already covers the new `pyrs/resources/` location.
+- `pyrs/utilities/config.py` — registers PyRS with `neutrons_standard`
+  (`neutrons_standard.init("pyrs")`, which must run before
+  `neutrons_standard.config` is ever imported) and re-exports the raw
+  `Config` singleton plus `validate_config()`. `Config` must always be
+  imported from *this* module, never `from neutrons_standard...import
+  Config` directly elsewhere in the codebase — a stray direct import would
+  race `init()` and silently corrupt `package_name` for the whole process.
+  Callsites use dot-string key access directly (`Config["nxstress.enable"]`)
+  — no typed wrapper layer.
+- No `argparse`/`--config` wiring on any installed script. Configuration is
+  overridden by setting the `env` OS environment variable to the name or
+  path of a `.yml` file, whose contents are deep-merged on top of the
+  shipped default (`neutrons_standard`'s own idiom) — e.g.
+  `env=/path/to/override.yml pyrsplot`. `neutrons_standard` also
+  auto-loads a `~/.pyrs/pyrs-user.yml` override when one exists and no
+  explicit `env` is set.
 
 This is a prerequisite for closing the Section 2.1 group-name validator
 workaround cleanly. Scheduled: Phase 1.
@@ -393,8 +407,9 @@ consumer side.
 
 **Required NXstress extensions / GUI wiring:**
 - Introduce the `Config` infrastructure (Section 2.3):
-  `pyrs/config/pyrs.default.yml`, `pyrs/utilities/config.py`, `--config` on
-  all installed scripts. Ship with `nxstress.use_production_names = false`
+  `pyrs/resources/application.yml`, `pyrs/utilities/config.py` (no CLI
+  wiring — `env`-var driven, per `neutrons_standard`'s own idiom). Ship
+  with `nxstress.use_production_names = false`
   (validator-safe generic names), `nxstress.enable = true`,
   `legacy_io.enable = true` as the defaults (both formats available,
   matching today's `.h5`-only behavior plus the new NXstress option).
@@ -438,7 +453,7 @@ data-model change.
 - Complete disallowed-character coverage in
   `_definitions.py::allowed_identifier` (L229).
 - Flip `nxstress.use_production_names` default to `true` in
-  `pyrs/config/pyrs.default.yml` once the upstream `nexusformat` validator
+  `pyrs/resources/application.yml` once the upstream `nexusformat` validator
   bug is resolved.
 - Parameterize the hardcoded instrument name in `_instrument.py:70`
   (currently `"HB2B"`) — draw from `Config` or from `HidraWorkspace`.
@@ -470,13 +485,13 @@ These two specs sit between Phase 2 (internal cleanup, which touches the same
 **[04b — Multi-workspace NXstress I/O](04b-multi-workspace-nxstress.md):**
 - **Depends on:** spec 01 (Config infrastructure), in addition to 04 — new
   config keys `nxstress.discriminator_fields` and `nxstress.merge_workspaces`
-  (§2.3) land wherever spec 01 delivers its config schema.
+  (§2.3) land in `pyrs/resources/application.yml`, delivered by spec 01.
 - **Required PyRS changes:** none. Discriminator-value resolution (property
   on `HidraWorkspace` if one exists, else `SampleLogs` fallback) lives
   entirely in NXstress's own code — no new `HidraWorkspace` method.
 - **Required NXstress extensions:** change `write`/`read` to accept/return
   `list[HidraWorkspace]`; resolve discriminator field names from
-  `nxstress.discriminator_fields` via `pyrs.utilities.config.load_config()`;
+  `Config["nxstress.discriminator_fields"]` (`pyrs.utilities.config.Config`);
   add a name-keyed discriminator slot to `_peaks.py::PeakIndex` (not
   positional — robust to config reordering between write and read),
   **prepended** to `sort_key` so discriminator values are the most slowly
@@ -547,7 +562,7 @@ direction in, one `.nxs` `NXentry` out.
 **Required NXstress extensions:**
 - Confirm `direction: str` (`"11"`/`"22"`/`"33"`) composes correctly with
   04b's discriminator mechanism; no new `PeakIndex` machinery is built here.
-- Update the default `pyrs/config/pyrs.default.yml`'s
+- Update the default `pyrs/resources/application.yml`'s
   `nxstress.discriminator_fields` from `[]` to `["direction"]`;
   `save_as_nxstress` validates this key is set correctly before calling
   `write()`, raising a clear error otherwise.
@@ -670,15 +685,16 @@ triggering this phase to be defined at the end of Phase 1.
 
 **Required NXstress extensions:**
 - Set `legacy_io.enable = false` and `nxstress.use_production_names = true`
-  as the defaults in `pyrs/config/pyrs.default.yml` (`nxstress.enable`
+  as the defaults in `pyrs/resources/application.yml` (`nxstress.enable`
   stays `true`, already the Phase 1 default). **No viewer code changes** —
   every wired viewer's save actions already read these flags directly
   (specs 02, 03, 05, 07), so flipping the shipped default is sufficient to
   demote `HidraProjectFile` save paths to disabled-by-default (loading
   remains unaffected, still works).
 - Write deprecation-warning docs and a migration note for existing users
-  with `.h5` project files, including how to re-enable `.h5` saving via a
-  personal `~/.config/pyrs/config.yml` override if still needed.
+  with `.h5` project files, including how to re-enable `.h5` saving via an
+  `env`-var-pointed override file (or an auto-loaded
+  `~/.pyrs/pyrs-user.yml`) if still needed.
 
 ---
 
@@ -702,9 +718,9 @@ hookup is planned unless a downstream requirement emerges.
 | 6 | Multi-workspace I/O & round-trip symmetry | **Decided:** `NXstress.write`/`read` generalize to `list[HidraWorkspace]`, round-trip symmetric — `read` recovers the same N workspaces `write` was given. Workspace boundaries are recovered from discriminator field(s) named by the new `nxstress.discriminator_fields` config key, resolved per workspace via a property-or-`SampleLogs`-fallback resolver and carried name-keyed (not positionally); the specific field names any deployment configures are decided at spec 04b's implementation kickoff, not here. | New capability, not in the original plan. Spec: [04b](04b-multi-workspace-nxstress.md). Assumes the existing no-overlap invariant (each input workspace contributes only unique scan points and/or other index fields); 04b adds an explicit write-time check for it, and raises on N>1 with no discriminator fields configured unless `nxstress.merge_workspaces` opts into merging instead. No new `HidraWorkspace` method — resolution logic is NXstress-internal. |
 | 7 | Append mode scope | **Decided:** append ships as a tested library capability (`NXstress(path, "a")`) with **no GUI entry point** in this pass. The ManualReductionViewer hookup (spec 07) always writes a fresh file instead, so it no longer depends on append. | New capability, not in the original plan; also un-bundles what was previously one spec (append + ManualReduction). Spec: [04c](04c-nxstress-append.md). |
 | 8 | Append architecture & scope | **Decided (superseded in part by item 17 — see there for the current scope):** append operates directly against on-disk arrays (no round-trip through `HidraWorkspace`/`PeakCollection` for the existing entry); covers both position-aligned families — peak-index (peaks + peak_parameters + background_parameters) and scan-point (detector_counts + sample logs + diffractogram) — not just the originally-scoped `_input_data.py`/`_peaks.py` pair. `NXstress(path, "a")` targets the last entry by default, with `entry_number` as an explicit override. **As of item 17, this is tail-append only, not general insertion**, and the conflict outcome is three-way, not binary: a new compound key (Case A) proceeds; a key already on disk needing more scan points inserted mid-run (Case B) raises `NotImplementedError` without invalidating the instance; only an exact duplicate raises `RuntimeError` and invalidates it. | Spec: [04c](04c-nxstress-append.md). Corrects an under-scoped original draft: `_fit.py::_PeakParameters`/`_BackgroundParameters` build rows in the same sort order as the peaks index (`_fit.py:87`), so a partial append would desynchronize the entry. |
-| 9 | `direction` storage & config default | **Decided:** `HidraWorkspace` gains a settable `direction` `@property` (get/set) — `HidraWorkspace` previously had no notion of direction at all; the viewer tracked it only at the model level (`filenames_11/22/33`), which doesn't fit 04b's workspace-resolved discriminator mechanism. 04b's discriminator resolver is corrected to be bidirectional: "get" from the workspace at write time (as before), "set" onto each reconstructed workspace at read time (new) — so any property-backed discriminator round-trips with no NXstress-side special-casing. `pyrs/config/pyrs.default.yml`'s `nxstress.discriminator_fields` default changes from `[]` to `["direction"]`; `save_as_nxstress` validates this precondition and raises a clear error if unmet. | Spec: [05](05-strain-stress-viewer.md); the resolver correction lands in [04b](04b-multi-workspace-nxstress.md). |
+| 9 | `direction` storage & config default | **Decided:** `HidraWorkspace` gains a settable `direction` `@property` (get/set) — `HidraWorkspace` previously had no notion of direction at all; the viewer tracked it only at the model level (`filenames_11/22/33`), which doesn't fit 04b's workspace-resolved discriminator mechanism. 04b's discriminator resolver is corrected to be bidirectional: "get" from the workspace at write time (as before), "set" onto each reconstructed workspace at read time (new) — so any property-backed discriminator round-trips with no NXstress-side special-casing. `pyrs/resources/application.yml`'s `nxstress.discriminator_fields` default changes from `[]` to `["direction"]`; `save_as_nxstress` validates this precondition and raises a clear error if unmet. | Spec: [05](05-strain-stress-viewer.md); the resolver correction lands in [04b](04b-multi-workspace-nxstress.md). |
 | 10 | CombineRuns keeps its pre-merge | **Decided:** spec 03's `.nxs` export path does **not** switch to 04b's N-workspace mechanism. `HidraWorkspace.append_hidra_project` (used by `combine_project_files`) already discards per-run boundaries the same way `nxstress.merge_workspaces: true` would — same resulting semantics, already implemented at the PyRS layer. The existing `.h5` export path still needs the single merged workspace regardless, so switching only `.nxs` would mean two data paths through `CombineRunsModel` for an identical output file. The `.nxs` branch passes the already-merged workspace as a length-1 list: `NXstress.write([self._hidra_ws], [])`. No `discriminator_fields`/`merge_workspaces` config is touched by this spec. | Spec: [03](03-combine-runs-nxstress.md). Retires `open-questions/04b-multi-workspace-nxstress.md` Q3, which had floated this as a possible simplification. |
-| 11 | Config schema: two independent format sections | **Decided:** replaces the single `nxstress.default_extension` key with two fully parallel, self-contained top-level sections — `nxstress` and `legacy_io` — each owning its own `enable` flag and its own `extension`. Each viewer's save action reads its own format's `enable` to decide whether it's clickable (`setEnabled`, never `setVisible` — the action stays visible, grayed out when disabled), and each action *imposes* its own format's `extension` on whatever a user types, rather than accepting a user-chosen extension. `load_config()` raises if neither format is enabled. No single GUI action ever auto-writes both formats — a user with both enabled invokes the two independent actions manually, one at a time. | Spec: [01](01-config-and-test-infra.md). Two earlier framings were tried and corrected first: an `output_mode` enum where "both" meant one action auto-writing two formats (rejected — bad UI design); a single `mode` enum plus one shared `default_extension` (rejected — doesn't make sense once two independently-enabled formats each need their own extension). |
+| 11 | Config schema: two independent format sections | **Decided:** replaces the single `nxstress.default_extension` key with two fully parallel, self-contained top-level sections — `nxstress` and `legacy_io` — each owning its own `enable` flag and its own `extension`. Each viewer's save action reads its own format's `enable` to decide whether it's clickable (`setEnabled`, never `setVisible` — the action stays visible, grayed out when disabled), and each action *imposes* its own format's `extension` on whatever a user types, rather than accepting a user-chosen extension. `validate_config()` raises if neither format is enabled. No single GUI action ever auto-writes both formats — a user with both enabled invokes the two independent actions manually, one at a time. | Spec: [01](01-config-and-test-infra.md). Two earlier framings were tried and corrected first: an `output_mode` enum where "both" meant one action auto-writing two formats (rejected — bad UI design); a single `mode` enum plus one shared `default_extension` (rejected — doesn't make sense once two independently-enabled formats each need their own extension). |
 | 12 | ManualReductionViewer: automatic write, not a GUI action | **Decided:** `reduce_hidra_workflow` has no button click to protect the meaning of (it saves automatically, as an inherent side effect of every reduction) — so the "never auto-write both formats" rule from item 11 does not apply to it. It simply writes once per currently-enabled format: one file if only one is enabled, both files (same basename) if both are. No tie-break, no ambiguity. An explicit caller-supplied `project_file_name`'s extension is stripped and ignored — never validated against, never a reason to raise; only its basename is used, exactly as for the auto-derived case. | Spec: [07](07-manual-reduction-nxstress.md). Considered and explicitly deferred: giving this viewer a real Save/Save-As action, and a shared `Viewer` ABC across all five viewers — legitimate future architecture work, but a workflow change unrelated to NXstress, not entangled with this rollout. |
 | 13 | Specs 06/07 decoupled; spec 07 hookup point corrected | **Decided:** spec 07 does not depend on spec 06 at all. Tracing the actual code found two errors in the original drafts: the class is `ReductionController`, not `HB2BReductionManager` (an unrelated class in `pyrs/core/reduction_manager.py`); and `ReductionController.save_project` — spec 06's target — has **zero callers anywhere in the codebase**, so implementing it unblocks nothing. The real, currently-functional save path is `reduce_hidra_workflow`'s automatic `ReductionApp.save_diffraction_data` call, which spec 07 now hooks into directly. Spec 06's other item (`nexus_conversion.py:118,374`) is also confirmed unrelated — both branches are on the NeXus-*conversion* step, not the save path. | Specs: [06](06-manual-reduction-prereqs.md) (re-scoped to an independent, optional PyRS cleanup item, not scheduled in this plan's phases), [07](07-manual-reduction-nxstress.md). |
 | 14 | Spec 08 corrected: calibration fix scope, beam-profile mechanism, STRESS_FIELD blocked | **Decided, three parts.** (a) The `file_object.py:510` FIXME cited in the original draft doesn't exist there — the real gap is entirely within `DENEXDetectorGeometry` (discards its `calibrated` arg; `apply_shift` is dead code that would raise `AttributeError` if called; destructively overwrites `arm_length` with no way to recover the pre-shift value). Fix stays scoped to that class + NXstress; **no `.h5` format change** in this pass — explicitly flagged as a strong future need, not dropped. (b) No beam-intensity data path exists anywhere in PyRS (confirmed); rather than NXstress hardcoding a uniform placeholder, `HidraWorkspace` gains a `beam_intensity_profile` property (`direction`-style convention) that NXstress reads unconditionally, per-scan-point, concatenated across `wss` like wavelength (not validated for cross-workspace equality — see item 18) — forward-compatible with a future real beam-monitor path for free. (c) `STRESS_FIELD` shape verification is **blocked, not resolved** — the three example files a stakeholder named are real but contain no `STRESS_FIELD` log, only an unrelated `StrainDirection` label; strain and stress are physically distinct quantities, so that label is not a valid substitute. Documented as an explicit, tracked blocker rather than guessed at. | Specs: [08](08-fit-spectrum-prereqs.md), [09](09-fit-spectrum-nxstress.md) (carries the `STRESS_FIELD` block forward; the other three items proceed normally). |
@@ -719,14 +735,14 @@ hookup is planned unless a downstream requirement emerges.
 
 | Phase | PyRS files | NXstress / GUI files |
 |---|---|---|
-| 1 | _(none)_ | `pyrs/utilities/config.py` (new), `pyrs/config/pyrs.default.yml` (new), `pyproject.toml` (add `pyyaml`), `scripts/pyrsplot.py`, `scripts/pyrs_calibration.py`, `scripts/create_mask.py`, `pyrs/interface/peak_fitting/{peak_fitting_viewer,peak_fitting_model}.py`, `pyrs/interface/texture_fitting/{texture_fitting_viewer,model}.py`, `pyrs/interface/combine_runs/{combine_runs_viewer,combine_runs_model}.py` |
-| 2 | `pyrs/projectfile/file_object.py` (audit legacy log names) | `pyrs/utilities/NXstress/{_peaks,_fit,_definitions,_instrument}.py`, `pyrs/config/pyrs.default.yml` |
-| 2/3 (04b) | _(none)_ | `pyrs/utilities/NXstress/{NXstress,_peaks,_input_data,_sample,_instrument,_fit}.py`, `pyrs/config/pyrs.default.yml` (new keys: `discriminator_fields`, `merge_workspaces`); call-site updates in `pyrs/interface/{peak_fitting,texture_fitting,combine_runs}/…` |
+| 1 | _(none)_ | `pyrs/utilities/config.py` (new), `pyrs/resources/{__init__.py,application.yml}` (new), `pyproject.toml` (add `neutrons` channel + `neutrons_standard`), `pyrs/interface/peak_fitting/{peak_fitting_viewer,peak_fitting_model}.py`, `pyrs/interface/texture_fitting/{texture_fitting_viewer,model}.py`, `pyrs/interface/combine_runs/{combine_runs_viewer,combine_runs_model}.py` |
+| 2 | `pyrs/projectfile/file_object.py` (audit legacy log names) | `pyrs/utilities/NXstress/{_peaks,_fit,_definitions,_instrument}.py`, `pyrs/resources/application.yml` |
+| 2/3 (04b) | _(none)_ | `pyrs/utilities/NXstress/{NXstress,_peaks,_input_data,_sample,_instrument,_fit}.py`, `pyrs/resources/application.yml` (new keys: `discriminator_fields`, `merge_workspaces`); call-site updates in `pyrs/interface/{peak_fitting,texture_fitting,combine_runs}/…` |
 | 3 (04c) | _(none)_ | `pyrs/utilities/NXstress/{NXstress,_input_data,_sample,_fit,_peaks}.py` — library only, no GUI files |
-| 3 (05) | `pyrs/core/workspaces.py` (new `direction` property), `pyrs/dataobjects/fields.py` | `pyrs/utilities/NXstress/_peaks.py` (StrainStress-specific tests only), `pyrs/config/pyrs.default.yml` (discriminator_fields default), `pyrs/interface/strainstressviewer/{strain_stress_view,model}.py` |
+| 3 (05) | `pyrs/core/workspaces.py` (new `direction` property), `pyrs/dataobjects/fields.py` | `pyrs/utilities/NXstress/_peaks.py` (StrainStress-specific tests only), `pyrs/resources/application.yml` (discriminator_fields default), `pyrs/interface/strainstressviewer/{strain_stress_view,model}.py` |
 | 4 | _(none — see item 13 in the Decisions Log)_ | `pyrs/interface/manual_reduction/pyrs_api.py` (`reduce_hidra_workflow`) |
 | 5 | `pyrs/peaks/peak_collection.py`, `pyrs/core/{peak_profile_utility,instrument_geometry,workspaces}.py` (`STRESS_FIELD`/`file_object.py`: blocked, not touched) | `pyrs/utilities/NXstress/{_fit,_instrument}.py` (`_sample.py`: blocked, not touched) |
-| 6 | _(none)_ | `pyrs/config/pyrs.default.yml` only — no viewer files; every wired viewer already reads `nxstress.enable`/`legacy_io.enable` directly |
+| 6 | _(none)_ | `pyrs/resources/application.yml` only — no viewer files; every wired viewer already reads `nxstress.enable`/`legacy_io.enable` directly |
 
 Tests to extend/add:
 - `tests/unit/pyrs/utilities/NXstress/*` (existing suite — extend each phase).

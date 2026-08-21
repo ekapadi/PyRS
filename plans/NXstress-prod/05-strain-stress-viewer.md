@@ -85,10 +85,10 @@ other field is configured instead (or none), all three per-direction
 workspaces would resolve to the same discriminator tuple, most likely
 surfacing as an opaque duplicate-index error several layers removed from
 the real cause. **Decided:** `save_as_nxstress` checks
-`"direction" in load_config().nxstress.discriminator_fields` before calling
+`"direction" in Config["nxstress.discriminator_fields"]` before calling
 `write()` and raises a clear, StrainStress-specific error if not; and the
-shipped default in `pyrs/config/pyrs.default.yml` (delivered by spec 01) is
-updated to `nxstress.discriminator_fields: ["direction"]` (was `[]`), so
+shipped default in `pyrs/resources/application.yml` (delivered by spec 01)
+is updated to `nxstress.discriminator_fields: ["direction"]` (was `[]`), so
 this works out of the box rather than requiring every deployment to opt in
 manually.
 
@@ -109,7 +109,7 @@ manually.
   mechanism.
 - `save_as_nxstress`'s config precondition check (see "Config precondition"
   above), and the corresponding default-config update in
-  `pyrs/config/pyrs.default.yml`.
+  `pyrs/resources/application.yml`.
 - Wire NXstress read path into `strainstressviewer/model.py` —
   `load_hidra_project_file` / `load_hidra_project_files` — so a single
   `.nxs` file replaces the N-files-per-direction pattern
@@ -168,7 +168,7 @@ NXstress is limited to:
 - Add StrainStress-specific tests exercising `direction` through 04b's
   general read/write/split path.
 
-### `pyrs/config/pyrs.default.yml`
+### `pyrs/resources/application.yml`
 
 - Update the default `nxstress.discriminator_fields` from `[]` to
   `["direction"]`, so multi-direction save/load works without per-deployment
@@ -177,7 +177,7 @@ NXstress is limited to:
 ### `pyrs/interface/strainstressviewer/model.py`
 
 - `save_as_nxstress(filename)`: check
-  `"direction" in load_config().nxstress.discriminator_fields`; raise a
+  `"direction" in Config["nxstress.discriminator_fields"]`; raise a
   clear error if not present. Set `ws.direction = "11"` / `"22"` / `"33"`
   on each of the (up to three) direction workspaces. Call
   `NXstress(filename, "w").write([ws_11, ws_22, ws_33], peakss)` per 04b's
@@ -196,7 +196,7 @@ NXstress is limited to:
 - Extend the load file dialog to include `"NXstress (*.nxs)"`.
 - **Config-driven enablement (both actions, always visible, never hidden):**
   the new **Save as NXstress…** action gets
-  `.setEnabled(load_config().nxstress.enable)`; this viewer has no existing
+  `.setEnabled(Config["nxstress.enable"])`; this viewer has no existing
   `.h5`-format "Save" action to gate (its current save paths are CSV/JSON,
   unaffected by this spec), so there is no `legacy_io.enable` check here.
 - **Extension is imposed, not user-chosen:** `save_as_nxstress` enforces
@@ -268,5 +268,5 @@ NXstress is limited to:
   `test_peaks.py` / `test_peaks_read.py` for the direction axis, and 04b's
   resolver-symmetry tests exercising a real get/set property (this spec's
   `direction`) rather than only the log-fallback case.
-- Confirm the shipped `pyrs/config/pyrs.default.yml` includes
+- Confirm the shipped `pyrs/resources/application.yml` includes
   `nxstress.discriminator_fields: ["direction"]`.

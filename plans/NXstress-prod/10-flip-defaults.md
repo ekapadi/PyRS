@@ -19,7 +19,7 @@ save actions are enabled (grayed out when disabled, never hidden — see
 each spec's "Config-driven enablement" notes) — that wiring was built once,
 in each spec, specifically so this phase would not need to touch any
 viewer's code. Entering Phase 6 means flipping the *shipped default* in
-`pyrs/config/pyrs.default.yml`:
+`pyrs/resources/application.yml`:
 
 ```yaml
 legacy_io:
@@ -75,7 +75,7 @@ spec 02 / start of spec 03):
 
 **In scope:**
 - Flip `legacy_io.enable` to `false` and `nxstress.use_production_names` to
-  `true` in `pyrs/config/pyrs.default.yml`.
+  `true` in `pyrs/resources/application.yml`.
 - Keep `.h5` in all *load* dialog filters (legacy read-only) — loading is
   unaffected by `legacy_io.enable`, which only gates the *save* action's
   enablement, per each viewer's spec.
@@ -92,8 +92,10 @@ spec 02 / start of spec 03):
   (`strain_stress_view.py:331-333`), so a per-call guard inside that
   handler would still fire up to three times per session.
 - Release notes / migration guide for existing users, including how to
-  re-enable `.h5` saving via a personal config override
-  (`~/.config/pyrs/config.yml`) if still needed.
+  re-enable `.h5` saving via a personal config override (setting the `env`
+  OS environment variable to a `.yml` file with `legacy_io.enable: true`,
+  or via `neutrons_standard`'s auto-loaded `~/.pyrs/pyrs-user.yml`) if
+  still needed.
 
 **Out of scope:**
 - DetectorCalibrationViewer (not NXstress-wired; unchanged).
@@ -114,7 +116,7 @@ _None._
 
 ## NXstress / GUI Changes
 
-### `pyrs/config/pyrs.default.yml`
+### `pyrs/resources/application.yml`
 
 ```yaml
 nxstress:
@@ -172,8 +174,9 @@ action by default. Only the deprecation-hint UI (status bars) above is new.
 - StrainStress-specific: open `.h5` files into all three direction slots
   (e11/e22/e33) in one session; confirm the hint appears only once, not
   three times.
-- Confirm a user's personal `~/.config/pyrs/config.yml` can override
-  `legacy_io.enable: true` to restore `.h5` saving without a code change.
+- Confirm a user's `env`-var-pointed override file (or an auto-loaded
+  `~/.pyrs/pyrs-user.yml`) can override `legacy_io.enable: true` to restore
+  `.h5` saving without a code change.
 
 ---
 
@@ -190,10 +193,11 @@ action by default. Only the deprecation-hint UI (status bars) above is new.
 > work). When you do open a legacy `.h5` file, PyRS will remind you NXstress
 > is now the default format.
 >
-> **Still need `.h5` output?** Set `legacy_io.enable: true` in your personal
-> config file to re-enable it — no code change required, and both formats
-> can be enabled simultaneously if you want to keep producing `.h5` files
-> alongside `.nxs` during your own transition.
+> **Still need `.h5` output?** Set `legacy_io.enable: true` in an override
+> file pointed to by the `env` environment variable (or in your auto-loaded
+> `~/.pyrs/pyrs-user.yml`) to re-enable it — no code change required, and
+> both formats can be enabled simultaneously if you want to keep producing
+> `.h5` files alongside `.nxs` during your own transition.
 
 ---
 

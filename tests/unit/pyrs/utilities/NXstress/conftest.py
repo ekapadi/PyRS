@@ -18,6 +18,10 @@ Fixture conventions
 - `load_HidraWorkspace` — legacy: reads a real HidraProject file from disk. Kept
   for a test that genuinely needs real project-file content (e.g. testing
   `HidraProjectFile`'s own I/O); prefer `minimal_HidraWorkspace` for anything else.
+- `default_config` — see `tests/unit/pyrs/utilities/conftest.py` (one directory up):
+  it lives there, not here, since `pyrs/utilities/config.py` isn't itself
+  NXstress-specific code, and a fixture defined there is visible down into this
+  directory too.
 """
 
 from collections.abc import Callable, Generator
