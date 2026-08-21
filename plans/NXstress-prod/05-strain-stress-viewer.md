@@ -213,8 +213,9 @@ NXstress is limited to:
 
 `tests/integration/test_nxstress_viewer_roundtrip.py` (extend):
 
-- Construct minimal workspaces and peak-collection lists for all three
-  directions using spec-01 fixtures; set `.direction` on each before saving.
+- Construct workspaces and peak-collection lists for all three
+  directions using `minimal_HidraWorkspace`/`minimal_PeakCollection`
+  (spec 01); set `.direction` on each before saving.
 - Call `model.save_as_nxstress(path)`.
 - Load back with `model.load_hidra_project_files([path], direction)` for
   each direction; assert each returned workspace's `.direction` matches

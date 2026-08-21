@@ -98,7 +98,8 @@ through as-is to `NXstress.write`.
 `tests/integration/test_nxstress_viewer_roundtrip.py`:
 
 - **PeakFitting round-trip:** construct a `HidraWorkspace` + a
-  `list[PeakCollection]` using spec-01 fixtures; call
+  `list[PeakCollection]` using `minimal_HidraWorkspace`/`minimal_PeakCollection`
+  (spec 01); call
   `PeakFittingModel.save_fit_result` with a `.nxs` path; call
   `PeakFittingModel.load_hidra_project` on the same path; assert workspace
   sub-run counts and peak-parameter arrays match.

@@ -122,8 +122,8 @@ _None._
 
 `tests/integration/test_nxstress_viewer_roundtrip.py` (extend):
 
-- **CombineRuns round-trip:** create two minimal workspaces using spec-01
-  fixtures; merge via `CombineRunsModel.combine_project_files`; export to a
+- **CombineRuns round-trip:** create two workspaces using
+  `minimal_HidraWorkspace` (spec 01); merge via `CombineRunsModel.combine_project_files`; export to a
   `.nxs` path; read back with `NXstress.read()`; assert sub-run counts and
   sample-log arrays match the merged workspace. Deliberately does **not**
   assert raw-counts equality — `combine_project_files` merges with

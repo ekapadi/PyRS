@@ -100,37 +100,85 @@ this spec.
 
 ## Test-framework Fixups
 
-The following items clean up or extend the existing NXstress test suite so
-that specs 02–10 can write tests without boilerplate.
+The following items clean up and extend the NXstress test suite so that
+specs 02–10 can write tests without boilerplate. Delivered ahead of the
+config-loader half of this spec (see "PyRS Changes" above, still
+outstanding).
 
-### Shared fixtures (extend `tests/unit/pyrs/utilities/NXstress/conftest.py`)
+### Shared fixtures (`tests/unit/pyrs/utilities/NXstress/conftest.py`)
 
-- `minimal_workspace` — returns a small but valid `HidraWorkspace` with:
-  - a minimal `SampleLogs` (at least `sx`, `sy`, `sz`, `start_time`,
-    `end_time` with ISO-8601 values, `mrot`)
-  - one sub-run
-  - a `DENEXDetectorGeometry` instance
-  - a wavelength value
-- `minimal_peak_collection` — returns a `PeakCollection` consistent with
-  `minimal_workspace` (matching sub-run count, a parseable peak tag such as
-  `Fe 110`).
-- `nxstress_tmp_path` (or use pytest's built-in `tmp_path`) — ensure all
-  written `.nxs` files land in a temp directory and are cleaned up; document
-  the convention.
-- `default_config` — returns a `Config` object loaded from
-  `pyrs/config/pyrs.default.yml`; usable in any test that exercises
-  config-aware paths.
+- `minimal_HidraWorkspace` — a factory fixture (not the single fixed shape
+  originally proposed as `minimal_workspace`), since real NXstress tests
+  need several structural combinations. Returns a small, entirely
+  synthetic `HidraWorkspace` — no project file is read from disk — built
+  from minimal `SampleLogs` (`vx`/`vy`/`vz`, `start_time`/`end_time` as
+  ISO-8601 bytes matching real HDF5 string datasets, `mrot`, `Filename`),
+  one or more sub-runs, and a wavelength, with instrument geometry, masks,
+  raw counts, and reduced-diffraction data each toggled on via keyword
+  flags (`with_instrument`, `with_masks`, `with_raw_counts`,
+  `with_reduced_diffraction`).
+  Naming note: never abbreviate `HidraWorkspace` to "workspace" — Mantid's
+  own `Workspace` is a different concept; this matches the pre-existing
+  `load_HidraWorkspace` naming.
+- `minimal_PeakCollection` — a thin, defaults-filling wrapper around the
+  pre-existing `createPeakCollection` fixture
+  (`tests/util/peak_collection_helpers.py`), fulfilling the plan's
+  `minimal_peak_collection` ask under the same renaming rationale.
+- `load_HidraWorkspace` (the original real-file loader) is kept as an
+  explicit *legacy* fixture, documented as such, for a test that
+  genuinely needs real project-file content.
+- `tmp_path`-relative `.nxs` files needed no new fixture: every NXstress
+  test already used pytest's built-in `tmp_path`, confirmed as the
+  convention (the plan allowed this alternative).
+- `default_config` is **not delivered** — it depends on the config-loader
+  half of this spec (`pyrs/utilities/config.py`,
+  `pyrs/config/pyrs.default.yml`), which remains out of scope for this pass.
 
 ### Test-data hygiene
 
-- Replace any hardcoded absolute paths in the existing NXstress test files
-  with `tmp_path`-relative paths.
-- Confirm all existing NXstress tests pass after these changes.
+- Went beyond "replace hardcoded absolute paths": 74 of the 76 NXstress
+  tests that depended on loading a real HB2B project file (via
+  `load_HidraWorkspace`) were migrated onto the synthetic fixtures above,
+  eliminating real-file I/O from them entirely rather than just
+  relocating paths. The only "absolute path"-shaped strings left anywhere
+  in the suite are inert `projectfilename=` metadata on synthetic
+  `PeakCollection`s, never opened — confirmed, not changed.
+- All existing NXstress tests confirmed passing after the migration
+  (`pixi run test-unit` / `test-integration`, full suite, before and
+  after).
 
 ### Convention note
 
-Add a brief `tests/unit/pyrs/utilities/NXstress/README.md` (or a docstring
-in `conftest.py`) documenting the fixture conventions for future contributors.
+Delivered as a module docstring in `conftest.py` (the plan's own
+allowed alternative to a separate README.md), documenting the fixture
+conventions above for future contributors.
+
+### Markers & test tiers (repo-wide)
+
+Broader than NXstress alone, but delivered as part of the same pass:
+`integration`/`gui` pytest markers registered in `pyproject.toml` and
+applied across the whole test suite, with `test-unit` / `test-integration`
+/ `test-gui` pixi tasks. This is the mechanism specs 02–10 should use to
+tag their own new tests.
+
+### Test directory cleanup
+
+Several pre-existing test files were moved to the `unit`/`integration`
+location matching their actual behavior, now that markers make that
+classification possible; two overly-mixed files were split. Full detail:
+`plans/test-framework.md`.
+
+### RNG determinism & synthetic-data realism
+
+`createPeakCollection`'s RNG was a shared, session-global instance — a
+test's outcome depended on how many random draws every other test that
+happened to run earlier in the session had already consumed. It now
+re-seeds fresh per test. Its synthetic parameter uncertainties were also
+bounded to realistic proportional fractions (0.5%–5% of each parameter's
+own value) instead of independent absolute ranges — this fixed an
+unbounded catastrophic-cancellation amplification that one PseudoVoigt
+round-trip test's tolerance had been silently relying on a single real
+HB2B file to avoid.
 
 ---
 
