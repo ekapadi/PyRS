@@ -270,7 +270,7 @@ def test_reduce_data(mask_file_name, filtered_counts, histogram_counts):
     ],
     ids=("HB2B_1017_Masked", "HB2B_1017_NoMask"),
 )
-def test_reduce_method_data(mask_file_name, filtered_counts, histogram_counts):
+def test_reduce_method_data(mask_file_name, filtered_counts, histogram_counts, tmp_path):
     """Verify NeXus converters including counts and sample log values"""
     SUBRUNS = (1, 2, 3)
     CENTERS = (69.99525, 80.0, 97.50225)
@@ -343,8 +343,13 @@ def test_reduce_method_data(mask_file_name, filtered_counts, histogram_counts):
         assert x[0] < angle < x[-1], assert_label
         # assert np.isnan(np.sum(y[1:])), assert_label
         np.testing.assert_almost_equal(np.nansum(y), total_counts, decimal=1, err_msg=assert_label)
-    reducer.save_diffraction_data("testing.h5")
-    live_reducer.save_diffraction_data("testing2.h5")
+    testing_file = tmp_path / "testing.h5"
+    reducer.save_diffraction_data(str(testing_file))
+    assert testing_file.exists(), "reducer.save_diffraction_data did not write a file"
+
+    testing2_file = tmp_path / "testing2.h5"
+    live_reducer.save_diffraction_data(str(testing2_file))
+    assert testing2_file.exists(), "live_reducer.save_diffraction_data did not write a file"
 
 
 def test_split_log_time_average():
