@@ -104,16 +104,22 @@ class TestStrainFieldSingle:
     """Tests for `StrainFieldSingle` backed by real and synthetic HB2B data."""
 
     @pytest.mark.integration
-    def test_get_peak_params(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
-        """Test that `get_effective_peak_parameter` returns a per-point field for every
-        known effective peak parameter, and raises `ValueError` for an unknown one.
-        """
+    def test_get_effective_peak_parameter_invalid_name_raises_value_error(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
+        """Test that `get_effective_peak_parameter` raises `ValueError` for an unknown parameter name."""
         strain = strain_field_samples["strain with two points per direction"]  # mock object
 
-        # test that getting non-existant parameter works
         with pytest.raises(ValueError) as exception_info:
             strain.get_effective_peak_parameter("impossible")
         assert "impossible" in str(exception_info.value)
+
+    @pytest.mark.integration
+    def test_get_effective_peak_parameter_supported_name_returns_scalar_field(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
+        """Test that `get_effective_peak_parameter` returns a per-point field for every known parameter name."""
+        strain = strain_field_samples["strain with two points per direction"]  # mock object
 
         num_values = len(strain)
         for name in EFFECTIVE_PEAK_PARAMETERS:
@@ -135,7 +141,9 @@ class Test_StrainField:
             self._strains = strains
 
     @pytest.mark.integration
-    def test_eq(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
+    def test_eq_matching_and_differing_strains_returns_expected_bool(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
         """Test `==` for both single-scan `StrainFieldSingle` and multi-scan `StrainField` objects."""
         strains_single_scan = copy.deepcopy(list(strain_field_samples.values()))
         # single-scan strains
@@ -154,7 +162,9 @@ class TestStrainField:
     """Tests for `StrainField` fuse/stack/export behavior, backed by real HB2B project files."""
 
     @pytest.mark.integration
-    def test_peak_collection(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
+    def test_peak_collections_property_returns_single_element_list(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
         """Test that `peak_collections` returns a one-element list of `PeakCollection`."""
         strain = strain_field_samples["strain with two points per direction"]
         assert isinstance(strain.peak_collections, list)
@@ -162,14 +172,9 @@ class TestStrainField:
         assert isinstance(strain.peak_collections[0], PeakCollection)
 
     @pytest.mark.integration
-    def test_peak_collections(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
-        """Test that `peak_collections` is consistent across repeated access."""
-        strain = strain_field_samples["strain with two points per direction"]
-        assert len(strain.peak_collections) == 1
-        assert isinstance(strain.peak_collections[0], PeakCollection)
-
-    @pytest.mark.integration
-    def test_coordinates(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
+    def test_coordinates_property_matches_sample_log_positions(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
         """Test that `coordinates` matches the (vx, vy, vz) sample logs used to build the strain."""
         strain = strain_field_samples["strain with two points per direction"]
         coordinates = np.array(
@@ -187,7 +192,9 @@ class TestStrainField:
         assert np.allclose(strain.coordinates, coordinates)
 
     @pytest.mark.integration
-    def test_fuse_with(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
+    def test_fuse_with_two_strains_returns_merged_strain(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
         """Test that `fuse_with` concatenates peak collections and coordinates from both strains."""
         strain1 = strain_field_samples["HB2B_1320_peak0"]
         strain2 = strain_field_samples["strain with two points per direction"]
@@ -200,7 +207,19 @@ class TestStrainField:
         assert strain.peak_collections[0] == strain1.peak_collections[0]
 
     @pytest.mark.integration
-    def test_add(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
+    def test_fuse_with_invalid_criterion_raises_value_error(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
+        """Test that `fuse_with` rejects an unrecognized `criterion` value."""
+        strain1 = strain_field_samples["HB2B_1320_peak0"]
+        strain2 = strain_field_samples["strain with two points per direction"]
+        with pytest.raises(ValueError, match="Unallowed value of criterion"):
+            strain1.fuse_with(strain2, criterion="bogus")
+
+    @pytest.mark.integration
+    def test_add_operator_two_strains_returns_merged_strain(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
         """Test that `+` is equivalent to `fuse_with` for two single-scan strains."""
         strain1 = strain_field_samples["HB2B_1320_peak0"]
         strain2 = strain_field_samples["strain with two points per direction"]
@@ -209,7 +228,7 @@ class TestStrainField:
         assert np.allclose(strain.coordinates, np.concatenate((strain1.coordinates, strain2.coordinates)))
 
     @pytest.mark.integration
-    def test_create_strain_field_from_file_no_peaks(self, test_data_dir: str) -> None:
+    def test_strain_field_init_file_without_peaks_raises_io_error(self, test_data_dir: str) -> None:
         """Test that loading a project file with no fitted peaks raises `IOError`."""
         # this project file doesn't have peaks in it
         file_path = os.path.join(test_data_dir, "HB2B_1060_first3_subruns.h5")
@@ -220,7 +239,7 @@ class TestStrainField:
             pass
 
     @pytest.mark.integration
-    def test_from_file(self, test_data_dir: str) -> None:
+    def test_strain_field_init_from_file_returns_populated_field(self, test_data_dir: str) -> None:
         """Test that a `StrainField` can be built directly from a project file and peak tag."""
         file_path = os.path.join(test_data_dir, "HB2B_1320.h5")
         strain = StrainField(filename=file_path, peak_tag="peak0")
@@ -230,7 +249,9 @@ class TestStrainField:
         assert strain.get_effective_peak_parameter("Center")
 
     @pytest.mark.integration
-    def test_fuse_strains(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
+    def test_fuse_strains_classmethod_matches_sequential_addition(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
         """Test that `StrainField.fuse_strains` matches summing the same strains with `+`."""
         # TODO HB2B_1320_peak0 and HB2B_1320_ are the same scan. We need two different scans
         strain1 = strain_field_samples["HB2B_1320_peak0"]
@@ -249,7 +270,7 @@ class TestStrainField:
             assert_allclose_with_sorting(strain.values, values)
 
     @pytest.mark.integration
-    def test_stack_strains(
+    def test_stack_operator_overlapping_and_disjoint_strains_returns_expected_fields(
         self, strain_field_samples: dict[str, StrainFieldSingle], allclose_with_sorting: Callable[..., bool]
     ) -> None:
         """Test `*` (stacking) for strains with overlapping, and with disjoint, evaluation points."""
@@ -285,7 +306,27 @@ class TestStrainField:
             assert nan_measurements_count == len(strain_other)
 
     @pytest.mark.integration
-    def test_fuse_and_stack_strains(
+    def test_stack_strains_unimplemented_mode_raises_not_implemented_error(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
+        """Test that `StrainField.stack_strains` rejects the recognized-but-not-yet-implemented
+        `stack_mode="intersection"` value.
+
+        Requires two strains with genuinely different point lists: `stack_strains` has
+        a "trivial case" early return when all input point lists are already equal,
+        which would otherwise skip the mode check entirely before it's ever reached.
+        `*` (`__mul__`) always hardcodes `mode="union"`, so this path can only be
+        reached by calling the classmethod directly. A wholly unrecognized `stack_mode`
+        string (e.g. `"bogus"`) instead raises `ValueError` at an earlier validation
+        step -- a different, narrower error than this one.
+        """
+        strain1 = strain_field_samples["HB2B_1320_peak0"]
+        strain3 = strain_field_samples["strain with two points per direction"]
+        with pytest.raises(NotImplementedError, match="is not currently supported"):
+            StrainField.stack_strains(strain1, strain3, stack_mode="intersection")
+
+    @pytest.mark.integration
+    def test_fuse_then_stack_strains_matches_expected_finite_and_nan_counts(
         self, strain_field_samples: dict[str, StrainFieldSingle], allclose_with_sorting: Callable[..., bool]
     ) -> None:
         """Test that stacking a strain against a fused pair matches fusing then stacking, point-for-point."""
@@ -307,7 +348,9 @@ class TestStrainField:
         assert strain23_stacked.peak_collections == [strain2.peak_collections[0], strain3.peak_collections[0]]
 
     @pytest.mark.integration
-    def test_to_md_histo_workspace(self, strain_field_samples: dict[str, StrainFieldSingle]) -> None:
+    def test_to_md_histo_workspace_returns_expected_bin_geometry(
+        self, strain_field_samples: dict[str, StrainFieldSingle]
+    ) -> None:
         """Test that `to_md_histo_workspace` produces an MDHistoWorkspace with the expected bin geometry."""
         strain = strain_field_samples["HB2B_1320_peak0"]
         histo = strain.to_md_histo_workspace(method="linear", resolution=DEFAULT_POINT_RESOLUTION)
@@ -324,7 +367,7 @@ class TestStrainField:
 
 
 @pytest.mark.integration
-def test_stress_field_from_files(test_data_dir: str) -> None:
+def test_stress_field_from_identical_strains_computes_expected_values(test_data_dir: str) -> None:
     """Test `StressField` computed from three identical strains loaded from a real project file."""
     HB2B_1320_PROJECT = os.path.join(test_data_dir, "HB2B_1320.h5")
     YOUNG = 200.0
@@ -371,3 +414,19 @@ def test_stress_field_from_files(test_data_dir: str) -> None:
     # set the d-reference and see that the values are changed
     stress.set_d_reference((42.0, 0.0))
     assert np.all(stress.stress11.values != stress11)
+
+
+@pytest.mark.integration
+def test_stress_field_select_invalid_direction_raises_value_error(test_data_dir: str) -> None:
+    """Test that `StressField.select` rejects an unrecognized direction string."""
+    HB2B_1320_PROJECT = os.path.join(test_data_dir, "HB2B_1320.h5")
+    YOUNG = 200.0
+    POISSON = 0.3
+
+    sample11 = StrainField(HB2B_1320_PROJECT)
+    sample22 = StrainField(HB2B_1320_PROJECT)
+    sample33 = StrainField(HB2B_1320_PROJECT)
+    stress = StressField(sample11, sample22, sample33, YOUNG, POISSON)
+
+    with pytest.raises(ValueError, match="Cannot determine direction type"):
+        stress.select("bogus")

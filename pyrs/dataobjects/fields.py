@@ -1874,8 +1874,8 @@ class Direction(Enum):
                 return Direction.Z
             try:
                 return Direction(str(direction).upper())
-            except KeyError:  # give clearer error message
-                raise KeyError('Cannot determine direction type from "{}"'.format(direction))
+            except ValueError:  # give clearer error message
+                raise ValueError('Cannot determine direction type from "{}"'.format(direction)) from None
 
     @property
     def ii(self) -> str:
