@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from mantid.simpleapi import LoadEventNexus
 from pyrs.core.nexus_conversion import NeXusConvertingApp, DEFAULT_KEEP_LOGS
 from pyrs.core.powder_pattern import ReductionApp
@@ -270,7 +271,12 @@ def test_reduce_data(mask_file_name, filtered_counts, histogram_counts):
     ],
     ids=("HB2B_1017_Masked", "HB2B_1017_NoMask"),
 )
-def test_reduce_method_data(mask_file_name, filtered_counts, histogram_counts, tmp_path):
+def test_reduce_method_data_valid_nexus_writes_diffraction_files(
+    mask_file_name: str | None,
+    filtered_counts: tuple[int, int, int],
+    histogram_counts: tuple[float, float, float],
+    tmp_path: Path,
+) -> None:
     """Verify NeXus converters including counts and sample log values"""
     SUBRUNS = (1, 2, 3)
     CENTERS = (69.99525, 80.0, 97.50225)
