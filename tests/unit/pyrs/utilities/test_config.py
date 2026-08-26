@@ -66,3 +66,38 @@ def test_validate_config_raises_when_both_formats_disabled(default_config, tmp_p
     # Act / Assert
     with pytest.raises(ValueError, match="At least one of nxstress.enable or legacy_io.enable must be true"):
         config_module.validate_config()
+
+
+def test_validate_config_raises_when_nxstress_enable_is_not_bool(default_config, tmp_path):
+    """Test that a non-bool `nxstress.enable` (e.g. a quoted YAML string) is rejected
+    up front, rather than silently passing the truthiness check (`bool("false")` is
+    `True` in Python).
+    """
+    # Arrange
+    import pytest
+
+    import pyrs.utilities.config as config_module
+
+    override_file = tmp_path / "override.yml"
+    override_file.write_text('nxstress:\n  enable: "false"\n')  # quoted -- stays a str, not a bool
+    default_config.loadEnv(str(override_file))
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match='Config\\["nxstress.enable"\\] must be a bool'):
+        config_module.validate_config()
+
+
+def test_validate_config_raises_when_legacy_io_enable_is_not_bool(default_config, tmp_path):
+    """Test that a non-bool `legacy_io.enable` (e.g. an int) is rejected up front."""
+    # Arrange
+    import pytest
+
+    import pyrs.utilities.config as config_module
+
+    override_file = tmp_path / "override.yml"
+    override_file.write_text("legacy_io:\n  enable: 1\n")  # int, not a bool
+    default_config.loadEnv(str(override_file))
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match='Config\\["legacy_io.enable"\\] must be a bool'):
+        config_module.validate_config()
