@@ -72,10 +72,8 @@ def strain_field_samples(test_data_dir: str) -> dict[str, StrainFieldSingle]:
     workspace.set_sample_log("vy", subruns, np.arange(11, 19, dtype=int))
     workspace.set_sample_log("vz", subruns, np.arange(21, 29, dtype=int))
 
-    # call the function
     strain = StrainFieldSingle(hidraworkspace=workspace, peak_collection=peak_collection)
 
-    # test the result
     assert strain
     assert not strain.filenames
     assert len(strain) == subruns.size
