@@ -232,11 +232,8 @@ class TestStrainField:
         """Test that loading a project file with no fitted peaks raises `IOError`."""
         # this project file doesn't have peaks in it
         file_path = os.path.join(test_data_dir, "HB2B_1060_first3_subruns.h5")
-        try:
-            _ = StrainField(file_path)  # noqa F841
-            assert False, "Should not be able to read " + file_path
-        except IOError:
-            pass
+        with pytest.raises(IOError):
+            StrainField(file_path)
 
     @pytest.mark.integration
     def test_strain_field_init_from_file_returns_populated_field(self, test_data_dir: str) -> None:
