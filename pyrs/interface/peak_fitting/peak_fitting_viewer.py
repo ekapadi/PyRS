@@ -13,23 +13,27 @@ view-side collaborators, instantiated with this window as their ``parent``.
 """
 
 import os
+from typing import List, Optional
 
 import numpy as np
 from qtpy import QtGui  # type:ignore
 from qtpy.QtCore import Qt  # type: ignore
 from qtpy.QtGui import QCursor  # type:ignore
-from qtpy.QtWidgets import QApplication, QMainWindow, QMenu, QTableWidgetItem, QVBoxLayout  # type:ignore
+from qtpy.QtWidgets import QApplication, QMainWindow, QMenu, QTableWidgetItem, QVBoxLayout, QWidget  # type:ignore
 
 import pyrs.icons
 import pyrs.interface.gui_helper
-from pyrs.interface.gui_helper import browse_dir, browse_file, parse_integers, pop_message
+from pyrs.interface.gui_helper import browse_dir, browse_file, impose_extension, parse_integers, pop_message
 from pyrs.interface.peak_fitting.fit_table import FitTable
 from pyrs.interface.peak_fitting.gui_utilities import GuiUtilities
+from pyrs.interface.peak_fitting.peak_fitting_crtl import PeakFittingCrtl
+from pyrs.interface.peak_fitting.peak_fitting_model import PeakFittingModel
 from pyrs.interface.ui import qt_util
 from pyrs.interface.ui.diffdataviews import GeneralDiffDataView, PeakFitSetupView
 from pyrs.interface.ui.rstables import FitResultTable
 from pyrs.utilities import get_input_project_file  # type: ignore
 from pyrs.utilities import load_ui  # type: ignore
+from pyrs.utilities.config import Config
 
 # Splitter/icon images are loaded from disk rather than a compiled Qt resource
 # module, since pyrcc-generated modules hard-code a single PyQt major version.
@@ -47,7 +51,9 @@ ANGSTROMS = "Å"
 class PeakFittingViewer(QMainWindow):
     """GUI window for fitting peaks (Model-View-Presenter view component)."""
 
-    def __init__(self, fit_peak_model, fit_peak_ctrl, parent=None):
+    def __init__(
+        self, fit_peak_model: PeakFittingModel, fit_peak_ctrl: PeakFittingCrtl, parent: Optional[QWidget] = None
+    ) -> None:
         """
         Args:
             fit_peak_model: The :class:`PeakFittingModel` instance.
@@ -62,8 +68,8 @@ class PeakFittingViewer(QMainWindow):
         # View-side state
         self.current_hidra_file_name = ""
         self.current_root_statusbar_message = ""
-        self.list_peak_d0 = []
-        self._sample_log_names = list()
+        self.list_peak_d0: List[float] = []
+        self._sample_log_names: List[str] = list()
         self._advanced_fit_dialog = None
 
         # set up UI: load_ui resolves by basename to pyrs/interface/designer/
@@ -113,6 +119,7 @@ class PeakFittingViewer(QMainWindow):
         self.ui.actionQuit.triggered.connect(self.do_quit)
         self.ui.actionSave.triggered.connect(self.save)
         self.ui.actionSaveAs.triggered.connect(self.save_as)
+        self.ui.actionSaveAsNXstress.triggered.connect(self.save_as_nxstress)
         self.ui.pushButton_exportCSV.clicked.connect(self.export_csv)
         # self.ui.actionQuick_Fit_Result_Check.triggered.connect(self.do_make_movie)
         self.ui.lineEdit_subruns_2dplot.returnPressed.connect(self.list_subruns_2dplot_returned)
@@ -205,6 +212,21 @@ class PeakFittingViewer(QMainWindow):
         except AttributeError:
             pass
 
+    def save_as_nxstress(self) -> None:
+        out_file_name = browse_file(
+            self,
+            caption="Choose a file to save fitted peaks to (NXstress)",
+            default_dir=self._model.working_dir,
+            file_filter="NXstress (*.nxs)",
+            save_file=True,
+        )
+
+        try:
+            out_file_name = impose_extension(out_file_name, Config["nxstress.extension"])
+            self._model.save_fit_result(out_file_name)
+        except AttributeError:
+            pass
+
     def load_run_number(self):
         runs = parse_integers(self.ui.lineEdit_expNumber.text())
 
@@ -225,9 +247,9 @@ class PeakFittingViewer(QMainWindow):
         except AttributeError:
             pass
 
-    def browse_hdf(self):
+    def browse_hdf(self) -> None:
         """Browse for a Hidra project HDF file, then load and plot it."""
-        file_filter = "HDF (*.hdf);H5 (*.h5)"
+        file_filter = "HDF (*.hdf);H5 (*.h5);NXstress (*.nxs)"
         hidra_file_name = browse_file(
             self, "HIDRA Project File", os.getcwd(), file_filter, file_list=True, save_file=False
         )
@@ -653,10 +675,13 @@ class PeakFittingViewer(QMainWindow):
     # ------------------------------------------------------------------
     # Misc widget setup and file actions
     # ------------------------------------------------------------------
-    def _init_widgets(self):
+    def _init_widgets(self) -> None:
         """Initialize some widgets."""
-        self.ui.actionSave.setEnabled(True)
-        self.ui.actionSaveAs.setEnabled(True)
+        # Config-driven enablement: setEnabled (not setVisible) -- each action
+        # stays visible, just grayed out, when its own format is disabled.
+        self.ui.actionSave.setEnabled(Config["legacy_io.enable"])
+        self.ui.actionSaveAs.setEnabled(Config["legacy_io.enable"])
+        self.ui.actionSaveAsNXstress.setEnabled(Config["nxstress.enable"])
 
         self.ui.splitter.setStyleSheet(VERTICAL_SPLITTER_SHORT)
         self.ui.splitter_2.setStyleSheet(HORIZONTAL_SPLITTER)
