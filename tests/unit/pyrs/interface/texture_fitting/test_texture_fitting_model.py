@@ -12,6 +12,12 @@ from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingM
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
 
+# Every test here drives TextureFittingModel together with a separate library
+# (NXstress or HidraProjectFile) -- a multi-component workflow, not just one
+# component's own internals -- even though the data involved is synthetic
+# (see CLAUDE.md's Pytest markers policy).
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def texture_model() -> TextureFittingModel:
