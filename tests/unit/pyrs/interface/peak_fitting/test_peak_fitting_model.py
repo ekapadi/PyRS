@@ -15,6 +15,12 @@ from pyrs.interface.peak_fitting.peak_fitting_model import PeakFittingModel
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
 
+# Every test here drives PeakFittingModel together with a separate library
+# (NXstress or HidraProjectFile) and PyRsCore's session registry -- a
+# multi-component workflow, not just one component's own internals -- even
+# though the data involved is synthetic (see CLAUDE.md's Pytest markers policy).
+pytestmark = pytest.mark.integration
+
 
 class _FakeFitSetupView:
     """Minimal stand-in for the Qt fit-setup view -- only the methods

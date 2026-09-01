@@ -161,6 +161,25 @@ Always cover:
 
 Naming: `test_<function_name>_<scenario>_<expected_outcome>`.
 
+**Pytest markers** — apply the correct marker(s) when a test is *written*,
+not as a later audit pass. See `pyproject.toml`'s
+`[tool.pytest.ini_options] markers` for the authoritative definitions.
+- `@pytest.mark.integration` (or a module-level `pytestmark`) for a test
+  that reads/writes real data (`tests/data`, `/HFIR` archive) **or**
+  exercises a multi-component workflow.
+- `@pytest.mark.gui` for a test that constructs or drives a Qt widget.
+- The dividing line for "multi-component": a synthetic in-memory round trip
+  through `tmp_path` that stays inside one component's own public API
+  (e.g. a library's own `write`/`read`) is unit, unmarked — it's testing
+  that component's own correctness. The same round trip called *through* a
+  second component (e.g. a GUI-model class driving that library, or a
+  session-registry hookup between two separate classes) is `integration` —
+  it's testing that the two integrate correctly, regardless of whether the
+  underlying data is real or synthetic.
+- Marker (not file location) is what actually selects the fast tier
+  (`-m "not integration and not gui"`) — a correctly-marked test doesn't
+  need to move directories to be classified correctly.
+
 ## 🔍 Code Review Process
 
 Trigger a review when:
