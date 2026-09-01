@@ -13,18 +13,21 @@ view-side collaborators, instantiated with this window as their ``parent``.
 """
 
 import os
+from typing import List, Optional
 
 import numpy as np
 from qtpy import QtGui  # type:ignore
 from qtpy.QtCore import Qt  # type: ignore
 from qtpy.QtGui import QCursor  # type:ignore
-from qtpy.QtWidgets import QApplication, QMainWindow, QMenu, QTableWidgetItem, QVBoxLayout  # type:ignore
+from qtpy.QtWidgets import QApplication, QMainWindow, QMenu, QTableWidgetItem, QVBoxLayout, QWidget  # type:ignore
 
 import pyrs.icons
 import pyrs.interface.gui_helper
 from pyrs.interface.gui_helper import browse_dir, browse_file, impose_extension, parse_integers, pop_message
 from pyrs.interface.peak_fitting.fit_table import FitTable
 from pyrs.interface.peak_fitting.gui_utilities import GuiUtilities
+from pyrs.interface.peak_fitting.peak_fitting_crtl import PeakFittingCrtl
+from pyrs.interface.peak_fitting.peak_fitting_model import PeakFittingModel
 from pyrs.interface.ui import qt_util
 from pyrs.interface.ui.diffdataviews import GeneralDiffDataView, PeakFitSetupView
 from pyrs.interface.ui.rstables import FitResultTable
@@ -48,7 +51,9 @@ ANGSTROMS = "Å"
 class PeakFittingViewer(QMainWindow):
     """GUI window for fitting peaks (Model-View-Presenter view component)."""
 
-    def __init__(self, fit_peak_model, fit_peak_ctrl, parent=None):
+    def __init__(
+        self, fit_peak_model: PeakFittingModel, fit_peak_ctrl: PeakFittingCrtl, parent: Optional[QWidget] = None
+    ) -> None:
         """
         Args:
             fit_peak_model: The :class:`PeakFittingModel` instance.
@@ -63,8 +68,8 @@ class PeakFittingViewer(QMainWindow):
         # View-side state
         self.current_hidra_file_name = ""
         self.current_root_statusbar_message = ""
-        self.list_peak_d0 = []
-        self._sample_log_names = list()
+        self.list_peak_d0: List[float] = []
+        self._sample_log_names: List[str] = list()
         self._advanced_fit_dialog = None
 
         # set up UI: load_ui resolves by basename to pyrs/interface/designer/
@@ -207,7 +212,7 @@ class PeakFittingViewer(QMainWindow):
         except AttributeError:
             pass
 
-    def save_as_nxstress(self):
+    def save_as_nxstress(self) -> None:
         out_file_name = browse_file(
             self,
             caption="Choose a file to save fitted peaks to (NXstress)",
@@ -242,7 +247,7 @@ class PeakFittingViewer(QMainWindow):
         except AttributeError:
             pass
 
-    def browse_hdf(self):
+    def browse_hdf(self) -> None:
         """Browse for a Hidra project HDF file, then load and plot it."""
         file_filter = "HDF (*.hdf);H5 (*.h5);NXstress (*.nxs)"
         hidra_file_name = browse_file(
@@ -668,7 +673,7 @@ class PeakFittingViewer(QMainWindow):
     # ------------------------------------------------------------------
     # Misc widget setup and file actions
     # ------------------------------------------------------------------
-    def _init_widgets(self):
+    def _init_widgets(self) -> None:
         """Initialize some widgets."""
         # Config-driven enablement: setEnabled (not setVisible) -- each action
         # stays visible, just grayed out, when its own format is disabled.

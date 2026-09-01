@@ -4,7 +4,7 @@ against a None fitted spectrum after an NXstress load.
 """
 
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import pytest
 
@@ -20,17 +20,17 @@ class _FakeFitSetupView:
     """Minimal stand-in for the Qt fit-setup view -- only the methods
     `plot_diff_and_fitted_data` actually calls, no real widget construction."""
 
-    def __init__(self):
-        self.experiment_calls = []
-        self.fitted_calls = []
+    def __init__(self) -> None:
+        self.experiment_calls: list = []
+        self.fitted_calls: list = []
 
-    def plot_experiment_data(self, diff_data_set, data_reference):
+    def plot_experiment_data(self, diff_data_set: Any, data_reference: str) -> None:
         self.experiment_calls.append((diff_data_set, data_reference))
 
-    def plot_fitted_data(self, x_array, y_array):
+    def plot_fitted_data(self, x_array: Any, y_array: Any) -> None:
         self.fitted_calls.append((x_array, y_array))
 
-    def plot_fitting_diff_data(self, x_axis, y_axis):
+    def plot_fitting_diff_data(self, x_axis: Any, y_axis: Any) -> None:
         pass
 
 
@@ -40,13 +40,13 @@ def peak_model() -> PeakFittingModel:
 
 
 class TestPeakFittingModelNXstressRoundtrip:
-    def test_save_and_load_nxstress_roundtrip(
+    def test_save_fit_result_nxstress_roundtrip_matches_workspace_and_peaks(
         self,
         peak_model: PeakFittingModel,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
         n_subrun = len(ws.get_sub_runs())
         peak = minimal_PeakCollection(N_subrun=n_subrun)
@@ -74,17 +74,19 @@ class TestPeakFittingModelNXstressRoundtrip:
         assert reloaded.fit_result.difference is None
         assert len(reloaded.fit_result.peakcollections) == 1
 
-    def test_load_nxstress_rejects_multiple_files(self, peak_model: PeakFittingModel, tmp_path: Path):
+    def test_load_hidra_project_multiple_nxstress_files_raises_value_error(
+        self, peak_model: PeakFittingModel, tmp_path: Path
+    ) -> None:
         with pytest.raises(ValueError):
             peak_model.load_hidra_project([str(tmp_path / "a.nxs"), str(tmp_path / "b.nxs")])
 
-    def test_load_nxstress_registers_workspace_for_plotting(
+    def test_load_hidra_project_nxstress_get_diffraction_data_succeeds(
         self,
         peak_model: PeakFittingModel,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         # Verifies the fix for the gap where an NXstress-loaded session left
         # PyRsCore's session registry empty -- get_diffraction_data (and therefore
         # any sub-run plotting) would otherwise raise immediately after a load.
@@ -107,13 +109,13 @@ class TestPeakFittingModelNXstressRoundtrip:
         diff_data_set = reloaded.get_diffraction_data(sub_run=1, mask=None)
         assert diff_data_set is not None
 
-    def test_plot_diff_and_fitted_data_does_not_raise_when_fitted_is_none(
+    def test_plot_diff_and_fitted_data_fitted_none_does_not_raise(
         self,
         peak_model: PeakFittingModel,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
         n_subrun = len(ws.get_sub_runs())
         peak = minimal_PeakCollection(N_subrun=n_subrun)
@@ -133,21 +135,22 @@ class TestPeakFittingModelNXstressRoundtrip:
         fake_view = _FakeFitSetupView()
 
         # Previously crashed unconditionally on fit_result.fitted.readX(...).
-        crtl.plot_diff_and_fitted_data(fake_view, sub_run_number=1)
+        # _FakeFitSetupView is a duck-typed stub, not a PeakFitSetupView subclass.
+        crtl.plot_diff_and_fitted_data(fake_view, sub_run_number=1)  # type: ignore[arg-type]
 
         assert len(fake_view.experiment_calls) == 1
         assert len(fake_view.fitted_calls) == 0
 
 
 class TestPeakFittingModelSuffixRouting:
-    def test_h5_suffix_still_routes_through_hidraprojectfile(
+    def test_save_fit_result_h5_suffix_routes_through_hidraprojectfile(
         self,
         peak_model: PeakFittingModel,
         write_minimal_h5_project: Callable[..., Path],
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
         project_path = write_minimal_h5_project(ws, filename="source.h5")
 

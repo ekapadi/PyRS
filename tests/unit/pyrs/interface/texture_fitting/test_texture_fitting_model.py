@@ -35,7 +35,7 @@ class TestTextureFittingModelH5SaveRegression:
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True)
         project_path = write_minimal_h5_project(ws, filename="source.h5")
 
@@ -57,7 +57,7 @@ class TestTextureFittingModelH5SaveRegression:
         write_minimal_h5_project: Callable[..., Path],
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
-    ):
+    ) -> None:
         # Suffix-routing regression: an .h5 out_file_name must still go through
         # HidraProjectFile, not NXstress -- exercised implicitly here since no
         # NXstress import/call would succeed against this pre-existing file layout.
@@ -74,13 +74,13 @@ class TestTextureFittingModelH5SaveRegression:
 
 
 class TestTextureFittingModelNXstressRoundtrip:
-    def test_save_and_load_nxstress_roundtrip(
+    def test_save_fit_result_nxstress_roundtrip_matches_workspace_and_peaks(
         self,
         texture_model: TextureFittingModel,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
         n_subrun = len(ws.get_sub_runs())
         peak = minimal_PeakCollection(N_subrun=n_subrun)

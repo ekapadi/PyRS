@@ -11,10 +11,14 @@ from qtpy.QtCore import Qt  # type: ignore
 
 from pyrs.interface.ui.diffdataviews import PeakFitSetupView, GeneralDiffDataView
 from pyrs.interface.gui_helper import impose_extension, pop_message
+from pyrs.interface.texture_fitting.texture_fitting_crtl import TextureFittingCrtl
+from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingModel
 from pyrs.utilities import get_input_project_file  # type: ignore
 from pyrs.utilities.config import Config
 
 import numpy as np
+
+from typing import Optional
 
 # import traceback
 import os
@@ -26,7 +30,12 @@ MICROSTRAIN = "\u00b5strain"
 
 
 class FileLoad(QWidget):
-    def __init__(self, name=None, fileType="HidraProjectFile (*.h5);;NXstress (*.nxs);;All Files (*)", parent=None):
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        fileType: str = "HidraProjectFile (*.h5);;NXstress (*.nxs);;All Files (*)",
+        parent: Optional[QWidget] = None,
+    ) -> None:
         self._parent = parent
         super().__init__(parent)
         self.name = name
@@ -855,7 +864,12 @@ class FitTable:
 
 
 class TextureFittingViewer(QMainWindow):
-    def __init__(self, fit_peak_model, fit_peak_ctrl, parent=None):
+    def __init__(
+        self,
+        fit_peak_model: TextureFittingModel,
+        fit_peak_ctrl: TextureFittingCrtl,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         self._model = fit_peak_model
         self._ctrl = fit_peak_ctrl
         self._project_file = None
@@ -1079,13 +1093,13 @@ class TextureFittingViewer(QMainWindow):
         if self._project_file is not None:
             self.controller.save(self._project_file, self._parent.fit_summary.fit_table_operator.fit_result)
 
-    def saveas(self):
+    def saveas(self) -> None:
         filename, _ = QFileDialog.getSaveFileName(self, "Save HidraWorkspace", "", "HDF5 (*.h5);;All Files (*)")
         if filename:
             filename = impose_extension(filename, Config["legacy_io.extension"])
             self.controller.save(filename, self._parent.fit_summary.fit_table_operator.fit_result)
 
-    def save_as_nxstress(self):
+    def save_as_nxstress(self) -> None:
         filename, _ = QFileDialog.getSaveFileName(self, "Save HidraWorkspace (NXstress)", "", "NXstress (*.nxs)")
         if filename:
             filename = impose_extension(filename, Config["nxstress.extension"])

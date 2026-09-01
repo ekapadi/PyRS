@@ -2,11 +2,13 @@ import json
 import traceback
 from pathlib import Path
 from shutil import copyfile
+from typing import Optional
 import numpy as np
 import os
 
 # from pyrs.dataobjects import HidraConstants  # type: ignore
 from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ignore
+from pyrs.core.pyrscore import PyRsCore
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.core.summary_generator import SummaryGenerator
 from pyrs.utilities.NXstress.NXstress import NXstress
@@ -23,21 +25,21 @@ class TextureFittingModel(QObject):
     propertyUpdated = Signal(str)
     failureMsg = Signal(str, str, str)
 
-    def __init__(self, peak_fit_core):
+    def __init__(self, peak_fit_core: Optional[PyRsCore]) -> None:
         super().__init__()
         self._peak_fit = peak_fit_core
-        self.ws = None
+        self.ws: Optional[HidraWorkspace] = None
         self.peak_fit_engine = None
         self._polefigureinterface = None
-        self._run_number = None
-        self._curr_file_name = None
-        self.fit_result = None
+        self._run_number: Optional[int] = None
+        self._curr_file_name: Optional[str] = None
+        self.fit_result: Optional[FitResult] = None
 
     @property
     def runnumber(self):
         return self._run_number
 
-    def load_hidra_project_file(self, filename):
+    def load_hidra_project_file(self, filename: str) -> None:
         try:
             if Path(filename).suffix == ".nxs":
                 # NXstress round trip: read back into a fresh HidraWorkspace directly,
@@ -47,7 +49,7 @@ class TextureFittingModel(QObject):
                 # deliberately isn't wired into the fit table / plot overlay yet
                 # (Phase-1 scope: model/NXstress round trip only, not full
                 # interactive re-use of a loaded .nxs file).
-                with NXstress(filename, "r") as nx:
+                with NXstress(Path(filename), "r") as nx:
                     self.ws, peaks = nx.read()
                 self.fit_result = FitResult(peakcollections=peaks, fitted=None, difference=None) if peaks else None
             else:
@@ -77,7 +79,11 @@ class TextureFittingModel(QObject):
             self.failureMsg.emit(
                 f"Failed to load {filename}. Check that this is a Hidra Project File", str(e), traceback.format_exc()
             )
-            return None, dict()
+            # Was `return None, dict()` -- confirmed via grep that every caller
+            # (texture_fitting_crtl.py, strain-stress/integration/unit tests)
+            # discards this method's return value entirely, so the tuple was
+            # already vestigial; simplified to match the `-> None` signature.
+            return
 
     def to_json(self, filename, fit_range_table):
         fileParts = os.path.splitext(filename)
@@ -166,7 +172,7 @@ class TextureFittingModel(QObject):
 
         return
 
-    def save_fit_result(self, out_file_name="", fit_result=None):
+    def save_fit_result(self, out_file_name: str = "", fit_result: Optional[FitResult] = None) -> None:
         """Save the fit result, including a copy of the rest of the file if it does not exist at the specified path.
 
         If out_file_name is empty or if it matches the parent's current file, this updates the file.
@@ -185,7 +191,8 @@ class TextureFittingModel(QObject):
             # No copy-then-patch step here, unlike the .h5 branch below -- there is
             # no "existing .nxs file to patch" concept; NXstress always writes fresh
             # from the in-memory workspace + fit result.
-            with NXstress(out_file_name, "w") as nx:
+            assert self.ws is not None, "save_fit_result called before a workspace was set"
+            with NXstress(Path(out_file_name), "w") as nx:
                 nx.write(self.ws, fit_result.peakcollections)
             return
 
@@ -198,9 +205,11 @@ class TextureFittingModel(QObject):
         # and fixed as a prerequisite for the NXstress hookup above, since this is
         # the exact method that hookup needed to extend.
         if out_file_name is not None and self._curr_file_name != out_file_name:
+            assert self._curr_file_name is not None, "save_fit_result called before a project was loaded"
             copyfile(self._curr_file_name, out_file_name)
             current_project_file = out_file_name
         else:
+            assert self._curr_file_name is not None, "save_fit_result called before a project was loaded"
             current_project_file = self._curr_file_name
 
         project_h5_file = HidraProjectFile(current_project_file, mode=HidraProjectFileMode.READWRITE)
