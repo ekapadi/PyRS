@@ -16,6 +16,7 @@ unify them without also rewriting the peak-fitting data path.
 
 import json
 import os
+from pathlib import Path
 from shutil import copyfile
 
 from qtpy.QtCore import QObject, Signal  # type:ignore
@@ -23,7 +24,9 @@ from qtpy.QtCore import QObject, Signal  # type:ignore
 from pyrs.core import MonoSetting  # type: ignore
 from pyrs.core.summary_generator import SummaryGenerator
 from pyrs.peaks import FitEngineFactory as PeakFitEngineFactory  # type: ignore
+from pyrs.peaks.peak_fit_engine import FitResult
 from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ignore
+from pyrs.utilities.NXstress.NXstress import NXstress
 
 
 class PeakFittingModel(QObject):
@@ -77,7 +80,35 @@ class PeakFittingModel(QObject):
 
         Raises:
             RuntimeError, TypeError: If the files cannot be loaded.
+            ValueError: If an NXstress (``.nxs``) file is given together with
+                additional files -- multi-file append is not supported for
+                NXstress in Phase 1.
         """
+        project_files_list = project_files if type(project_files) is list else [project_files]
+
+        if Path(project_files_list[0]).suffix == ".nxs":
+            if len(project_files_list) != 1:
+                raise ValueError("Loading multiple project files is not supported for NXstress (.nxs) format")
+
+            nxs_file = project_files_list[0]
+            with NXstress(nxs_file, "r") as nx:
+                ws, peaks = nx.read()
+
+            self._set_up_project_name(project_files_list)
+            self._curr_file_name = nxs_file
+            self.hidra_workspace = ws
+            # `fitted`/`difference` stay None -- NXstress doesn't yet reconstruct the
+            # fitted model spectrum on read (Phase-1 documented limitation); see the
+            # guard in PeakFittingCrtl.plot_diff_and_fitted_data.
+            self.fit_result = FitResult(peakcollections=peaks, fitted=None, difference=None) if peaks else None
+            # Register the in-memory workspace with PyRsCore's session registry so
+            # sub-run browsing / raw-diffraction plotting work immediately, exactly
+            # as they do after an .h5 load (which populates that registry via its
+            # own file-based load path instead).
+            self._core.register_hidra_workspace(self._project_name, ws)
+
+            return ws
+
         self._set_up_project_name(project_files)
         ws = self._load_multiple_file(project_files)
 
@@ -185,6 +216,14 @@ class PeakFittingModel(QObject):
 
         if type(out_file_name) is list:
             out_file_name = out_file_name[0]
+
+        if Path(out_file_name).suffix == ".nxs":
+            # No copy-then-patch step here, unlike the .h5 branch below -- there is
+            # no "existing .nxs file to patch" concept; NXstress always writes fresh
+            # from the in-memory workspace + fit result.
+            with NXstress(out_file_name, "w") as nx:
+                nx.write(self.hidra_workspace, fit_result.peakcollections)
+            return
 
         if out_file_name is not None and self._curr_file_name != out_file_name:
             copyfile(self._curr_file_name, out_file_name)

@@ -22,7 +22,7 @@ from qtpy.QtWidgets import QApplication, QMainWindow, QMenu, QTableWidgetItem, Q
 
 import pyrs.icons
 import pyrs.interface.gui_helper
-from pyrs.interface.gui_helper import browse_dir, browse_file, parse_integers, pop_message
+from pyrs.interface.gui_helper import browse_dir, browse_file, impose_extension, parse_integers, pop_message
 from pyrs.interface.peak_fitting.fit_table import FitTable
 from pyrs.interface.peak_fitting.gui_utilities import GuiUtilities
 from pyrs.interface.ui import qt_util
@@ -30,6 +30,7 @@ from pyrs.interface.ui.diffdataviews import GeneralDiffDataView, PeakFitSetupVie
 from pyrs.interface.ui.rstables import FitResultTable
 from pyrs.utilities import get_input_project_file  # type: ignore
 from pyrs.utilities import load_ui  # type: ignore
+from pyrs.utilities.config import Config
 
 # Splitter/icon images are loaded from disk rather than a compiled Qt resource
 # module, since pyrcc-generated modules hard-code a single PyQt major version.
@@ -113,6 +114,7 @@ class PeakFittingViewer(QMainWindow):
         self.ui.actionQuit.triggered.connect(self.do_quit)
         self.ui.actionSave.triggered.connect(self.save)
         self.ui.actionSaveAs.triggered.connect(self.save_as)
+        self.ui.actionSaveAsNXstress.triggered.connect(self.save_as_nxstress)
         self.ui.pushButton_exportCSV.clicked.connect(self.export_csv)
         # self.ui.actionQuick_Fit_Result_Check.triggered.connect(self.do_make_movie)
         self.ui.lineEdit_subruns_2dplot.returnPressed.connect(self.list_subruns_2dplot_returned)
@@ -205,6 +207,21 @@ class PeakFittingViewer(QMainWindow):
         except AttributeError:
             pass
 
+    def save_as_nxstress(self):
+        out_file_name = browse_file(
+            self,
+            caption="Choose a file to save fitted peaks to (NXstress)",
+            default_dir=self._model.working_dir,
+            file_filter="NXstress (*.nxs)",
+            save_file=True,
+        )
+
+        try:
+            out_file_name = impose_extension(out_file_name, Config["nxstress.extension"])
+            self._model.save_fit_result(out_file_name)
+        except AttributeError:
+            pass
+
     def load_run_number(self):
         runs = parse_integers(self.ui.lineEdit_expNumber.text())
 
@@ -227,7 +244,7 @@ class PeakFittingViewer(QMainWindow):
 
     def browse_hdf(self):
         """Browse for a Hidra project HDF file, then load and plot it."""
-        file_filter = "HDF (*.hdf);H5 (*.h5)"
+        file_filter = "HDF (*.hdf);H5 (*.h5);NXstress (*.nxs)"
         hidra_file_name = browse_file(
             self, "HIDRA Project File", os.getcwd(), file_filter, file_list=True, save_file=False
         )
@@ -653,8 +670,11 @@ class PeakFittingViewer(QMainWindow):
     # ------------------------------------------------------------------
     def _init_widgets(self):
         """Initialize some widgets."""
-        self.ui.actionSave.setEnabled(True)
-        self.ui.actionSaveAs.setEnabled(True)
+        # Config-driven enablement: setEnabled (not setVisible) -- each action
+        # stays visible, just grayed out, when its own format is disabled.
+        self.ui.actionSave.setEnabled(Config["legacy_io.enable"])
+        self.ui.actionSaveAs.setEnabled(Config["legacy_io.enable"])
+        self.ui.actionSaveAsNXstress.setEnabled(Config["nxstress.enable"])
 
         self.ui.splitter.setStyleSheet(VERTICAL_SPLITTER_SHORT)
         self.ui.splitter_2.setStyleSheet(HORIZONTAL_SPLITTER)

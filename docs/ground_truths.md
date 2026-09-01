@@ -607,3 +607,55 @@ the pipeline where the new data is available at all — extending
 calibration path doesn't exist yet at that call site. The right fix
 needed a new write path anchored to where the data is actually known
 (`save_diffraction_data`), not a bigger version of the existing one.
+
+## NXstress GUI hookup (spec 02): context-manager requirement, session
+registration, and `Config`-import `HOME` side effect (2026-09)
+
+Wiring `NXstress` I/O into `PeakFittingViewer`/`TextureFittingViewer`
+(`pyrs/interface/peak_fitting/`, `pyrs/interface/texture_fitting/`) surfaced
+three things worth recording for the next NXstress hookup (spec 03 onward).
+
+**`NXstress` must always be used as a context manager.** `NXstress.write()`/
+`.read()` (`pyrs/utilities/NXstress/NXstress.py`) both raise `RuntimeError`
+unless entered via `with NXstress(path, mode) as nx: nx.write(...)` /
+`nx.read()`. There is no bare `NXstress(path, mode).write(...)` form, even
+though it appears that way in the original phase-plan pseudocode.
+
+**An NXstress-loaded `PeakFittingModel` session needs explicit registration
+with `PyRsCore`'s session dict, or plotting crashes.** `PeakFittingCrtl`'s
+plotting path routes through `PyRsCore._reduction_service` (`HB2BReductionManager`)
+`self._session_dict[project_name]`, populated today only by the `.h5` load
+path's `init_session(project_name)` (no workspace) followed by its own
+file-based load. Simply setting `self.hidra_workspace` after an `NXstress.read()`
+leaves that registry empty and the first plot attempt raises `KeyError`.
+Fix: `HB2BReductionManager.init_session(session_name, hidra_ws=...)`
+(`pyrs/core/reduction_manager.py`) already accepts a pre-built workspace —
+wrapped as `PyRsCore.register_hidra_workspace(project_name, hidra_ws)`
+(`pyrs/core/pyrscore.py`) and called from `PeakFittingModel.load_hidra_project`'s
+`.nxs` branch. `TextureFittingModel` has no equivalent registry (it holds a
+raw `HidraWorkspace` directly), so this doesn't apply there.
+
+**Importing `pyrs.utilities.config` writes to the real `$HOME` at import
+time, not lazily.** `neutrons_standard.Config` is a process-wide singleton
+constructed at module-import time (`Config = _Config()` in the installed
+`neutrons_standard` package), and its `__init__` unconditionally calls
+`reload()` → `persistBackup()`, which writes `~/.pyrs/application.yml.bak` to
+whatever `HOME` is set at that moment — confirmed by reading the installed
+package directly, not inferred. Before this spec, only NXstress-specific
+tests imported `pyrs.utilities.config`, always behind the `default_config`
+fixture (`HOME` → `tmp_path`). Once a production module imports it (as
+`peak_fitting_model.py`/`texture_fitting_model.py` now do), *any* test that
+imports that module — including pre-existing GUI tests with no such
+isolation — transitively imports it too, and pytest imports test modules
+during collection, *before* any fixture (even autouse) runs, so a
+fixture-based guard cannot intercept whichever test file's collection
+happens to trigger the first import. Fixed with a one-time, narrowly-scoped
+sandbox at the top of `tests/conftest.py`
+(`_presandbox_neutrons_standard_config_home`): redirect `HOME` to a throwaway
+directory, import `pyrs.utilities.config` once, restore the real `HOME`
+immediately after — not a session-wide `HOME` remap, which would risk
+breaking Mantid/Qt/matplotlib config-dir assumptions elsewhere in this
+GUI+scientific-computing suite. Any new production module that starts
+importing `pyrs.utilities.config` for the first time doesn't need any
+additional change — this sandbox already covers the first-import moment
+regardless of which module triggers it.
