@@ -188,7 +188,7 @@ def test_texture_fitting_viewer(texture_fitting_window):
     window.hide()
 
 
-def test_nxstress_action_enablement(texture_fitting_window):
+def test_init_menu_actions_nxstress_enabled_legacy_disabled_matches_config(texture_fitting_window: tuple) -> None:
     r"""
     Confirm the new "Save as NXstress..." action exists, is wired, and its
     enabled state matches the shipped default config (nxstress.enable=True).

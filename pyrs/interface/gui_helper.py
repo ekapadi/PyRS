@@ -5,7 +5,7 @@ from pyrs.utilities import checkdatatypes
 from qtpy.QtWidgets import QLineEdit, QFileDialog, QMessageBox, QComboBox  # type:ignore
 
 
-def impose_extension(filename, extension):
+def impose_extension(filename: str, extension: str) -> str:
     """Force filename's suffix to extension (e.g. '.nxs'), regardless of what a
     user typed into a save dialog.
 

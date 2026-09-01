@@ -18,6 +18,7 @@ import numpy as np
 from pyrs.dataobjects import HidraConstants  # type: ignore
 from pyrs.interface.peak_fitting.config import LIST_AXIS_TO_PLOT
 from pyrs.interface.peak_fitting.config import fit_dict as FIT_DICT
+from pyrs.interface.ui.diffdataviews import PeakFitSetupView
 from pyrs.interface.utilities.plot_data_preparer import prepare_3d_plot_data
 
 
@@ -107,7 +108,7 @@ class PeakFittingCrtl:
     # ------------------------------------------------------------------
     # Diffraction-pattern plotting (was peak_fitting/plot.py)
     # ------------------------------------------------------------------
-    def plot_diff_and_fitted_data(self, fit_setup_view, sub_run_number):
+    def plot_diff_and_fitted_data(self, fit_setup_view: PeakFitSetupView, sub_run_number: int) -> None:
         """Plot one sub-run's experimental data and, if present, its fit."""
         diff_data_set = self._model.get_diffraction_data(sub_run=sub_run_number, mask=None)
         fit_setup_view.plot_experiment_data(

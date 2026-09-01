@@ -23,12 +23,12 @@ pytestmark = pytest.mark.integration
 
 
 class TestPeakFittingViewerRoundtrip:
-    def test_nxstress_roundtrip(
+    def test_save_fit_result_nxstress_roundtrip_matches_workspace_and_peaks(
         self,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
         n_subrun = len(ws.get_sub_runs())
         peaks = [
@@ -53,13 +53,13 @@ class TestPeakFittingViewerRoundtrip:
         reloaded_tags = sorted(p.peak_tag for p in reloaded.fit_result.peakcollections)
         assert reloaded_tags == sorted(p.peak_tag for p in peaks)
 
-    def test_h5_suffix_routes_through_hidraprojectfile(
+    def test_save_fit_result_h5_suffix_routes_through_hidraprojectfile(
         self,
         write_minimal_h5_project: Callable[..., Path],
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True)
         project_path = write_minimal_h5_project(ws, filename="source.h5")
 
@@ -79,12 +79,12 @@ class TestPeakFittingViewerRoundtrip:
 
 
 class TestTextureFittingViewerRoundtrip:
-    def test_nxstress_roundtrip(
+    def test_save_fit_result_nxstress_roundtrip_matches_workspace_and_peaks(
         self,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
         n_subrun = len(ws.get_sub_runs())
         peaks = [
@@ -103,18 +103,20 @@ class TestTextureFittingViewerRoundtrip:
         reloaded = TextureFittingModel(None)
         reloaded.load_hidra_project_file(str(out_path))
 
+        assert reloaded.ws is not None
+        assert reloaded.fit_result is not None
         assert len(reloaded.ws.get_sub_runs()) == n_subrun
         assert len(reloaded.fit_result.peakcollections) == len(peaks)
         reloaded_tags = sorted(p.peak_tag for p in reloaded.fit_result.peakcollections)
         assert reloaded_tags == sorted(p.peak_tag for p in peaks)
 
-    def test_h5_suffix_routes_through_hidraprojectfile(
+    def test_save_fit_result_h5_suffix_routes_through_hidraprojectfile(
         self,
         write_minimal_h5_project: Callable[..., Path],
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         minimal_PeakCollection: Callable[..., PeakCollection],
         tmp_path: Path,
-    ):
+    ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True)
         project_path = write_minimal_h5_project(ws, filename="source.h5")
 

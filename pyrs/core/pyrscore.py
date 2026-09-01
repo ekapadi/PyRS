@@ -5,6 +5,7 @@ from pyrs.utilities import file_util
 from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ignore
 from pyrs.core import reduction_manager
 from pyrs.core import polefigurecalculator
+from pyrs.core.workspaces import HidraWorkspace
 import os
 import numpy
 
@@ -205,7 +206,7 @@ class PyRsCore:
 
         return ws
 
-    def register_hidra_workspace(self, project_name, hidra_ws):
+    def register_hidra_workspace(self, project_name: str, hidra_ws: HidraWorkspace) -> None:
         """Register an already-built HidraWorkspace as a session's data source.
 
         Used by non-HDF5 loaders (e.g. NXstress) that construct a HidraWorkspace

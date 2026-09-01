@@ -225,7 +225,7 @@ def test_peak_selection(tmpdir, fit_peaks_window):
     qtbot.wait(wait)
 
 
-def test_nxstress_action_enablement(fit_peaks_window):
+def test_init_widgets_nxstress_and_legacy_action_enablement_matches_config(fit_peaks_window: tuple) -> None:
     r"""
     Confirm the new "Save as NXstress..." action exists, is wired, and its
     enabled state (set in _init_widgets) matches the shipped default config
