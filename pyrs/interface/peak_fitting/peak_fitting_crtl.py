@@ -115,7 +115,11 @@ class PeakFittingCrtl:
         )
 
         fit_result = self._model.fit_result
-        if fit_result:
+        # `fitted`/`difference` are None after an NXstress (.nxs) load -- PyRS
+        # doesn't yet reconstruct the fitted spectrum on read (Phase-1 documented
+        # limitation, closed in a later phase). Without this guard, browsing
+        # sub-runs right after such a load would crash on `.readX`/`.readY` below.
+        if fit_result and fit_result.fitted is not None:
             sub_run_index = int(fit_result.peakcollections[0].sub_runs.get_indices(sub_run_number)[0])
 
             x_array = fit_result.fitted.readX(sub_run_index)

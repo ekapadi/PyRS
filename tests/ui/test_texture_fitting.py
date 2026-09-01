@@ -186,3 +186,28 @@ def test_texture_fitting_viewer(texture_fitting_window):
     qtbot.keyClick(window.plot_select.out_of_plane, QtCore.Qt.Key_Down)
     # qtbot.wait(plot_wait)
     window.hide()
+
+
+def test_nxstress_action_enablement(texture_fitting_window):
+    r"""
+    Confirm the new "Save as NXstress..." action exists, is wired, and its
+    enabled state matches the shipped default config (nxstress.enable=True).
+    The legacy Save/Save As actions are, by design, left permanently disabled
+    here regardless of config -- see texture_fitting_viewer.py's __init__ for
+    why. Reuses the session-scoped `texture_fitting_window` fixture rather than
+    constructing a second window with a different Config override, for the same
+    segfault-avoidance reason documented on the fixture above.
+    """
+    window, _qtbot = texture_fitting_window
+
+    from pyrs.utilities.config import Config
+
+    assert hasattr(window, "saveAsNXstressAction")
+    assert window.saveAsNXstressAction.isVisible()
+    assert window.saveAsNXstressAction.isEnabled() == Config["nxstress.enable"]
+
+    # Legacy Save/Save As: always disabled here, independent of config.
+    assert window.saveAction.isVisible()
+    assert window.saveAction.isEnabled() is False
+    assert window.saveAsAction.isVisible()
+    assert window.saveAsAction.isEnabled() is False

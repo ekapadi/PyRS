@@ -1,6 +1,19 @@
 # a collection of helper methdos for GUI
+from pathlib import Path
+
 from pyrs.utilities import checkdatatypes
 from qtpy.QtWidgets import QLineEdit, QFileDialog, QMessageBox, QComboBox  # type:ignore
+
+
+def impose_extension(filename, extension):
+    """Force filename's suffix to extension (e.g. '.nxs'), regardless of what a
+    user typed into a save dialog.
+
+    Never lets a user pick a different extension than the format actually being
+    written -- each save action imposes its own output format's configured
+    extension unconditionally.
+    """
+    return str(Path(filename).with_suffix(extension))
 
 
 def browse_dir(parent, caption, default_dir):

@@ -224,4 +224,29 @@ def test_peak_selection(tmpdir, fit_peaks_window):
     qtbot.mouseRelease(canvas, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, QtCore.QPoint(int(end_x2), int(end_y2)))
     qtbot.wait(wait)
 
+
+def test_nxstress_action_enablement(fit_peaks_window):
+    r"""
+    Confirm the new "Save as NXstress..." action exists, is wired, and its
+    enabled state (set in _init_widgets) matches the shipped default config
+    (nxstress.enable / legacy_io.enable both True). This intentionally reuses
+    the session-scoped `fit_peaks_window` fixture rather than constructing a
+    second FitPeaksWindow with a different Config override -- constructing this
+    window with function scope is documented (see the fixture above) to cause
+    segfaults, so a "flip the config, rebuild the window, assert disabled"
+    variant is not attempted here.
+    """
+    window, _qtbot = fit_peaks_window
+
+    from pyrs.utilities.config import Config
+
+    assert hasattr(window.ui, "actionSaveAsNXstress")
+    assert window.ui.actionSaveAsNXstress.isVisible()
+    assert window.ui.actionSaveAsNXstress.isEnabled() == Config["nxstress.enable"]
+
+    assert window.ui.actionSave.isVisible()
+    assert window.ui.actionSave.isEnabled() == Config["legacy_io.enable"]
+    assert window.ui.actionSaveAs.isVisible()
+    assert window.ui.actionSaveAs.isEnabled() == Config["legacy_io.enable"]
+
     window.hide()

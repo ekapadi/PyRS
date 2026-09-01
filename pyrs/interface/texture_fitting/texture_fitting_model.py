@@ -1,5 +1,6 @@
 import json
 import traceback
+from pathlib import Path
 from shutil import copyfile
 import numpy as np
 import os
@@ -8,9 +9,11 @@ import os
 from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ignore
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.core.summary_generator import SummaryGenerator
+from pyrs.utilities.NXstress.NXstress import NXstress
 
 # from pyrs.interface.gui_helper import pop_message
 from pyrs.peaks import FitEngineFactory as PeakFitEngineFactory  # type: ignore
+from pyrs.peaks.peak_fit_engine import FitResult
 from pyrs.core.polefigurecalculator import PoleFigureCalculator
 from qtpy.QtWidgets import QTableWidgetItem  # type:ignore
 from qtpy.QtCore import Signal, QObject  # type:ignore
@@ -27,6 +30,8 @@ class TextureFittingModel(QObject):
         self.peak_fit_engine = None
         self._polefigureinterface = None
         self._run_number = None
+        self._curr_file_name = None
+        self.fit_result = None
 
     @property
     def runnumber(self):
@@ -34,12 +39,35 @@ class TextureFittingModel(QObject):
 
     def load_hidra_project_file(self, filename):
         try:
-            source_project = HidraProjectFile(filename, mode=HidraProjectFileMode.READONLY)
-            self.ws = HidraWorkspace(filename)
-            self.ws.load_hidra_project(source_project, False, True)
-            self.sub_runs = np.array(self.ws.get_sub_runs())
+            if Path(filename).suffix == ".nxs":
+                # NXstress round trip: read back into a fresh HidraWorkspace directly,
+                # bypassing HidraProjectFile entirely. self.fit_result is populated
+                # here (unlike the .h5 branch below, which never sets it) purely so
+                # round-trip tests can assert peak-parameter equality -- it
+                # deliberately isn't wired into the fit table / plot overlay yet
+                # (Phase-1 scope: model/NXstress round trip only, not full
+                # interactive re-use of a loaded .nxs file).
+                with NXstress(filename, "r") as nx:
+                    self.ws, peaks = nx.read()
+                self.fit_result = FitResult(peakcollections=peaks, fitted=None, difference=None) if peaks else None
+            else:
+                source_project = HidraProjectFile(filename, mode=HidraProjectFileMode.READONLY)
+                self.ws = HidraWorkspace(filename)
+                self.ws.load_hidra_project(source_project, False, True)
+                # Pre-existing resource leak, fixed alongside the other prerequisite
+                # bugs above: this handle was never closed, so a later
+                # save_fit_result(out_file_name == filename) would fail to reopen the
+                # same file in READWRITE mode ("file is already open for read-only").
+                # `load_hidra_project` reads eagerly, so closing here is safe --
+                # matches the established pattern elsewhere (e.g.
+                # PyRsCore.load_hidra_project / PeakFittingModel._load_multiple_file).
+                source_project.close()
+                self.fit_result = None
 
-            for part in filename.split("/")[-1].replace(".h5", "").split("_"):
+            self.sub_runs = np.array(self.ws.get_sub_runs())
+            self._curr_file_name = filename
+
+            for part in Path(filename).stem.split("_"):
                 try:
                     self._run_number = int(part)
                 except ValueError:
@@ -153,11 +181,27 @@ class TextureFittingModel(QObject):
         if fit_result is None:
             return
 
-        if out_file_name is not None and self.parent._curr_file_name != out_file_name:
-            copyfile(self.parent._curr_file_name, out_file_name)
+        if Path(out_file_name).suffix == ".nxs":
+            # No copy-then-patch step here, unlike the .h5 branch below -- there is
+            # no "existing .nxs file to patch" concept; NXstress always writes fresh
+            # from the in-memory workspace + fit result.
+            with NXstress(out_file_name, "w") as nx:
+                nx.write(self.ws, fit_result.peakcollections)
+            return
+
+        # NOTE: this branch previously referenced `self.parent._curr_file_name`,
+        # but TextureFittingModel is never constructed with a `parent` attribute
+        # (`self.parent` was never defined anywhere in this class) -- calling this
+        # method raised AttributeError unconditionally. Fixed by using this model's
+        # own `self._curr_file_name` (set in `load_hidra_project_file`), mirroring
+        # `PeakFittingModel`'s already-working equivalent. Pre-existing bug, found
+        # and fixed as a prerequisite for the NXstress hookup above, since this is
+        # the exact method that hookup needed to extend.
+        if out_file_name is not None and self._curr_file_name != out_file_name:
+            copyfile(self._curr_file_name, out_file_name)
             current_project_file = out_file_name
         else:
-            current_project_file = self.parent._curr_file_name
+            current_project_file = self._curr_file_name
 
         project_h5_file = HidraProjectFile(current_project_file, mode=HidraProjectFileMode.READWRITE)
         peakcollections = fit_result.peakcollections
