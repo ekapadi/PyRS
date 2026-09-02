@@ -114,3 +114,127 @@ NXstress itself.
 293 unit + 85 integration + 5 gui tests passing (20 new), full suite;
 `~/.pyrs` confirmed untouched in the real home directory before and after
 every run.
+
+---
+
+## Spec 03 — NXstress I/O for CombineRuns Viewer
+
+Implemented per [03-combine-runs-nxstress.md](03-combine-runs-nxstress.md).
+Wired `.nxs` export into `CombineRunsViewer`, alongside the existing `.h5`
+export, which continues to work unchanged. Surfaced one real architecture
+mismatch in the spec's draft text, two adjacent pre-existing bugs, and one
+genuinely blocking `pyrs/core`/NXstress-internals finding — all resolved
+through direct discussion before/during implementation.
+
+### Finding: no persistent "Export" action exists to mirror
+
+Spec 03's draft assumed a persistent, independently-`.setEnabled()`-able
+"Export" `QAction`/button already existed for `.h5`, alongside which a new
+NXstress one would sit (mirroring spec 02's PeakFitting/TextureFitting
+pattern). `CombineRunsViewer` has no such control — export happens through
+`FileLoad.saveFileDialog()`, auto-triggered right after combining (gated by
+`self._auto_prompt_export`, added specifically so the GUI test can suppress
+it and drive the dialog manually). **Decided (user): no redesign of the
+existing GUI structure.** Added a second, matching auto-prompt dialog for
+NXstress that fires right after the first — each format's appearance gated
+by its own config flag at the call site
+(`Config["legacy_io.enable"]`/`Config["nxstress.enable"]`), realizing
+"enablement" as "does this dialog get offered at all," the natural analog
+for an auto-prompt UI with no persistent button to grey out.
+
+### Blocking finding: instrument-geometry loading was coupled to `load_raw_counts`
+
+`HidraWorkspace.load_hidra_project` (`pyrs/core/workspaces.py`) only called
+`self._load_instrument(hidra_file)` when `load_raw_counts=True` — an
+apparently unintentional coupling. `CombineRunsModel.combine_project_files`
+always calls with `load_raw_counts=False` (a deliberate, already-documented
+choice — see `open-questions/03-combine-runs-nxstress.md` Q1), so the merged
+workspace it produces **never had instrument geometry, in any real usage**.
+`NXstress.write()` requires geometry unconditionally (no `None` fallback,
+`_instrument.py:109`), so `export_project_files(".nxs")` would have crashed
+on every real combine-then-export attempt — discovered via this spec's own
+round-trip test, not a hypothetical. **This is not scoped to spec 03 either**:
+`PeakFittingModel._load_multiple_file` passes the same `load_detector_counts=False`
+to the same underlying method, so a real user loading an existing `.h5` file
+via Browse in PeakFittingViewer (spec 02, already shipped) and clicking
+"Save as NXstress…" likely hits the same crash today — spec 02's own NXstress
+tests never caught it because they all build workspaces in-memory rather
+than exercising the real load-then-export path.
+
+**Fix (user-directed, root cause):** decoupled instrument-geometry loading
+from `load_raw_counts` in `HidraWorkspace.load_hidra_project` — geometry is
+now always attempted, independent of the flag, and **no caller's
+`load_raw_counts`/`load_detector_counts` value needed to change** (per the
+user's explicit requirement — this was not to become a lever any GUI code
+needs to touch). Not every project file necessarily has geometry recorded
+(confirmed directly: `tests/data/HB2B_1327.h5`, used by this suite's own
+existing GUI test, genuinely has none), so absence is tolerated with a
+logged warning (`_logger.warning(...)`, catching the `KeyError`
+`HidraProjectFile.read_instrument_geometry()` raises when the group is
+missing) rather than raising. Per the user's direction, the NXstress
+auto-prompt in `CombineRunsViewer.load_project_files` additionally checks
+`self._parent.model._hidra_ws.get_instrument_setup() is not None` before
+offering the NXstress dialog — the dialog is silently skipped (not popped,
+analogous to a disabled/greyed-out action) when the merged workspace has no
+geometry, regardless of `Config["nxstress.enable"]`.
+**Follow-up needed**: `PeakFittingViewer`/`TextureFittingViewer`'s "Save as
+NXstress…" menu actions (persistent, unlike CombineRuns' auto-prompt) don't
+yet have an equivalent geometry-presence check on their enablement — tracked
+in [11-defer-to-second-pass.md](11-defer-to-second-pass.md).
+
+### Second finding: NXstress's own reader couldn't handle its own "no peaks" sentinel
+
+`CombineRunsModel` always calls `NXstress.write(ws, [])` — CombineRuns has no
+`PeakCollection` concept at all. The *writer* already has a documented
+sentinel for this (`UNDEFINED_PEAK_TAG = "_undefined_"`,
+`_PeakParameters.init_group`/`_BackgroundParameters.init_group`), but the
+*reader* (`_Peaks.peakCollectionsFromNexus`) never checked for it before
+trying to parse the title as a real `PeakShape`/`BackgroundFunction` name,
+crashing with `KeyError: Cannot determine peak shape from "_undefined_"` on
+any file written with zero peaks — i.e., unconditionally, on every CombineRuns
+NXstress export, the moment anything reads it back (surfaced by this spec's
+own round-trip test, which — per spec 03's own Tests section — does read the
+file back to assert equality). Fixed directly (narrow, self-contained,
+`pyrs/utilities/NXstress/_peaks.py` only, no effect on the non-empty-peaks
+case used by every other spec): recognize the sentinel and return `[]`
+immediately, bypassing the shape-parsing attempt.
+
+### Adjacent pre-existing bugs found and fixed (per direct discussion)
+
+1. **`FileLoad.loadRunNumbers()` called `self.saveFileDialog(combined_files)`**,
+   but `saveFileDialog(self)` takes no extra argument — a real `TypeError`,
+   only reachable via the "Run Numbers:" text-entry path (the existing GUI
+   test only drives "Browse Exp Data", so this was never caught). Fixed by
+   delegating to `load_project_files()` (which already does
+   combine-then-auto-prompt correctly for the other input path) — this also
+   means the new dual-format sequencing applies to this input path for free.
+2. **`FileLoading.set_text_values(self, direction, text)` referenced a
+   nonexistent attribute pattern** (`file_load_e{direction}`) with zero
+   callers anywhere. Traced the exact origin:
+   `pyrs/interface/strainstressviewer/strain_stress_view.py:331-341` has a
+   genuinely-used `FileLoading` with real `file_load_e11`/`e22`/`e33`
+   attributes (strain-tensor-direction loaders) and its own, correctly-working
+   `set_text_values` — confirmed this was verbatim copy-paste residue
+   referencing a concept (per-direction loading) that doesn't exist in
+   CombineRuns at all, not a fixable bug (there's no correct behavior for it
+   to have here). Deleted outright.
+
+### Files touched
+
+- `pyrs/interface/combine_runs/{combine_runs_model,combine_runs_viewer}.py`
+- `pyrs/core/workspaces.py` (geometry/`load_raw_counts` decoupling)
+- `pyrs/utilities/NXstress/_peaks.py` (empty-peaks read-path fix)
+- `tests/integration/test_nxstress_viewer_roundtrip.py` (extended: new
+  `TestCombineRunsViewerRoundtrip`; `write_minimal_h5_project` fixture
+  extended to also write instrument geometry/wavelength/default mask)
+- New: `tests/ui/conftest.py` (re-exports `minimal_HidraWorkspace`)
+- Extended: `tests/ui/test_merge_projectfiles.py`
+
+### Test results
+
+4 new tests (2 model-level round-trip in
+`test_nxstress_viewer_roundtrip.py`, 2 GUI in `test_merge_projectfiles.py`).
+Full suite: 285 unit (unchanged from the prior marker-policy pass) + 95
+integration (was 93) + 13 gui (repo-wide, was implicitly 11) passing, no
+regressions. `pixi run mypy pyrs scripts tests` clean throughout (typed
+proactively, no retroactive pass needed).
