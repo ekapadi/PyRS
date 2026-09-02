@@ -10,14 +10,17 @@ test_texture_fitting.py for the GUI-level enablement-wiring coverage.
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 import pytest
 
 from pyrs.core.pyrscore import PyRsCore
 from pyrs.core.workspaces import HidraWorkspace
+from pyrs.interface.combine_runs.combine_runs_model import CombineRunsModel
 from pyrs.interface.peak_fitting.peak_fitting_model import PeakFittingModel
 from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingModel
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
+from pyrs.utilities.NXstress.NXstress import NXstress
 
 pytestmark = pytest.mark.integration
 
@@ -129,4 +132,56 @@ class TestTextureFittingViewerRoundtrip:
 
         out_path = tmp_path / "saved.h5"
         model.save_fit_result(str(out_path), fit_result=fit_result)
+        assert out_path.exists()
+
+
+class TestCombineRunsViewerRoundtrip:
+    def test_export_project_files_nxstress_roundtrip_matches_merged_workspace(
+        self,
+        write_minimal_h5_project: Callable[..., Path],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        tmp_path: Path,
+    ) -> None:
+        # combine_project_files merges with load_raw_counts=False, so the merged
+        # workspace never carries raw counts -- the .nxs export never populates
+        # the optional input_data group. This test's scope is deliberately
+        # narrowed to sub-run counts and sample-log arrays as a direct
+        # consequence, not an arbitrary choice -- see
+        # open-questions/03-combine-runs-nxstress.md Q1.
+        ws1 = minimal_HidraWorkspace(name="run1", with_masks=True)
+        ws2 = minimal_HidraWorkspace(name="run2", with_masks=True)
+        project_path_1 = write_minimal_h5_project(ws1, filename="run1.h5", with_instrument=True, with_masks=True)
+        project_path_2 = write_minimal_h5_project(ws2, filename="run2.h5", with_instrument=True, with_masks=True)
+
+        model = CombineRunsModel()
+        model.combine_project_files([str(project_path_1), str(project_path_2)])
+
+        merged_n_subrun = len(model._hidra_ws.get_sub_runs())
+        merged_vx = model._hidra_ws.get_sample_log_values("vx")
+
+        out_path = tmp_path / "combined.nxs"
+        model.export_project_files(str(out_path))
+        assert out_path.exists()
+
+        with NXstress(out_path, "r") as nx:
+            ws_read, peaks_read = nx.read()
+
+        assert peaks_read == []
+        assert len(ws_read.get_sub_runs()) == merged_n_subrun
+        np.testing.assert_allclose(ws_read.get_sample_log_values("vx"), merged_vx)
+
+    def test_export_project_files_h5_suffix_routes_through_hidraprojectfile(
+        self,
+        write_minimal_h5_project: Callable[..., Path],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        tmp_path: Path,
+    ) -> None:
+        ws1 = minimal_HidraWorkspace(name="run1")
+        project_path_1 = write_minimal_h5_project(ws1, filename="run1.h5", with_instrument=True)
+
+        model = CombineRunsModel()
+        model.combine_project_files([str(project_path_1)])
+
+        out_path = tmp_path / "combined.h5"
+        model.export_project_files(str(out_path))
         assert out_path.exists()
