@@ -2,7 +2,7 @@
 
 **Plan:** [NXstress GUI Hookup](README.md)
 **Phase:** — (cross-cutting; not part of the phased schedule)
-**Depends on:** all subspecs implemented so far (currently: 01, 02)
+**Depends on:** all subspecs implemented so far (currently: 01, 02, 03)
 
 ---
 
@@ -113,3 +113,32 @@ alone as unrelated to spec 02's scope:
 fix `TextureFittingViewer`'s "Load state" action (supply the missing
 `fit_range_table`, or remove the action if it's truly obsolete) and whether
 `do_save_fit` should be wired up or deleted.
+
+### 6. `PeakFittingViewer`/`TextureFittingViewer`'s "Save as NXstress…" don't check for instrument geometry
+
+**From:** [03](03-combine-runs-nxstress.md) /
+[PR-implementation-notes.md § Spec 03](PR-implementation-notes.md#spec-03--nxstress-io-for-combineruns-viewer).
+
+Spec 03 found and fixed a real bug: `HidraWorkspace.load_hidra_project`
+only loaded instrument geometry when `load_raw_counts=True` — an
+unintentional coupling, now decoupled (geometry loading is always
+attempted, tolerating absence with a logged warning). `CombineRunsViewer`'s
+auto-prompt was updated to check
+`self._parent.model._hidra_ws.get_instrument_setup() is not None` before
+offering the NXstress dialog, since `NXstress.write()` requires geometry
+unconditionally. `PeakFittingViewer`/`TextureFittingViewer`'s persistent
+"Save as NXstress…" `QAction`s (added in spec 02) have no equivalent check —
+they're currently gated only on `Config["nxstress.enable"]`, not on whether
+the *currently loaded* workspace actually has geometry. Since
+`PeakFittingModel._load_multiple_file` passes the same
+`load_detector_counts=False` to the same now-fixed method, a `.h5` file
+genuinely lacking geometry (confirmed to exist — `tests/data/HB2B_1327.h5`)
+loaded via Browse, followed by "Save as NXstress…", will still crash.
+
+**Second pass needs to:** add a geometry-presence check to
+`PeakFittingViewer`/`TextureFittingViewer`'s NXstress-action enablement —
+likely re-checked at the point a project finishes loading (`load_and_plot`/
+`load_hidra_project_file` completion), toggling
+`actionSaveAsNXstress`/`saveAsNXstressAction`'s `.setEnabled(...)` in
+combination with the existing `Config["nxstress.enable"]` check, the same
+way `CombineRunsViewer`'s auto-prompt does it for the auto-prompt case.
