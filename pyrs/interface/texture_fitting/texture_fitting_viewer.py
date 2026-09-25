@@ -10,10 +10,15 @@ from qtpy.QtGui import QColor  # type:ignore
 from qtpy.QtCore import Qt  # type: ignore
 
 from pyrs.interface.ui.diffdataviews import PeakFitSetupView, GeneralDiffDataView
-from pyrs.interface.gui_helper import pop_message
+from pyrs.interface.gui_helper import impose_extension, pop_message
+from pyrs.interface.texture_fitting.texture_fitting_crtl import TextureFittingCrtl
+from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingModel
 from pyrs.utilities import get_input_project_file  # type: ignore
+from pyrs.utilities.config import Config
 
 import numpy as np
+
+from typing import Optional
 
 # import traceback
 import os
@@ -25,7 +30,12 @@ MICROSTRAIN = "\u00b5strain"
 
 
 class FileLoad(QWidget):
-    def __init__(self, name=None, fileType="HidraProjectFile (*.h5);;All Files (*)", parent=None):
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        fileType: str = "HidraProjectFile (*.h5);;NXstress (*.nxs);;All Files (*)",
+        parent: Optional[QWidget] = None,
+    ) -> None:
         self._parent = parent
         super().__init__(parent)
         self.name = name
@@ -854,7 +864,12 @@ class FitTable:
 
 
 class TextureFittingViewer(QMainWindow):
-    def __init__(self, fit_peak_model, fit_peak_ctrl, parent=None):
+    def __init__(
+        self,
+        fit_peak_model: TextureFittingModel,
+        fit_peak_ctrl: TextureFittingCrtl,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         self._model = fit_peak_model
         self._ctrl = fit_peak_ctrl
         self._project_file = None
@@ -865,6 +880,13 @@ class TextureFittingViewer(QMainWindow):
 
         mainMenu = self.menuBar()
         fileMenu = mainMenu.addMenu("File")
+        # NOTE: legacy (.h5) Save/Save As are left permanently disabled here -- this
+        # predates the NXstress hookup and the original reason isn't documented
+        # anywhere; rather than guess and silently change behavior, we preserve it
+        # as-is (previously the two actions were also aliased to the same
+        # `self.saveAction` attribute, a bug fixed here so each has its own
+        # reference). Only the new Save-as-NXstress action below is wired to
+        # Config, since it's the one path this spec is actually adding.
         self.saveAction = QAction("&Save", self)
         self.saveAction.setShortcut("Ctrl+S")
         self.saveAction.setStatusTip("Save project state")
@@ -872,11 +894,18 @@ class TextureFittingViewer(QMainWindow):
         self.saveAction.setEnabled(False)
         fileMenu.addAction(self.saveAction)
 
-        self.saveAction = QAction("&Save as", self)
-        self.saveAction.setStatusTip("Save project state")
-        self.saveAction.triggered.connect(self.saveas)
-        self.saveAction.setEnabled(False)
-        fileMenu.addAction(self.saveAction)
+        self.saveAsAction = QAction("&Save as", self)
+        self.saveAsAction.setStatusTip("Save project state")
+        self.saveAsAction.triggered.connect(self.saveas)
+        self.saveAsAction.setEnabled(False)
+        fileMenu.addAction(self.saveAsAction)
+
+        self.saveAsNXstressAction = QAction("Save as NXstress...", self)
+        self.saveAsNXstressAction.setStatusTip("Save project state as NXstress (.nxs)")
+        self.saveAsNXstressAction.triggered.connect(self.save_as_nxstress)
+        # setEnabled (not setVisible): stays visible, just grayed out, when disabled.
+        self.saveAsNXstressAction.setEnabled(Config["nxstress.enable"])
+        fileMenu.addAction(self.saveAsNXstressAction)
 
         self.loadAction = QAction("&Load state", self)
         self.loadAction.setStatusTip("Load application state")
@@ -1064,9 +1093,16 @@ class TextureFittingViewer(QMainWindow):
         if self._project_file is not None:
             self.controller.save(self._project_file, self._parent.fit_summary.fit_table_operator.fit_result)
 
-    def saveas(self):
+    def saveas(self) -> None:
         filename, _ = QFileDialog.getSaveFileName(self, "Save HidraWorkspace", "", "HDF5 (*.h5);;All Files (*)")
         if filename:
+            filename = impose_extension(filename, Config["legacy_io.extension"])
+            self.controller.save(filename, self._parent.fit_summary.fit_table_operator.fit_result)
+
+    def save_as_nxstress(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(self, "Save HidraWorkspace (NXstress)", "", "NXstress (*.nxs)")
+        if filename:
+            filename = impose_extension(filename, Config["nxstress.extension"])
             self.controller.save(filename, self._parent.fit_summary.fit_table_operator.fit_result)
 
     def load(self):
