@@ -2,6 +2,12 @@
 suffix-dispatched NXstress/.h5 save-load, `PyRsCore.register_hidra_workspace`,
 and the `plot_diff_and_fitted_data` guard against a None fitted spectrum after
 an NXstress load.
+
+All fixtures here are synthetic and in-memory; the round trips write to
+`tmp_path`, never to `tests/data` or the `/HFIR` archive, and no Qt widget is
+constructed. These are therefore unit tests and carry no marker -- matching how
+the equivalent NXstress round trips in
+`tests/unit/pyrs/utilities/NXstress/test_workspace_read.py` are classified.
 """
 
 from pathlib import Path
@@ -16,12 +22,6 @@ from pyrs.interface.peak_fitting.peak_fitting_crtl import PeakFittingCrtl
 from pyrs.interface.peak_fitting.peak_fitting_model import PeakFittingModel
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
-
-# Every test here drives PeakFittingModel together with a separate library
-# (NXstress or HidraProjectFile) and PyRsCore's session registry -- a
-# multi-component workflow, not just one component's own internals -- even
-# though the data involved is synthetic (see CLAUDE.md's Pytest markers policy).
-pytestmark = pytest.mark.integration
 
 
 class _FakeFitSetupView:
@@ -43,15 +43,15 @@ class _FakeFitSetupView:
 
 
 @pytest.fixture
-def peak_model() -> PeakFittingModel:
-    return PeakFittingModel(PyRsCore())
-
-
-@pytest.fixture
 def model(qapp):  # noqa: ARG001 (qapp needed for QObject/Signal machinery)
     peak_fit_model = PeakFittingModel(peak_fit_core=MagicMock())
     peak_fit_model.hidra_workspace = MagicMock()
     return peak_fit_model
+
+
+@pytest.fixture
+def peak_model() -> PeakFittingModel:
+    return PeakFittingModel(PyRsCore())
 
 
 def test_fit_diff_peaks_normal_case_returns_result(model, monkeypatch):
