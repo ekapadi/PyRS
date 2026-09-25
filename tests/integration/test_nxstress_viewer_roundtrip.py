@@ -64,7 +64,7 @@ class TestPeakFittingViewerRoundtrip:
         tmp_path: Path,
     ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True)
-        project_path = write_minimal_h5_project(ws, filename="source.h5")
+        project_path = write_minimal_h5_project(ws, filename="source.h5", with_instrument=True)
 
         model = PeakFittingModel(PyRsCore())
         model.load_hidra_project([str(project_path)])
@@ -121,7 +121,7 @@ class TestTextureFittingViewerRoundtrip:
         tmp_path: Path,
     ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True)
-        project_path = write_minimal_h5_project(ws, filename="source.h5")
+        project_path = write_minimal_h5_project(ws, filename="source.h5", with_instrument=True)
 
         model = TextureFittingModel(None)
         model.load_hidra_project_file(str(project_path))
@@ -150,8 +150,8 @@ class TestCombineRunsViewerRoundtrip:
         # open-questions/03-combine-runs-nxstress.md Q1.
         ws1 = minimal_HidraWorkspace(name="run1", with_masks=True)
         ws2 = minimal_HidraWorkspace(name="run2", with_masks=True)
-        project_path_1 = write_minimal_h5_project(ws1, filename="run1.h5")
-        project_path_2 = write_minimal_h5_project(ws2, filename="run2.h5")
+        project_path_1 = write_minimal_h5_project(ws1, filename="run1.h5", with_instrument=True, with_masks=True)
+        project_path_2 = write_minimal_h5_project(ws2, filename="run2.h5", with_instrument=True, with_masks=True)
 
         model = CombineRunsModel()
         model.combine_project_files([str(project_path_1), str(project_path_2)])
@@ -177,7 +177,7 @@ class TestCombineRunsViewerRoundtrip:
         tmp_path: Path,
     ) -> None:
         ws1 = minimal_HidraWorkspace(name="run1")
-        project_path_1 = write_minimal_h5_project(ws1, filename="run1.h5")
+        project_path_1 = write_minimal_h5_project(ws1, filename="run1.h5", with_instrument=True)
 
         model = CombineRunsModel()
         model.combine_project_files([str(project_path_1)])
@@ -185,39 +185,3 @@ class TestCombineRunsViewerRoundtrip:
         out_path = tmp_path / "combined.h5"
         model.export_project_files(str(out_path))
         assert out_path.exists()
-
-
-@pytest.fixture
-def write_minimal_h5_project(tmp_path: Path) -> Callable[..., Path]:
-    # Local copy of tests/unit/pyrs/interface/conftest.py's fixture of the same
-    # name -- that conftest lives under tests/unit/, not visible from
-    # tests/integration/, and this is the only file here that needs it. Also
-    # writes instrument geometry + wavelength + the default mask (the shared
-    # conftest's version doesn't need to), since
-    # CombineRunsModel.combine_project_files() reads these back from disk:
-    # NXstress requires a real instrument geometry to write (a bare
-    # save_experimental_data()/save_reduced_diffraction_data() round trip
-    # leaves geometry as None), and its own default-mask fallback (used when
-    # no default mask is present) has an unrelated, pre-existing shape bug
-    # (found during spec 02) -- writing a real default mask avoids hitting it.
-    from pyrs.core.instrument_geometry import HidraSetup
-    from pyrs.dataobjects import HidraConstants  # type: ignore
-    from pyrs.projectfile.file_object import HidraProjectFile, HidraProjectFileMode
-
-    def _init(ws: HidraWorkspace, filename: str = "project.h5") -> Path:
-        file_path = tmp_path / filename
-        project = HidraProjectFile(str(file_path), mode=HidraProjectFileMode.OVERWRITE)
-        ws.save_experimental_data(project, sub_runs=None, ignore_raw_counts=True)
-        ws.save_reduced_diffraction_data(project, sub_runs=None)
-        instrument_setup = ws.get_instrument_setup()
-        if instrument_setup is not None:
-            project.write_instrument_geometry(HidraSetup(instrument_setup))
-            project.write_wavelength(ws.get_wavelength(True, False))
-        default_mask = ws.get_detector_mask(is_default=True)
-        if default_mask is not None:
-            project.write_mask_detector_array(HidraConstants.DEFAULT_MASK, default_mask)
-        project.save()
-        project.close()
-        return file_path
-
-    return _init
