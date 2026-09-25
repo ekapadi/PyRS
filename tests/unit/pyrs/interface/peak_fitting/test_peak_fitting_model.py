@@ -1,10 +1,18 @@
-"""Unit tests for `PeakFittingModel` -- suffix-dispatched NXstress/.h5 save-load,
-`PyRsCore.register_hidra_workspace`, and the `plot_diff_and_fitted_data` guard
-against a None fitted spectrum after an NXstress load.
+"""Unit tests for `PeakFittingModel` -- `fit_diff_peaks` failure reporting,
+suffix-dispatched NXstress/.h5 save-load, `PyRsCore.register_hidra_workspace`,
+and the `plot_diff_and_fitted_data` guard against a None fitted spectrum after
+an NXstress load.
+
+All fixtures here are synthetic and in-memory; the round trips write to
+`tmp_path`, never to `tests/data` or the `/HFIR` archive, and no Qt widget is
+constructed. These are therefore unit tests and carry no marker -- matching how
+the equivalent NXstress round trips in
+`tests/unit/pyrs/utilities/NXstress/test_workspace_read.py` are classified.
 """
 
 from pathlib import Path
 from typing import Any, Callable
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,12 +22,6 @@ from pyrs.interface.peak_fitting.peak_fitting_crtl import PeakFittingCrtl
 from pyrs.interface.peak_fitting.peak_fitting_model import PeakFittingModel
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
-
-# Every test here drives PeakFittingModel together with a separate library
-# (NXstress or HidraProjectFile) and PyRsCore's session registry -- a
-# multi-component workflow, not just one component's own internals -- even
-# though the data involved is synthetic (see CLAUDE.md's Pytest markers policy).
-pytestmark = pytest.mark.integration
 
 
 class _FakeFitSetupView:
@@ -41,8 +43,59 @@ class _FakeFitSetupView:
 
 
 @pytest.fixture
+def model(qapp):  # noqa: ARG001 (qapp needed for QObject/Signal machinery)
+    peak_fit_model = PeakFittingModel(peak_fit_core=MagicMock())
+    peak_fit_model.hidra_workspace = MagicMock()
+    return peak_fit_model
+
+
+@pytest.fixture
 def peak_model() -> PeakFittingModel:
     return PeakFittingModel(PyRsCore())
+
+
+def test_fit_diff_peaks_normal_case_returns_result(model, monkeypatch):
+    """A successful fit returns the fit result and stores it on the model."""
+    # Arrange
+    fake_result = MagicMock()
+    fake_engine = MagicMock()
+    fake_engine.fit_multiple_peaks.return_value = fake_result
+    monkeypatch.setattr(
+        "pyrs.interface.peak_fitting.peak_fitting_model.PeakFitEngineFactory.getInstance",
+        MagicMock(return_value=fake_engine),
+    )
+    emitted = []
+    model.failureMsg.connect(lambda *args: emitted.append(args))
+
+    # Act
+    result = model.fit_diff_peaks(["peak0"], [1.0], [2.0], "PseudoVoigt", "Linear")
+
+    # Assert
+    assert result is fake_result
+    assert model.fit_result is fake_result
+    assert emitted == []
+
+
+def test_fit_diff_peaks_error_case_emits_failure_and_returns_none(model, monkeypatch):
+    """When the fit engine raises, failureMsg is emitted instead of the exception propagating."""
+    # Arrange
+    monkeypatch.setattr(
+        "pyrs.interface.peak_fitting.peak_fitting_model.PeakFitEngineFactory.getInstance",
+        MagicMock(side_effect=RuntimeError("fit did not converge")),
+    )
+    emitted = []
+    model.failureMsg.connect(lambda *args: emitted.append(args))
+
+    # Act
+    result = model.fit_diff_peaks(["peak0"], [1.0], [2.0], "PseudoVoigt", "Linear")
+
+    # Assert
+    assert result is None
+    assert model.fit_result is None
+    assert len(emitted) == 1
+    title, message, detail = emitted[0]
+    assert "fit did not converge" in message
+    assert "RuntimeError" in detail
 
 
 class TestPeakFittingModelNXstressRoundtrip:
