@@ -1,11 +1,13 @@
-"""Unit tests for `TextureFittingModel` -- suffix-dispatched NXstress/.h5 save-load,
-and a regression test for the pre-existing `self.parent` crash fixed alongside it.
+"""Integration tests for `TextureFittingModel` -- suffix-dispatched NXstress/.h5
+save-load, and a regression test for the pre-existing `self.parent` crash fixed
+alongside it.
 
-All fixtures here are synthetic and in-memory; the round trips write to
-`tmp_path`, never to `tests/data` or the `/HFIR` archive, and no Qt widget is
-constructed. These are therefore unit tests and carry no marker -- matching how
-the equivalent NXstress round trips in
-`tests/unit/pyrs/utilities/NXstress/test_workspace_read.py` are classified.
+Each test drives `TextureFittingModel` together with a second component --
+NXstress or `HidraProjectFile` -- writing real HDF5 through `nexusformat`/`h5py`.
+That is a multi-component workflow, so these are `integration` even though the
+data is synthetic and the files land in `tmp_path` (see CLAUDE.md's marker
+definitions). No widget is constructed and nothing here needs a display, so
+`gui` does not apply.
 """
 
 from pathlib import Path
@@ -17,6 +19,8 @@ from pyrs.core.workspaces import HidraWorkspace
 from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingModel
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
+
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture

@@ -61,7 +61,7 @@ class TestPeakFittingViewerRoundtrip:
         tmp_path: Path,
     ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True)
-        project_path = write_minimal_h5_project(ws, filename="source.h5")
+        project_path = write_minimal_h5_project(ws, filename="source.h5", with_instrument=True)
 
         model = PeakFittingModel(PyRsCore())
         model.load_hidra_project([str(project_path)])
@@ -118,7 +118,7 @@ class TestTextureFittingViewerRoundtrip:
         tmp_path: Path,
     ) -> None:
         ws = minimal_HidraWorkspace(with_instrument=True)
-        project_path = write_minimal_h5_project(ws, filename="source.h5")
+        project_path = write_minimal_h5_project(ws, filename="source.h5", with_instrument=True)
 
         model = TextureFittingModel(None)
         model.load_hidra_project_file(str(project_path))
@@ -130,22 +130,3 @@ class TestTextureFittingViewerRoundtrip:
         out_path = tmp_path / "saved.h5"
         model.save_fit_result(str(out_path), fit_result=fit_result)
         assert out_path.exists()
-
-
-@pytest.fixture
-def write_minimal_h5_project(tmp_path: Path) -> Callable[..., Path]:
-    # Local copy of tests/unit/pyrs/interface/conftest.py's fixture of the same
-    # name -- that conftest lives under tests/unit/, not visible from
-    # tests/integration/, and this is the only file here that needs it.
-    from pyrs.projectfile.file_object import HidraProjectFile, HidraProjectFileMode
-
-    def _init(ws: HidraWorkspace, filename: str = "project.h5") -> Path:
-        file_path = tmp_path / filename
-        project = HidraProjectFile(str(file_path), mode=HidraProjectFileMode.OVERWRITE)
-        ws.save_experimental_data(project, sub_runs=None, ignore_raw_counts=True)
-        ws.save_reduced_diffraction_data(project, sub_runs=None)
-        project.save()
-        project.close()
-        return file_path
-
-    return _init
