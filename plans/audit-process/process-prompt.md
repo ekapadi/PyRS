@@ -1,77 +1,120 @@
-# Agent prompt — audit pass over subspecs `02`–`12b`
+# Agent prompt -- audit pass over a PyRS plan series
 
-*Copy the block below into a fresh session. It assumes no prior context.*
+*Copy everything below the rule into a fresh session. It assumes no prior context.*
+
+**To retarget this at a different PyRS feature series, edit the RETARGET block and
+nothing else.** Every field in it is series-specific; everything after it is not.
 
 ---
 
-We are adding a math-verification feature to our research-agent / coding-agent
-application. The implementation specifications are in
-`docs/plans/math-verification`. That directory holds a `README.md` overview
-plus numbered subspecs, each corresponding to one planned PR, to be
-implemented in numbered order. Subspecs `00a`–`00g` address defects and
-oversights in the existing implementation and were prerequisites for `01`.
+<!-- ===== RETARGET: edit these nine fields ===== -->
 
-Implementation and testing through subspec `01` is complete. **Right now: all
-unit and integration tests are passing; the application itself functions
-correctly in normal usage.**
+    SERIES                plans/NXstress-prod
 
-**Our current task is an audit pass over subspecs `02` through `12b`. Do not
-implement any of them.** The deliverable is corrected specification documents
-plus the evidence behind the corrections.
+    WHAT IT IS            wiring the already-built pyrs/utilities/NXstress/ library
+                          (a NeXus-compliant residual-stress schema) into the PyRS
+                          Qt GUI's existing I/O endpoints
 
-Read `CLAUDE.md`'s section **"What a complete audit of a plan/subspec consists
-of"** first — it defines the seven axes an audit must cover and the
-anti-patterns to avoid. Then read `docs/plans/math-verification/review/process.md`,
-which records why that definition exists, the failure taxonomy behind it, and
-the probe candidates already identified per subspec.
+    FULL PASS             README.md, 04, 04b, 04c, 05, 06, 07, 08, 09, 10
 
-Context you need for calibration: this series has already been audited
-repeatedly — its review log (`review/first-pass/findings.md`) records fifteen
-rounds of follow-up findings. Despite that, subspec `01` — the smallest
-document in the set, rated *"low risk: types only, no behaviour"* — was found
-on first implementation to contain six blocking defects. Those earlier passes
-covered three of the seven axes. **Assume the same is true of `02`–`12b`, and
-that re-reading them the way they have already been re-read will find nothing.**
+    FRESHNESS ONLY        01, 02, 03 -- landed; their claims are settled by shipped
+                          code and passing tests, so they get A7 and nothing else
 
-Work in this order, which is deliberately not the order the documents are in:
+    PRIOR AUDIT EVIDENCE  18 entries in README.md's "## 4. Decisions Log", 9 of them
+                          recording a correction found by re-reading against the
+                          codebase. Those rounds covered A2 and A3.
 
-1. **A4/A5 probes first.** These are the defects that cost weeks, and reading
-   cannot find them. Write and run a probe for every claim about third-party
-   library behaviour or about how another module will treat our output. Paste
-   the real observed output next to the claim. `process.md` §6 lists starting
-   candidates per subspec — treat that list as incomplete, not exhaustive.
-   Note that at least one is already known to be false: `10a` depends on
-   `parse_latex`, and `antlr4-python3-runtime` is **absent** from this
-   environment today.
-2. **A7 freshness.** `00a`–`00g` and `01` have landed since these documents
-   were written. For each subspec, check every claim it makes about files
-   those PRs touched. Subspec `01` in particular moved five shared types into
-   `src/tools/math_verification/types.py`; `03`, `05a`, `05b` and `06` were
-   updated to import them, and anything else asserting where those types live
-   is stale.
-3. **A1 doc-against-self.** Every prose claim against every code block, table
-   and cross-reference in the *same* document. This axis has never been run on
-   this series. One finding is already known and unresolved: `03` gives two
-   different paths for the same file — §4.2 says
-   `src/tools/math_verification/backend.py`, §8's table says
-   `src/math_kernel/backend.py`.
-4. **A2 doc-against-siblings**, then **A3** and **A6** for anything the first
-   three passes disturbed.
+    CURRENT TEST STATE    <FILL THIS IN -- run the suite; do not assume it passes>
+
+    KNOWN FINDINGS        The five in process.md section 2. They are the CALIBRATION
+                          SET for the tools you build: 7 dead links across 5
+                          documents, 4 drifted line citations in one README table
+                          cell plus 2 more at README.md:58, a cited file that does
+                          not exist (02:83), and a superseded draft specifying a
+                          different architecture under the same section number.
+
+    PROBE CANDIDATES      Starting list, NOT exhaustive:
+                          - neutrons_standard.Config -- init()-before-import
+                            ordering, the claimed init() race, env= deep-merge, and
+                            the required pyrs/resources/application.yml location
+                            (README section 2.3)
+                          - h5py resize-then-assign on a zero-sized resizable
+                            dataset -- 04c's entire tail-append design rests on it
+                          - nexusformat 1.0.8 validator capability (Decisions 16)
+                          - qtpy/PyQt6 -- lazy self.statusBar(); setEnabled leaves a
+                            QAction visible (spec 10). NOTE: PyQt5 is ABSENT here.
+                          - NXstress multi-workspace round trip -- this is A5, not
+                            A4: the library is in-repo and already landed
+
+    HIGHEST A7 EXPOSURE   04 -- it depends on 02 and 03, both landed, so its
+                          referents have actually moved. 05 through 10 depend on
+                          work that has not shipped yet.
+
+<!-- ===== end RETARGET ===== -->
+
+---
+
+We are auditing the plan series named in SERIES above, which specifies WHAT IT IS.
+The directory holds a grounded `README.md`, numbered subspecs each corresponding to
+one planned PR, a parallel `open-questions/` directory, an `audit.toml` manifest,
+and an `archive/` holding the pre-codebase draft the README superseded.
+
+**Do not implement any subspec.** The deliverable is corrected specification
+documents plus the evidence behind the corrections.
+
+Read, in this order:
+
+1. `CLAUDE.md`, section **"Auditing a Plan or Subspec"** -- the seven axes an audit
+   must cover and the anti-patterns to avoid.
+2. `plans/audit-process/process.md` -- why that definition exists, the failure
+   taxonomy behind it, and **section 7, the toolkit build specification**.
+
+**Build the toolkit first; it does not exist yet.** Implement
+`plans/audit-process/tools/` per process.md section 7, against the manifest at
+`<SERIES>/audit.toml`. Then **tune it before you record anything**: KNOWN FINDINGS
+above are the calibration set. A link checker that does not report exactly those
+seven dead links is not ready to be trusted, and neither is a citation checker that
+misses those drifts. Every tool in this class needs a tuning round against
+known-good input -- a tool whose first output is wrong in a plausible-looking way
+is worse than no tool, because it buries real defects in noise.
+
+Calibration for your expectations: see PRIOR AUDIT EVIDENCE. Those passes were
+conscientious and they covered two axes. **Assume A1, A4, A5, A6 and A7 have never
+been run, and that re-reading these documents the way they have already been
+re-read will find nothing.**
+
+Then work in this order, which is deliberately *not* the order the documents are in:
+
+1. **A4/A5 probes.** The defects that cost weeks, and the ones reading cannot find.
+   Write and run a probe for every claim about third-party library behaviour or
+   about how another module will treat our output. Paste the real observed output
+   next to the claim. Treat PROBE CANDIDATES as a starting list, not a checklist.
+2. **A1 -- each document against itself.** Every prose claim against every code
+   block, table and link in the *same* document.
+3. **A2 -- documents against their siblings.** Shared paths, config keys and
+   dependency ordering.
+4. **A3 and A6** for anything the first three passes disturbed.
+
+Documents under FRESHNESS ONLY get an A7 check and nothing more.
 
 Deliverables:
 
-- **Corrections applied to the subspecs themselves**, appended as
-  `## Follow-up N` sections rather than rewritten in place, so the record of
-  what was believed when survives.
-- **Probes committed** under `docs/plans/math-verification/probes/`, with
-  their real output pasted into the subspec at the claim each supports.
-- **A findings document** at `review/second-pass/findings.md`, mirroring
-  `review/first-pass/findings.md`. For each subspec, state explicitly which of
-  the seven axes were covered and what each turned up — a partial audit must
-  be reported as partial, not as "consistent".
-- **Any invariant that can be a test should become one** rather than a
-  paragraph, per `CLAUDE.md`. Flag these; do not add them to the test suite in
-  this pass, since the code they would guard mostly does not exist yet.
+- **Corrections appended as `## Follow-up N` sections** to the document being
+  audited, per process.md section 5.5 -- never rewritten in place, so the record of
+  what was believed survives. The one exception is a `path:LINE` citation, which is
+  a pointer rather than a belief: fix it in the body **and** log the finding. Do
+  **not** put findings in `open-questions/` or the README Decisions Log; both are
+  human-facing records with different audiences.
+- **Probes committed** under `<SERIES>/probes/`, each with its real output pasted
+  into the document at the claim it supports, plus the index at
+  `probes/README.md`.
+- **A findings document** at `<SERIES>/review/findings.md`, whose **section 0 is a
+  required coverage matrix**: every document against all seven axes, marked
+  covered / partial / not run. Without it, "which axes were actually covered on
+  06?" is unanswerable and the rule that a partial audit is reported as partial has
+  nothing to attach to. Never report a partial audit as "consistent".
+- **Invariants that should become tests: flagged, not written.** An audit flags;
+  the implementing PR writes. Most of the code they would guard does not exist yet,
+  so writing them now produces tests with no subject.
 
-Please start by reading `CLAUDE.md`'s audit section and `review/process.md`,
-then propose a plan for the pass before beginning it.
+Start by proposing a plan for the pass before beginning it.

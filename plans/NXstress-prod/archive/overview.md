@@ -1,3 +1,26 @@
+> **SUPERSEDED -- do not implement from this document.**
+>
+> This is the pre-codebase draft (step I of the planning process). It was
+> superseded by [`../README.md`](../README.md) when the subspecs were split out,
+> and has not been maintained since. It is retained **only** as the A6 referent,
+> so an audit can check what the grounded plan changed without saying so -- see
+> [`../../audit-process/process.md`](../../audit-process/process.md) section 2.5.
+>
+> It disagrees with `README.md` in ways that matter. Its `### 2.3` specifies a
+> `pyyaml` + `config/pyrs.default.yml` + pydantic + `argparse --config` design;
+> README's `### 2.3` specifies `neutrons_standard.Config` +
+> `pyrs/resources/application.yml` and states that this work adds no `--config`
+> wiring at all. **Subspec 01 landed implementing README's design.**
+>
+> Both documents number their sections `## 1` through `## 6`, so a bare section
+> reference such as "section 2.3" is ambiguous between them. Line citations here
+> are stale and are deliberately **not** corrected: this file records what was
+> believed, not what is true.
+>
+> Archived 2026-09-25.
+
+---
+
 # NXstress GUI Hookup — Design Overview
 
 ## Context
