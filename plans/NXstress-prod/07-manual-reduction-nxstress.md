@@ -168,3 +168,104 @@ change — the edit lives entirely in the "NXstress Changes" section below.
   `nxstress.enable: false`); confirm behavior is unchanged from today.
 - `pytest tests/integration/test_nxstress_viewer_roundtrip.py` — all pass
   (no regression in earlier specs).
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass)
+
+**F1.1** (A1/A2) — `**Depends on:** — (none within this plan; see Overview)`.
+- Referent: this document's own `## NXstress Changes` code block, and
+  `README.md`'s `## Sub-specifications` table, whose row for 07 also reads `—`.
+- Verdict: **wrong — this spec depends on 04b.** Its own code block calls
+  `NXstress(path, "w").write([hidra_ws], [])` and annotates it "a length-1 list,
+  **per 04b's signature**, which lands in the Phase 2/3 bridge, before this
+  Phase 4 spec". That call cannot be written until 04b changes `write` to take a
+  list — confirmed against the landed library, which today takes a single
+  `HidraWorkspace`
+  ([`probes/a5_nxstress_roundtrip.py`](probes/a5_nxstress_roundtrip.py)):
+
+  ```console
+    CLAIM   write takes a single HidraWorkspace today; 04b changes it to a list
+    RESULT  NXstress.write(self, ws: pyrs.core.workspaces.HidraWorkspace,
+                           peakss: list[pyrs.peaks.peak_collection.PeakCollection])
+  ```
+
+  The Overview's argument establishes only that 07 does not depend on **06**;
+  the header generalised that to "nothing". `## Scope`'s "Out of scope:
+  Multi-workspace input (spec 04b)" is about not using 04b's *features*, which is
+  compatible with needing its *signature*.
+- Action (for the implementing PR): set `**Depends on:** [04b](04b-multi-workspace-nxstress.md)`
+  here, and change `README.md`'s §Sub-specifications row for 07 from `—` to
+  `04b`. Phase ordering already satisfies the dependency (04b is Phase 2/3, this
+  is Phase 4), so **this is a record defect, not a scheduling break** — but the
+  `Depends on` column is the explicit ordering record and is what a reader
+  trusts.
+
+**F1.2** (A2) — `## Tests` and `## Verification` name
+`tests/integration/test_nxstress_viewer_roundtrip.py`.
+- Referent: `README.md:748-753`'s "Tests to extend/add" list.
+- Verdict: the two disagree. README schedules
+  `tests/integration/test_nxstress_reduction.py` ("new in Phase 4 — manual
+  reduction, fresh-write only") for exactly this work, and
+  `test_nxstress_viewer_roundtrip.py` appears nowhere in README §5. Specs 04b and
+  05 name the same viewer-roundtrip file, so three specs share a file the plan's
+  own inventory does not list. See the README's Follow-up 1 for the full picture.
+- Action (for the implementing PR): pick one name and use it in both places.
+  README's `test_nxstress_reduction.py` is the better fit here — this pathway has
+  no viewer and no GUI action at all (this spec's own Overview says so), so
+  filing it under "viewer roundtrip" is misleading.
+
+**F1.3** (A1) — "Any extension on a caller-supplied `project_file_name` is
+stripped and ignored".
+- Referent: this document's own code block.
+- Verdict: the two branches strip differently. `os.path.basename(nexus).split(".")[0]`
+  strips **every** extension; `os.path.splitext(os.path.basename(project_file_name))[0]`
+  strips only the **last**. For `foo.nxs.h5` these give `foo` and `foo.nxs`. HB2B
+  NeXus inputs are commonly double-extensioned, so the aggressive first branch is
+  presumably deliberate — which makes the unqualified prose, not the code, the
+  defect. `## Verification`'s extension-stripping check uses a single-extension
+  name (`"foo.nxs"`) and so cannot catch the difference.
+- Action (for the implementing PR): state the rule as "the basename is taken up
+  to the **first** dot for an auto-derived name, and with the **final**
+  extension removed for a caller-supplied one" — or make both branches use
+  `.split(".")[0]` and say so once. Either way, extend the Verification case to a
+  double-extension name (`foo.nxs.h5`), which is the only one that distinguishes
+  them.
+
+**Checked and accurate — no action.** `pyrs_api.py:348` and `pyrs_api.py:292-311`
+both land exactly on their claimed targets.
+
+---
+
+## Follow-up 2 — 2026-09-26 (closing the A4 gap left open by Follow-up 1)
+
+**F2.1** (A4) — Follow-up 1 F1.3 reasoned that the two basename branches strip
+extensions differently, but did not execute them. Probed now —
+[`probes/a4_basename_extensions.py`](probes/a4_basename_extensions.py) — and
+the reasoning holds, with one consequence F1.3 did not draw:
+
+```console
+  input                    auto-derived         caller-supplied      agree?
+  ------------------------ -------------------- -------------------- ------
+  HB2B_1234.nxs.h5         HB2B_1234            HB2B_1234.nxs        NO
+  HB2B_1234.h5             HB2B_1234            HB2B_1234            yes
+  foo.nxs                  foo                  foo                  yes
+  foo                      foo                  foo                  yes
+  run.2024.03.nxs.h5       run                  run.2024.03.nxs      NO
+
+  CLAIM   spec 07's Verification case ('foo.nxs') detects the difference (claim 3)
+  RESULT  auto-derived='foo', caller-supplied='foo' -- identical, so the proposed
+          test CANNOT detect it. A double-extension name can: 'HB2B_1234.nxs.h5'
+          -> 'HB2B_1234' vs 'HB2B_1234.nxs'.
+```
+
+The consequence: **the Verification case this spec proposes is the one case in
+which the two branches agree.** A test written exactly as specified would pass
+while the inconsistency remained. Note also that the third row shows
+`.split(".")[0]` truncating at the *first* dot, so a run name containing dots
+(`run.2024.03.nxs.h5`) collapses to `run` — an aggressive strip that is
+presumably deliberate for HB2B NeXus inputs but is not what "the extension is
+stripped" describes.
+- Action (for the implementing PR), unchanged from F1.3 and now evidenced: state
+  the two rules separately rather than as one, and change the Verification case
+  to a double-extension name.

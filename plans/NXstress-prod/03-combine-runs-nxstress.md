@@ -2,7 +2,7 @@
 
 **Plan:** [NXstress GUI Hookup](README.md)
 **Phase:** 1
-**Depends on:** [01 — Config infrastructure & test framework](01-config-and-test-infra.md)
+**Depends on:** [01 — Config infrastructure & test framework](01-config-and-test-infra-PR.md)
 
 ---
 
@@ -163,3 +163,22 @@ _None._
   **Export as NXstress…**, confirm a `.nxs` file is written.
 - Confirm existing **Export** (`.h5`) works without regression.
 - `pytest tests/integration/test_nxstress_viewer_roundtrip.py` — all pass.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass, freshness check only)
+
+This spec has landed. Per the pass's scope it received an **A7 freshness check
+and nothing else**.
+
+**F1.1** (A7) — `open-questions/03-combine-runs-nxstress.md:21` cited
+`combine_runs_model.py:17` for the call
+`self._hidra_ws.load_hidra_project(_project, load_raw_counts=False, …)`.
+- Verdict: drifted. `:17` is `self._hidra_ws = None`; the cited call is at
+  **`:21`**. Caught by `landing_trigger.py`, which flagged the citation because
+  `combine_runs_model.py` changed over `7a5ef73f..HEAD` — the case that A3 alone
+  would not have prioritised. The claim is true; only the pointer moved.
+- Action: corrected in place.
+
+**F1.2** (A7) — No other stale citations in this document or its open-questions
+companion.

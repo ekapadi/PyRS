@@ -2,7 +2,7 @@
 
 **Plan:** [NXstress GUI Hookup](README.md)
 **Phase:** 1
-**Depends on:** [01 — Config infrastructure & test framework](01-config-and-test-infra.md)
+**Depends on:** [01 — Config infrastructure & test framework](01-config-and-test-infra-PR.md)
 
 ---
 
@@ -80,7 +80,7 @@ through as-is to `NXstress.write`.
   different extension does not change which writer runs or what the file
   is named on disk.
 
-### `pyrs/interface/texture_fitting/model.py`
+### `pyrs/interface/texture_fitting/texture_fitting_model.py`
 
 - Same pattern as `PeakFittingModel` — suffix-dispatch in `save_fit_result`
   and `load_hidra_project_file`.
@@ -140,3 +140,24 @@ through as-is to `NXstress.write`.
 - Repeat for TextureFittingViewer.
 - Confirm existing `Save` (`.h5`) still works without regression.
 - `pytest tests/integration/test_nxstress_viewer_roundtrip.py` — all pass.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass, freshness check only)
+
+This spec has landed. Per the pass's scope it received an **A7 freshness check
+and nothing else**; the one item below is a pointer correction, which
+`process.md` §5.5 fixes in place regardless of tier.
+
+**F1.1** (A3) — Section heading: "`### pyrs/interface/texture_fitting/model.py`".
+- Referent: `pyrs/interface/texture_fitting/`.
+- Verdict: **no such file.** It is `texture_fitting_model.py`. This spec was
+  implemented and landed with the heading intact — the implementer read it, went
+  to the right file anyway, and nobody noticed. Harmless to a human; fatal to
+  anything automated.
+- Action: heading corrected in place. The same bad path appeared inside a brace
+  expansion in `README.md` §5 (`{texture_fitting_viewer,model}.py`) and is
+  corrected there too.
+
+**F1.2** (A7) — No stale citations otherwise: `landing_trigger.py` over
+`7a5ef73f..HEAD` finds none in this document.

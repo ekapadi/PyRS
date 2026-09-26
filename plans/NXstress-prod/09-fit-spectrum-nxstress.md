@@ -262,3 +262,56 @@ investigated and remains blocked, not left untouched by oversight.
   unaddressed by design; confirm the demo script doesn't assert against it.
 - Confirm `_sample.py:107`'s TODO comment reads as investigated-and-blocked,
   not silently unchanged from spec 08.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass)
+
+**F1.1** (A3) — **No defects found.** All twenty-one citations in this document
+were resolved against the current code and every one lands exactly on its
+claimed target, including the four that carry design weight:
+- `_fit.py:425-429` → the `##` placeholder comment block, and `_fit.py:430-438` →
+  the `dg[GROUP_NAME.DGRAM_FIT] = NXfield(...)` / `DGRAM_FIT_ERRORS` creations,
+  verbatim `np.empty((0, 0))`, `maxshape=(None, None)`, `fillvalue=np.nan` —
+  exactly as this spec describes them;
+- `_instrument.py:135` → `tz = float(shift.center_shift_z)` and `:140` →
+  `distance = float(geom.arm_length)`, the two writes whose co-existence is the
+  double-count this spec addresses;
+- `_fit.py:398` → `def init_group(cls, ws: HidraWorkspace, maskName: str,
+  peakss: list[PeakCollection])`, confirming **both** that it takes a single
+  `ws` today **and** that the `peakss` parameter already exists unused;
+- `NXstress.py:218` → `scan_pts, two_theta, data, errors =
+  _Diffractogram.diffractogramFromNexus(child)`, confirming the 4-tuple and its
+  single caller.
+
+Decisions item 15 recorded a round of line-number corrections against this
+spec; that round demonstrably held. This document is also the series' best
+example of the distinction the rest of the plan blurs: its "Multi-workspace
+scope" note states explicitly that its numbers are "cited against the current
+(pre-04b) codebase", while the Scope section describes the post-04b state —
+rather than conflating the two.
+
+**F1.2** (A4) — "the writer must resize them to the real shape before
+populating, not index-assign into an already-correctly-shaped array".
+- Referent: `h5py` 3.16.0 / `nexusformat` 1.0.8.
+- Verdict: **confirmed by probe**
+  ([`probes/a4_h5py_nexusformat_append.py`](probes/a4_h5py_nexusformat_append.py)).
+  Zero-sized resizable datasets are created as such, and `resize` followed by a
+  tail slice-assign works on a reopened, file-backed `NXfield`:
+
+  ```console
+    CLAIM   zero-sized resizable datasets are created as such
+    RESULT  initial shapes: {'scan_point': (0,), 'h': (0,), 'phase_name': (0,),
+            'center': (0,), 'fit': (0, 0)}
+
+    CLAIM   resize(cur+N); arr[cur:] = ... works on a ZERO-SIZED reopened dataset
+    RESULT  3 row(s) appended at offset 0; read back {'scan_point': [1, 2, 3],
+            'phase_name': ['Fe', 'Fe', 'Fe'], 'center': [1.1, 1.2, 1.3]}
+  ```
+- Action: none. The claim stands, now with evidence rather than inference.
+
+**A5 gap, recorded rather than assumed.** This spec's post-04b claims — that
+`_Diffractogram.init_group` will take `list[HidraWorkspace]`, and that the
+resize target is the total concatenated scan-point count across workspaces —
+**cannot be probed**, because 04b is unimplemented. A5-**uncovered**, not
+A5-verified.

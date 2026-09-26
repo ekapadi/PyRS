@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     for doc in m.scanned:
         found, _ = citations_mod.extract(doc)
         for cite in found:
-            status, matches = check_citations.resolve(cite.path, m.repo_root, roots)
+            status, matches = check_citations.resolve(cite.path, m.repo_root, roots, m.series_dir)
             if status != check_citations.OK:
                 continue
             rel = str(matches[0].relative_to(m.repo_root))

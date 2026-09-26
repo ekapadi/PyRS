@@ -103,6 +103,9 @@ class Manifest:
         subspecs: Absolute paths of the numbered subspecs, sorted.
         open_questions: Absolute paths of the open-questions documents, sorted.
         excluded: Absolute paths excluded from every scanner, sorted.
+        audit_output: Probe index and findings document -- this audit's own
+            output. Classified so the exhaustiveness rule holds, but never
+            scanned, because they are not plan documents.
         full: Subset of ``subspecs`` + readme getting the full seven-axis pass.
         freshness_only: Subset getting an A7 check and nothing else.
     """
@@ -115,6 +118,7 @@ class Manifest:
     subspecs: list[Path] = field(default_factory=list)
     open_questions: list[Path] = field(default_factory=list)
     excluded: list[Path] = field(default_factory=list)
+    audit_output: list[Path] = field(default_factory=list)
     full: list[Path] = field(default_factory=list)
     freshness_only: list[Path] = field(default_factory=list)
 
@@ -243,11 +247,24 @@ def _classify(series_dir: Path, cfg: dict) -> dict[str, list[Path]]:
     oq_dir = series["open_questions"].rstrip("/")
     exclude_patterns = cfg["exclude"]["paths"]
 
+    # `series.probes` and `series.findings` are OUTPUT paths (section 7.2): they
+    # are created by the audit, never existence-checked. But once created they
+    # are `*.md` under the series directory, so the exhaustiveness rule has to
+    # account for them or the loader fails the moment the first probe index is
+    # written -- which is exactly what happened on this series' first pass.
+    # They are classified, and deliberately NOT scanned: they are the audit's
+    # own output, not plan documents. Section 7.7's self-check property is
+    # unaffected, because `## Follow-up` sections live inside the plan documents
+    # themselves, which are scanned.
+    probes_dir = series["probes"].rstrip("/")
+    findings_path = series["findings"]
+
     buckets: dict[str, list[Path]] = {
         "readme": [],
         "subspec": [],
         "open_questions": [],
         "excluded": [],
+        "audit_output": [],
     }
     exclude_hits = {pattern: 0 for pattern in exclude_patterns}
 
@@ -263,6 +280,8 @@ def _classify(series_dir: Path, cfg: dict) -> dict[str, list[Path]]:
             hits.append("subspec")
         if rel.startswith(f"{oq_dir}/"):
             hits.append("open_questions")
+        if rel == findings_path or rel.startswith(f"{probes_dir}/"):
+            hits.append("audit_output")
         for pattern in exclude_patterns:
             if fnmatch.fnmatch(rel, pattern):
                 if "excluded" not in hits:
@@ -273,7 +292,8 @@ def _classify(series_dir: Path, cfg: dict) -> dict[str, list[Path]]:
             _fail(
                 f"{rel} matches no classification. Every *.md under the series "
                 f"directory must match exactly one of [series.readme], "
-                f"[series.subspecs], [series.open_questions] or [exclude.paths]."
+                f"[series.subspecs], [series.open_questions], [series.probes], "
+                f"[series.findings] or [exclude.paths]."
             )
         if len(hits) > 1:
             _fail(f"{rel} matches more than one classification: {', '.join(hits)}")
@@ -403,6 +423,7 @@ def load(series_dir: str | Path) -> Manifest:
         subspecs=buckets["subspec"],
         open_questions=buckets["open_questions"],
         excluded=buckets["excluded"],
+        audit_output=buckets["audit_output"],
         full=full,
         freshness_only=freshness_only,
     )
@@ -433,6 +454,7 @@ if __name__ == "__main__":
     print(f"subspecs         {len(m.subspecs)}")
     print(f"open questions   {len(m.open_questions)}")
     print(f"excluded         {len(m.excluded)}")
+    print(f"audit output     {len(m.audit_output)} (classified, not scanned)")
     print(f"full pass        {', '.join(p.name for p in m.full)}")
     print(f"freshness only   {', '.join(p.name for p in m.freshness_only)}")
     print(f"probes dir       {m.rel(m.probes_dir)} (output; not checked)")

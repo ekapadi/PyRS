@@ -76,7 +76,7 @@ noted in the config-schema design session). The method signature and
 expected output path convention should match what `ManualReductionViewer`
 expects, if/when such an action is added.
 
-`ReductionApp.save_diffraction_data` (`powder_pattern.py:224`, called from
+`ReductionApp.save_diffraction_data` (`powder_pattern.py:231`, called from
 `reduce_hidra_workflow` at `pyrs_api.py:348`) is a reasonable pattern to
 reuse for `save_project`'s own implementation — but since `save_project`
 has no current callers, there's no double-invocation risk either way;
@@ -132,3 +132,43 @@ _None._
 - `pytest tests/integration/test_manual_reduction_save.py` — all pass.
 - Confirm no regression: `reduce_hidra_workflow`'s existing automatic save
   continues to work unchanged (this spec doesn't touch it).
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass)
+
+**F1.1** (A3) — "`ReductionApp.save_diffraction_data` (`powder_pattern.py:224`,
+called from `reduce_hidra_workflow` at `pyrs_api.py:348`)".
+- Referent: `pyrs/core/powder_pattern.py`.
+- Verdict: drifted. `def save_diffraction_data` is at **:231**; `:224` is
+  `sub_runs = [sub_run_number]` inside `plot_reduced_data` — plausible,
+  unrelated code, which is what makes this class of defect survive re-reading.
+  **The prose claim is entirely true**; only the pointer rotted.
+- Action: corrected in place above to `powder_pattern.py:231` (a pointer, not a
+  belief). `pyrs_api.py:348` was verified correct and is unchanged.
+
+**F1.2** (A2) — This spec's files appear in no `README.md` §5 ownership row.
+- Referent: `README.md`'s `## 5. Files to be Modified`.
+- Verdict: correct by design but unrecorded. Decisions item 13 re-scoped 06 to
+  "an independent, optional PyRS cleanup item, not scheduled in this plan's
+  phases", and §5's table is organised by **phase** — so an unphased spec has
+  nowhere to appear. The consequence is that `pyrs/core/nexus_conversion.py` is
+  claimed by this spec and owned by nobody in the table, while
+  `pyrs/interface/manual_reduction/pyrs_api.py` is listed in §5's Phase-4 row as
+  spec 07's, even though this spec also edits it.
+- Action (for the implementing PR, if 06 is ever scheduled): add an explicit
+  `— (unscheduled)` row to §5 covering 06's two files, so the table stays
+  exhaustive. Until then this is recorded, not fixed — the table is accurate
+  about the *plan*, and 06 is deliberately outside it.
+
+**Checked and accurate — no action.** `pyrs_api.py:190` (`def save_project`),
+`manual_reduction_model.py:179-181`, `pyrs_api.py:348`, and both
+`nexus_conversion.py:118` / `:374` `NotImplementedError` branches all land
+exactly on their claimed targets, and the Overview's central corrections — that
+the class is `ReductionController` and that `save_project` has zero callers —
+hold as written.
+
+**A4/A5 exemption, recorded rather than assumed.** This spec asserts nothing
+about third-party library behaviour and nothing about how another module treats
+its output. No probe was needed. (Written down because afterwards "no probe was
+needed" and "no probe was written" are indistinguishable.)

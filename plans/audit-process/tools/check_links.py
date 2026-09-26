@@ -11,7 +11,8 @@ What it resolves
   including directory targets;
 * a bare ``#anchor`` against the containing file's own headings;
 * ``path#Lnn`` against the target's actual line count;
-* ``path#heading-anchor`` against a real heading's GitHub slug.
+* ``path#heading-anchor`` against a real heading's GitHub slug, or against an
+  inline ``<a id="...">`` anchor, which GitHub honours and ``{#id}`` is not.
 
 What it cannot do
 -----------------
@@ -78,7 +79,7 @@ def _check_fragment(target_path: Path, fragment: str) -> tuple[str, str] | None:
     except (OSError, UnicodeDecodeError) as exc:
         return ("unreadable-target", str(exc))
     heads = markdown.headings(text)
-    if fragment.lower() in {h.slug for h in heads}:
+    if fragment.lower() in {h.slug for h in heads} | markdown.html_anchors(text):
         return None
 
     declared = [h for h in heads if h.explicit_anchor == fragment]

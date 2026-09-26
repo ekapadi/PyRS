@@ -8,8 +8,9 @@ implementation.
 
 ---
 
-## Q1 — RESOLVED (downgraded): does `NXreflections` permit additional index columns at all? {#q1}
+<a id="q1"></a>
 
+## Q1 — RESOLVED (downgraded): does `NXreflections` permit additional index columns at all?
 Originally generalized `open-questions/05-strain-stress-viewer.md` Q1 into a
 hard implementation gate, on the assumption that no precedent existed for
 extending `NXreflections` beyond the schema's required columns.

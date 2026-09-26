@@ -1,0 +1,5 @@
+We are in the process of implementing a NeXuS compliant, NXstress-schema based, I/O feature for the PyRS codebase.
+The backend portion of this work has been completed (see 'pyrs/utilities/NXstress'), and now we are connecting this backend to the PyRS GUI frontend.
+This NXstress-hookup work is described by the implementation subspecs in 'plans/NXstress-prod', and we have completed the implementation
+through subspec 03.  Our next task will be to implement subspec 04.
+

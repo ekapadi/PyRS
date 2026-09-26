@@ -284,3 +284,127 @@ the `STRESS_FIELD` item, which remains its own tracked gap.)
   spectrum; overlay with the raw data to confirm it is plausible.
 - Confirm `_sample.py:107`'s TODO comment is updated to reflect the
   investigated-but-blocked status, not left as if untouched.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass)
+
+**F1.1** (A3) — "**The FIXME originally cited (`file_object.py:510`) does not
+exist there.** The only comment at that location is about a return-type
+annotation, not calibration state."
+- Referent: `pyrs/projectfile/file_object.py:510`.
+- Verdict: **the main claim is true; its supporting detail is not.** There is
+  indeed no calibration FIXME at `:510` — but `:510` is
+  `if "_var" not in mask_id:`, **not a comment at all**. The return-type
+  annotation TODO (`*** TODO: actually this returns an instance of
+  `DENEXDetectorGeometry`! ***`) is at **`:541`**, thirty-one lines away. A
+  correction that fixes a location and then mis-describes what is actually there
+  is the same defect class it was written to fix.
+- Action (for the implementing PR): replace the second sentence with "There is
+  no comment at that location at all; `:510` is a mask-id `_var` check. The
+  nearest comment, at `:541`, is an unrelated return-type-annotation TODO." The
+  same sentence appears in `README.md:726` (Decisions item 14a) and is corrected
+  there too.
+
+**F1.2** (A4) — "`model_variance` … propagated from the stored per-parameter fit
+errors via the `uncertainties` package (already used elsewhere in the codebase)"
+and "no covariance matrix is retained anywhere in PyRS — Mantid's fit-error
+output provides diagonal standard errors only".
+- Referent: the `uncertainties` package and Mantid 6.16.20260918.1225.
+- Verdict: **not probed.** This is a genuine A4 claim about two third-party
+  packages and it is recorded here as **uncovered**, not as verified. It was not
+  probed because the code that would consume it does not exist yet, so a probe
+  would test the packages in isolation rather than this design's use of them —
+  but that is a scheduling reason, not an exemption. Whoever implements this
+  spec should probe both halves before relying on them, because "Mantid returns
+  only diagonal errors" is precisely the kind of claim that reads as settled and
+  is not.
+- Action: flagged for the implementing PR. No document change.
+
+**Checked and accurate — no action.** Every other citation in this spec lands
+exactly on its claimed target: `peak_collection.py:399-419` →
+`def __set_fit_status`; `instrument_geometry.py:88,107` → `calibrated: bool,`
+and its `check_bool_variable` call, which together confirm the central "accepts
+but only validates, never stores" finding; `instrument_geometry.py:109-116` →
+`def apply_shift`; `_sample.py:107` → the `STRESS_FIELD` dimensions TODO.
+
+**A4/A5 exemption for the `STRESS_FIELD` item, recorded.** The blocked
+`STRESS_FIELD` shape question is genuinely un-probeable: no file in the
+repository carries such a log, which is this spec's own finding. Recorded as an
+exemption with a reason rather than left silent.
+
+---
+
+## Follow-up 2 — 2026-09-26 (closing the A4 gap left open by Follow-up 1)
+
+Follow-up 1 F1.2 recorded this spec's `uncertainties`/Mantid claims as **not
+probed**, reasoning that the consuming code does not exist yet. That reasoning
+was wrong: the claims are about an installed package and about existing PyRS
+source, both executable today regardless of what consumes them. Probed now —
+[`probes/a4_fit_error_propagation.py`](probes/a4_fit_error_propagation.py).
+
+**F2.1** (A4) — **All five claims confirmed.**
+
+```console
+  CLAIM   uncertainties does first-order propagation, and PyRS already uses it
+          via `_object_uarray` (claim 1)
+  RESULT  uncertainties 3.2.3; (2.0±0.1)*(3.0±0.2) -> 6.0+/-0.5; closed-form
+          first-order sigma = 0.500000
+
+  CLAIM   `calculate_profile` is dead code with zero callers anywhere (claim 3)
+  RESULT  defined at pyrs/core/peak_profile_utility.py:679; call sites found: NONE
+
+  CLAIM   …with leftover debug print(s), a raise for unsupported backgrounds, and
+          an exclusive-right-bound window (claim 3's three bugs)
+  RESULT  print() at line(s) [736]; raise(s) [(758, "RuntimeError('Background type
+          {} is not supported'…"), …]; windowing uses `[left_x_index:right_x_index]`
+          (exclusive right bound): True
+
+  CLAIM   only Gaussian/PseudoVoigt and Linear/Quadratic are supported (claim 4)
+  RESULT  PeakShape members: ['GAUSSIAN', 'PSEUDOVOIGT'];
+          BackgroundFunction members: ['LINEAR', 'QUADRATIC']
+
+  CLAIM   the raw-NeXus loader explicitly does not load monitors (claim 5)
+  RESULT  ['424: Filename=…, MetaDataOnly=True, LoadM…']
+```
+
+Claim 3's "hardcoding the `Quadratic` background's extra term to zero" is exact:
+the `LINEAR` branch calls `quadratic_background(..., b2=0.0, b3=0.0)`, and any
+other background raises.
+
+**F2.2** (A4) — Claim 2, "no covariance matrix is retained anywhere in PyRS",
+needs one refinement. A source scan does find two hits, and they are **not** a
+counter-example — but a reader running the same grep would think they were:
+
+```console
+  RESULT  pyrs/core/peak_profile_utility.py:854: def calculate_chi2(covariance_matrix):
+          pyrs/core/peak_profile_utility.py:857: :param covariance_matrix:
+
+  CLAIM   …and those two hits are in `fit_peak`, a DEAD scipy path that computes a
+          covariance and throws it away (claim 2, refined)
+  RESULT  `scipy.optimize.curve_fit` returns one at peak_profile_utility.py:868,
+          passed to a `# TODO` stub that ignores it and returns 1.0 (:854-861).
+          Modules importing `fit_peak` from peak_profile_utility: NONE — dead code.
+```
+
+So the claim holds — nothing *retains* one — with two things worth stating:
+the path that computes a covariance is **scipy, not Mantid**, and it discards it
+into a `# TODO` stub. The documented approximation therefore stands, and this
+notes where correlations would come from if a future spec wanted them.
+
+**F2.3** (A6) — "the only comment there is an unrelated return-type-annotation
+TODO" (Follow-up 1 F1.1 corrected its *location*; this corrects its *dismissal*).
+- Referent: the archived draft's §2.2 against this spec's rewrite of it.
+- Verdict: **"unrelated" is wrong.** The draft's claim at that spot was
+  "`HidraProjectFile.read_instrument_geometry` returns `DENEXDetectorGeometry`
+  even for calibrated instruments (`file_object.py:510` FIXME) — round-tripping
+  through NXstress inherits this inaccuracy." The comment actually in the file,
+  at `:541`, is `*** TODO: actually this returns an instance of
+  DENEXDetectorGeometry! ***` — **the same observation**, attached to
+  `read_instrument_geometry`'s docstring. It is a weaker claim than the draft's
+  (a documented return-type mismatch rather than lost calibration state), but it
+  is the same subject, not an unrelated one.
+- Action (for the implementing PR): the dismissal should read "the nearest
+  comment, at `:541`, records the same return-type mismatch the draft pointed
+  at, but says nothing about calibration state — which is the gap this spec
+  addresses, and it lives in `DENEXDetectorGeometry`, not here."

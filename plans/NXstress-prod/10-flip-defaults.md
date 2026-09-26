@@ -89,7 +89,7 @@ spec 02 / start of spec 03):
   the "one-time" flag must be tracked once at the **window level** (a
   single boolean on the main window instance) — its three direction slots
   (e11/e22/e33) all share the same `filesSelected` handler
-  (`strain_stress_view.py:331-333`), so a per-call guard inside that
+  (slots: `strain_stress_view.py:331-333`; the shared handler itself is `controller.filesSelected`, `controller.py:9`, invoked from `strain_stress_view.py:68`), so a per-call guard inside that
   handler would still fire up to three times per session.
 - Release notes / migration guide for existing users, including how to
   re-enable `.h5` saving via a personal config override (setting the `env`
@@ -223,3 +223,86 @@ action by default. Only the deprecation-hint UI (status bars) above is new.
   the reminder in this spec's Overview — neither exists yet as of this
   writing).
 - `tests/scripts/cis_tests/NXstress_demo_script.py` — runs cleanly.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass)
+
+**F1.1** (A4) — "only `PeakFittingViewer` currently has a status bar", and the
+hint uses "`PeakFittingViewer`'s existing `showMessage` pattern".
+- Referent: `pyrs/interface/`, probed by
+  [`probes/a4_qtpy_qaction_statusbar.py`](probes/a4_qtpy_qaction_statusbar.py).
+- Verdict: **true of the four viewers this spec enumerates, too strong
+  unqualified — and the "existing pattern" is not the pattern this spec
+  proposes.**
+
+  ```console
+    CLAIM   Only PeakFittingViewer has a status bar today
+    RESULT  .ui files declaring a QStatusBar: ['manualreductionwindow.ui',
+            'peakfitwindow.ui', 'pyrsmain.ui']; source files calling
+            self.statusBar(): NONE
+  ```
+
+  Three `.ui` files declare a `QStatusBar`, so ManualReductionViewer and the
+  launcher window have one too. And `self.statusBar()` is called **nowhere** in
+  `pyrs/` today: `PeakFittingViewer` reaches its bar as `self.ui.statusbar`,
+  because the bar comes from `peakfitwindow.ui`. So this spec's mechanism is
+  **net-new**, not a continuation of an existing pattern.
+- Verdict on safety: **the mechanism is nonetheless correct.** The obvious risk —
+  that calling `self.statusBar()` on a window whose bar came from a `.ui` file
+  would create a *second* bar — does not occur:
+
+  ```console
+    CLAIM   on a window whose status bar came from a .ui file, does self.statusBar()
+            return THAT bar or create a second one?
+    RESULT  statusBar() is the declared bar: True; QStatusBar children: 1
+
+    CLAIM   self.statusBar() creates a status bar lazily on a bare QMainWindow
+    RESULT  QStatusBar children before call: 0; after call: 1; returned QStatusBar
+
+    CLAIM   calling it twice returns the SAME object (idempotent, so 'cheap' holds)
+    RESULT  first is second: True
+  ```
+- Action (for the implementing PR): qualify the sentence — "of the four viewers
+  this spec touches, only `PeakFittingViewer` has a status bar today; it comes
+  from `peakfitwindow.ui` and is reached as `self.ui.statusbar`, not via
+  `self.statusBar()`". Keep the `self.statusBar()` mechanism: it is lazy,
+  idempotent, and returns a `.ui`-declared bar when one exists, so it works
+  uniformly across all four. The same over-strong sentence is in
+  `README.md:728` (Decisions item 16a) and is corrected there too.
+
+**F1.2** (A3) — "its three direction slots (e11/e22/e33) all share the same
+`filesSelected` handler (`strain_stress_view.py:331-333`)".
+- Referent: `pyrs/interface/strainstressviewer/`.
+- Verdict: the claim is true, but the citation points at the wrong thing.
+  `:331-333` are the three `FileLoad("e11"/"e22"/"e33", ...)` constructions —
+  correct for the *slots*. The shared handler is `controller.filesSelected`,
+  defined at `controller.py:9` and invoked from `strain_stress_view.py:68`
+  inside `FileLoad`. Since this spec's design point is that "a per-call guard
+  inside that handler would still fire up to three times per session", an
+  implementer needs the handler, and this citation does not lead there.
+- Action: corrected in place above to cite the slots **and** the handler.
+
+**F1.3** (A1) — `## Tests` names no test file.
+- Referent: this document's own `## Overview`, which calls the status-bar work
+  "the one piece of genuinely new UI in an otherwise pure config-flip spec".
+- Verdict: the Tests section is four manual smoke-test bullets and zero paths.
+  New UI — a status bar added to three viewers, plus a one-time
+  per-session deprecation hint with a window-level flag — ships with no
+  automated coverage named anywhere.
+- Action (for the implementing PR): name
+  `tests/ui/test_nxstress_roundtrip.py` (marked `gui` **and** `integration`, per
+  `CLAUDE.md`) and add at least: the hint appears exactly once per session for
+  each of the four viewers; it appears once, not three times, when all three
+  StrainStress direction slots are loaded; and the `.h5` Save action is disabled
+  but still visible under the flipped default.
+
+**Invariants flagged, not written** (an audit flags; the implementing PR
+writes). Both are net-new shapes for this repo, which `process.md` §5.1 is
+explicit about:
+1. **A Qt API-surface pin** — that `setEnabled(False)` leaves `isVisible()`
+   true. Owner: this PR. Tier: `gui` + `integration`. Possible from spec 02
+   onward, since that is when the first gated action exists.
+2. **A convention scan** — that no viewer reintroduces `setVisible` for
+   format-gated actions, which is the rule Decisions item 11 rests on. Owner:
+   this PR. Tier: unit (source scan, no widget).

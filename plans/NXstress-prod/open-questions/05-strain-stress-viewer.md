@@ -10,8 +10,9 @@ spec either.
 
 ---
 
-## Q1 — RESOLVED by 04b: is a `direction` axis on `NXreflections` schema-conformant? {#q1}
+<a id="q1"></a>
 
+## Q1 — RESOLVED by 04b: is a `direction` axis on `NXreflections` schema-conformant?
 Originally framed as specific to this spec's `direction` axis. Chris's
 response below (workspace-per-direction, provenance on output) is exactly
 the general N-workspace, discriminator-indexed mechanism now scoped as its

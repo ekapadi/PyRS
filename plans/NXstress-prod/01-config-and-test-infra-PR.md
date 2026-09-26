@@ -243,3 +243,71 @@ exceeded any realistic value.
   config-loader unit tests pass: shipped defaults load correctly, `env`
   override merges correctly, `validate_config()` passes with defaults, and
   raises when both formats are disabled.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass, freshness check only)
+
+This spec has landed. Per the pass's scope it received an **A7 freshness check
+and nothing else** — its claims are settled by shipped code and passing tests,
+not by re-reading. Recorded so that "A7 only" is never mistaken for "all seven
+axes were run".
+
+**F1.1** (A7) — No stale citations. `landing_trigger.py` over
+`7a5ef73f..HEAD` finds no citation in this document pointing into a file that
+changed in the range, and this document carries no `path:LINE` citations to
+drift.
+
+**F1.2** (A4) — Two `neutrons_standard` behaviours this spec's shipped code
+depends on, neither documented anywhere in the series. Found while probing
+README §2.3; recorded here because this is the spec that owns
+`pyrs/utilities/config.py` and the test framework. Probe:
+[`probes/a4_neutrons_standard_config.py`](probes/a4_neutrons_standard_config.py).
+
+1. **`Config` writes to the user's home directory on every load.**
+   `_Config.__init__` calls `persistBackup()`, which writes
+   `~/.pyrs/application.yml.bak`:
+
+   ```console
+     CLAIM   UNDOCUMENTED: _Config.__init__ -> persistBackup() writes to the user's
+             HOME on every load
+     RESULT  /home/…/.pyrs/application.yml.bak existed_before=True; mtime changed by
+             a bare Config import: True
+   ```
+
+   Benign in normal use, but it means importing `pyrs.utilities.config` is not
+   side-effect-free — worth knowing before anything imports it in a context
+   where the home directory is read-only or shared.
+
+2. **Under a test environment the config resources root moves outside the
+   repository.** `_find_root_dir()` redirects to `MODULE_ROOT.parent.parent /
+   "tests"` whenever `isTestEnv()` — that is, when the `env` variable contains
+   `"test"` **and** `conftest` is in `sys.modules`. For this repo's layout that
+   resolves one level too high:
+
+   ```console
+     CLAIM   UNDOCUMENTED: with env containing 'test' AND conftest imported, the
+             resources root moves to <repo>/tests/
+     RESULT  FileNotFoundError: [Errno 2] No such file or directory:
+             '/home/ux0/workspaces/tests/resources/application.yml'
+   ```
+
+   Note the path: `workspaces/tests`, **not** `PyRS/tests` — outside the
+   repository altogether. Any test that sets `env` to a name containing "test"
+   (the documented idiom for per-tier config, e.g. `integration_test.yml`) will
+   fail to load config. This is a live constraint on the test framework this
+   spec shipped.
+- Action (for a follow-up PR, not this audit): decide deliberately whether PyRS
+  ever sets `env` to a "test"-containing value. If it should, a
+  `tests/resources/application.yml` is needed at the location
+  `neutrons_standard` actually computes — which is not inside this repo, so the
+  honest options are to avoid the idiom or to raise it upstream. **Flagged, not
+  fixed**: it is a design decision, not a documentation defect.
+
+**F1.3** (A4) — The other six README §2.3 claims about `neutrons_standard` were
+probed and **confirmed**: the `init()`-before-import ordering requirement, the
+`pyrs/resources/application.yml` location requirement, `env=<file>` deep merge
+(siblings survive), the `~/.pyrs/pyrs-user.yml` auto-load, the absence of any
+schema validation, and dot-string key access. One characterisation is wrong —
+a stray import does not "silently corrupt" anything — see the README's
+Follow-up 1 and `probes/README.md`.

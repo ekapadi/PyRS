@@ -35,6 +35,9 @@ _FENCE_RE = re.compile(r"^(\s*)(`{3,}|~{3,})", re.MULTILINE)
 _SPAN_RE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.DOTALL)
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$", re.MULTILINE)
 _EXPLICIT_ANCHOR_RE = re.compile(r"\{#([A-Za-z0-9_-]+)\}\s*$")
+# GitHub DOES honour an inline HTML anchor, which is the portable way to give a
+# heading a stable id -- unlike `{#id}`, which it renders as literal text.
+_HTML_ANCHOR_RE = re.compile(r"""<a\s+(?:id|name)\s*=\s*["']([A-Za-z0-9_-]+)["']""", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,15 @@ def slugify(heading_text: str) -> str:
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE)
     return text.strip().lower().replace(" ", "-")
+
+
+def html_anchors(text: str) -> set[str]:
+    """Every id declared by an inline ``<a id="...">`` outside fenced code.
+
+    These are real, linkable targets on GitHub, so a checker that only collects
+    heading slugs reports them as dead.
+    """
+    return {m.group(1).lower() for m in _HTML_ANCHOR_RE.finditer(mask_fences(text))}
 
 
 def headings(text: str) -> list[Heading]:

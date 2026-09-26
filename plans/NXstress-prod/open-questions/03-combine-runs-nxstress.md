@@ -18,7 +18,7 @@ will reconstruct raw counts when `input_data` are present?
 a legitimate test, just not one this spec's own round-trip test should own.
 `CombineRunsModel.combine_project_files` calls
 `self._hidra_ws.load_hidra_project(_project, load_raw_counts=False, ...)`
-(`combine_runs_model.py:17`) — raw counts are never loaded by this viewer's
+(`combine_runs_model.py:21`) — raw counts are never loaded by this viewer's
 own merge step, so the workspace this spec exports never has `input_data`
 to write in the first place. Testing "does `NXstress.read()` reconstruct
 raw counts when `input_data` is present" would require a workspace this

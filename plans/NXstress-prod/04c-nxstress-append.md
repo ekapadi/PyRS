@@ -38,7 +38,7 @@ action) without a corresponding menu action anywhere in the GUI today.
 `_peaks.py:246-338`) only ever required two invariants — each compound key
 occupies one contiguous run (R1), and `scan_point` increases within a run
 (R2, already guaranteed upstream by `SubRuns.set`,
-`sample_logs.py:164-166`) — never global lexicographic order. Sortedness
+`sample_logs.py:167-168`) — never global lexicographic order. Sortedness
 beyond that was incidental, not a schema requirement.
 
 This spec adopts that directly: a **single-step write** (all
@@ -249,7 +249,7 @@ on-disk NXstress structures and the new data's `HidraWorkspace`/
 ### `pyrs/utilities/NXstress/_peaks.py`
 
 - `init_group` — implement the tail-append path described in the `# TODO`
-  at L180-181, reusing the existing `_append_peak` (`_peaks.py:190-244`)
+  at `_peaks.py:180-181`, reusing the existing `_append_peak` (`_peaks.py:190-244`)
   against an existing on-disk `PeakIndex` group instead of a freshly
   `_init`-ed one: read the existing on-disk `PeakIndex` arrays (via
   `.nxdata`, using 04b's name-keyed discriminator resolution to reconstruct
@@ -393,3 +393,99 @@ on-disk NXstress structures and the new data's `HidraWorkspace`/
   the appended batch's rows sorted among themselves and following as a
   second contiguous block, not interleaved into the first — and that no
   group claims or implies a single global sort across the whole file.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass)
+
+**F1.1** (A4) — **This spec's central mechanism is confirmed.** The claims that
+tail-append "reduces to code that already exists" — `cur = shape[0];
+resize(cur+N); arr[cur:] = …` — were, until now, asserted only from reading:
+every landed use of that shape runs against **in-memory** `NXfield`s during
+`init_group`, while append runs it against a **reopened, file-backed** group.
+Those are different objects with different backing stores.
+- Referent: `h5py` 3.16.0 / `nexusformat` 1.0.8, probed by
+  [`probes/a4_h5py_nexusformat_append.py`](probes/a4_h5py_nexusformat_append.py).
+- Verdict: **works, including the two cases most likely to have failed** — a
+  genuinely zero-sized dataset, and variable-length UTF-8 string fields
+  (`phase_name`, `mask`):
+
+  ```console
+    CLAIM   resize(cur+N); arr[cur:] = ... works on a ZERO-SIZED reopened dataset
+    RESULT  3 row(s) appended at offset 0; read back {'scan_point': [1, 2, 3],
+            'phase_name': ['Fe', 'Fe', 'Fe'], 'center': [1.1, 1.2, 1.3]}
+
+    CLAIM   grows by exactly N, existing rows unchanged, new rows after them
+    RESULT  2 row(s) appended at offset 3; scan_point now [1, 2, 3, 4, 5];
+            existing rows preserved: True; vlen strings: ['Fe','Fe','Fe','Ni','Ni']
+  ```
+- Action: none. The design stands, now on evidence.
+
+**F1.2** (A4) — "a rejected (`RuntimeError`) and an unsupported
+(`NotImplementedError`) append are both true no-ops — the on-disk entry is left
+byte-for-byte unchanged either way".
+- Verdict: **confirmed**, for the stated precondition (the classification check
+  runs before any resize):
+
+  ```console
+    CLAIM   opening 'rw' and raising BEFORE any resize leaves the file unchanged
+    RESULT  sha256[:16] before=cf489122b1f81fd2 after=cf489122b1f81fd2
+            identical=True (simulated conflict detected before any resize)
+  ```
+- Action: none — but note what this does **and does not** establish. It confirms
+  that merely opening in `"rw"` and raising is byte-neutral. It does **not**
+  establish atomicity across a *partial* append, which is why this spec's
+  "check all affected groups **before any resize/append call is made**"
+  ordering requirement is load-bearing and must survive implementation.
+
+**F1.3** (A4) — "Appending a genuinely new, distinguishable workspace to an entry
+… isn't possible without adding a new on-disk column, which this spec's
+tail-append design does not do".
+- Verdict: **the sentence is literally true and its framing misleads.** Adding a
+  new column to an existing group *succeeds*:
+
+  ```console
+    CLAIM   adding a NEW on-disk column to an existing group -- 04c says its design
+            does not do this; is it even possible?
+    RESULT  SUCCEEDED -- group now has ['center', 'direction', 'fit', 'h',
+            'phase_name', 'scan_point']
+  ```
+
+  So the restriction is a **scope decision, not a technical limit**. As written
+  ("isn't possible without …, which this design does not do") a reader
+  reasonably concludes the format forbids it and stops looking.
+- Action (for the implementing PR): reword to "…would require adding a new
+  on-disk column. That is mechanically possible — see
+  `probes/a4_h5py_nexusformat_append.py` — but it is schema restructuring, which
+  this spec deliberately excludes; a later spec could lift the restriction
+  cheaply." This matters because it changes what a future spec can assume.
+
+**F1.4** (A3) — the bare line reference in the peak-index bullet, preceding
+"reusing the existing `_append_peak`".
+- Verdict: that bare line reference had no resolvable antecedent — no filename
+  appears anywhere in that paragraph, and the file (`_peaks.py`) was implied only by the
+  enclosing section. The parallel prose at `04b:40-41` writes it explicitly.
+  Reported rather than guessed, per the toolkit's rule.
+- Action: qualified in place to `` `_peaks.py:180-181` ``.
+
+**F1.5** (A3) — `sample_logs.py:164-166` corrected in place to `:167-168`; see
+`04b-multi-workspace-nxstress.md`'s Follow-up 1 F1.1 for the evidence.
+
+**Checked and accurate — no action.** `_peaks.py:180-181`,
+`_input_data.py:44-46,63-72`, `NXstress.py:151-152`, `_peaks.py:190-244`,
+`_peaks.py:246-338` all land exactly on their claimed targets. The premise at
+`:14-21` — that `write` already accumulates entries and the guard "only fires on
+an accidental name collision" — is confirmed against the landed library
+([`probes/a5_nxstress_roundtrip.py`](probes/a5_nxstress_roundtrip.py)):
+
+```console
+  CLAIM   what mode 'a' actually does today: does it EXTEND the existing entry,
+          or add a new one?
+  RESULT  no exception raised; NXentry count 2 -> 3 ['entry', 'entry_2', 'entry_3'].
+          So a write never extends an existing entry -- it appends a new one.
+```
+
+**A5 gap, recorded rather than assumed.** This spec's conflict classification,
+Case-A/Case-B dispatch and `entry_number` targeting **cannot be probed** —
+none of it exists yet. A5-**uncovered**, not A5-verified. The *mechanism* they
+rest on is covered by F1.1–F1.3; the dispatch logic is not.

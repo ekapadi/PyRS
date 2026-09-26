@@ -32,6 +32,9 @@ Blind spots
 * Cannot see a citation "corrected" only in a Follow-up while the body still
   cites the old number. That is exactly why a ``path:LINE`` pointer is fixed in
   place rather than only logged.
+* A citation naming a sibling plan document (``README.md:729``) is resolved
+  against the series directory and its line number checked there. That is how
+  an audit's own Follow-up citations get checked -- see section 7.7.
 * Markdown ``#Lnn`` links are deliberately **not** handled here;
   ``check_links.py`` owns those, and the two tools must not double-report.
 * Inheritance is scoped to a paragraph (a row, inside a table). A long bullet
@@ -89,8 +92,24 @@ def _index(repo_root: Path, roots: tuple[str, ...]) -> dict[str, list[Path]]:
     return index
 
 
-def resolve(path_text: str, repo_root: Path, roots: tuple[str, ...]) -> tuple[str, list[Path]]:
-    """Resolve a cited path to real files. Returns ``(status, matches)``."""
+def resolve(
+    path_text: str,
+    repo_root: Path,
+    roots: tuple[str, ...],
+    series_dir: Path | None = None,
+) -> tuple[str, list[Path]]:
+    """Resolve a cited path to real files. Returns ``(status, matches)``.
+
+    A series cites its own sibling documents as well as code -- ``README.md:729``
+    means the plan README, not anything under ``code.roots``. Those are resolved
+    against the series directory first, so a cross-document citation is checked
+    rather than reported as a missing source file.
+    """
+    if series_dir is not None and path_text.endswith(".md"):
+        for candidate in (series_dir / path_text, series_dir / "open-questions" / path_text):
+            if candidate.is_file():
+                return (OK, [candidate])
+
     direct = repo_root / path_text
     if direct.is_file():
         in_scope = any(str(direct).startswith(str(repo_root / r)) for r in roots)
@@ -107,7 +126,7 @@ def resolve(path_text: str, repo_root: Path, roots: tuple[str, ...]) -> tuple[st
     return (OK, candidates)
 
 
-def check_document(doc: Path, repo_root: Path, roots: tuple[str, ...]) -> list[Row]:
+def check_document(doc: Path, repo_root: Path, roots: tuple[str, ...], series_dir: Path | None = None) -> list[Row]:
     found, unresolved = citations_mod.extract(doc)
     rows: list[Row] = []
 
@@ -115,7 +134,7 @@ def check_document(doc: Path, repo_root: Path, roots: tuple[str, ...]) -> list[R
         rows.append(Row(doc, cite.line, cite.raw, UNRESOLVED, None, 0, "no antecedent path in scope", True))
 
     for cite in found:
-        status, matches = resolve(cite.path, repo_root, roots)
+        status, matches = resolve(cite.path, repo_root, roots, series_dir)
         if status != OK:
             detail = ", ".join(str(m.relative_to(repo_root)) for m in matches) or "no file of that name"
             rows.append(Row(doc, cite.line, cite.raw, status, None, 0, detail, cite.inherited))
@@ -159,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     for doc in m.scanned:
         if args.doc and doc.name != args.doc:
             continue
-        rows.extend(check_document(doc, m.repo_root, roots))
+        rows.extend(check_document(doc, m.repo_root, roots, m.series_dir))
 
     problems = [r for r in rows if r.status in PROBLEM_STATUSES]
     shown = rows if args.all else problems

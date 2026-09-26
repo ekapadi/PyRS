@@ -3,7 +3,7 @@
 **Plan:** [NXstress GUI Hookup](README.md)
 **Phase:** 3
 **Depends on:**
-- [01 — Config infrastructure & test framework](01-config-and-test-infra.md)
+- [01 — Config infrastructure & test framework](01-config-and-test-infra-PR.md)
 - [04 — NXstress internal cleanup](04-nxstress-internal-cleanup.md)
 - [04b — Multi-workspace NXstress I/O](04b-multi-workspace-nxstress.md)
 
@@ -133,7 +133,7 @@ manually.
   bidirectional resolver in 04b). Matches the existing `@property`
   convention already used for `name`, `hidra_project_file`,
   `reduction_masks`, `calibration_file`, `sample_log_names`
-  (`pyrs/core/workspaces.py:55-1155`).
+  (`pyrs/core/workspaces.py:55-1168`).
 - `pyrs/dataobjects/fields.py` — resolve any `NotImplementedError` in
   `StrainField` / `StressField` that is exercised by the read-back path
   (i.e., when reconstructing a `StressField` from the direction-indexed
@@ -270,3 +270,65 @@ NXstress is limited to:
   `direction`) rather than only the log-fallback case.
 - Confirm the shipped `pyrs/resources/application.yml` includes
   `nxstress.discriminator_fields: ["direction"]`.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass)
+
+**F1.1** (A1/A2) — `## Tests` schedules a GUI assertion into the integration
+tier: "Enablement wiring: with `nxstress.enable: false`, assert **Save as
+NXstress…** is disabled but still visible", inside
+`tests/integration/test_nxstress_viewer_roundtrip.py`.
+- Referent: `CLAUDE.md`'s *Test tiers, markers, and locations* table, and
+  `docs/ground_truths.md`'s "`pixi run test` hangs on the GUI tier under an
+  interactive display".
+- Verdict: **mis-tiered.** Asserting a `QAction`'s enabled/visible state
+  constructs and drives a Qt widget, which is the `gui` tier by definition. As
+  written the test would live in `tests/integration/` and be selected by
+  `pixi run test-integration` (`-m 'integration and not gui'`), a task that does
+  **not** set `QT_QPA_PLATFORM=offscreen` — the exact configuration
+  `ground_truths.md` records as hanging until the 300-second timeout fires.
+  `README.md:749` already names the right home for this
+  (`tests/ui/test_nxstress_roundtrip.py`, "GUI-level round-trips"); the two were
+  never reconciled.
+  The assertion itself is sound — probed against this repo's real Qt
+  ([`probes/a4_qtpy_qaction_statusbar.py`](probes/a4_qtpy_qaction_statusbar.py)):
+
+  ```console
+    qtpy 2.4.3, API PyQt6, Qt 6.11.0
+
+    CLAIM   setEnabled(False) leaves the action VISIBLE, merely grayed out
+    RESULT  isEnabled()=False isVisible()=True; for contrast, after setVisible(False):
+            isEnabled()=False isVisible()=False  <- setVisible contrast
+  ```
+- Action (for the implementing PR): **split the Tests section.** The
+  enablement-wiring bullet moves to `tests/ui/test_nxstress_roundtrip.py`
+  carrying **both** `@pytest.mark.gui` and `@pytest.mark.integration` (`gui`
+  alone would drop it from the integration tier). The model-level bullets —
+  save/load round-trip, the config-precondition error, and the direction-block
+  contiguity check, none of which touch a widget — stay in the integration tier.
+
+**F1.2** (A3) — "Matches the existing `@property` convention already used for
+`name`, `hidra_project_file`, `reduction_masks`, `calibration_file`,
+`sample_log_names` (`pyrs/core/workspaces.py:55-1155`)".
+- Referent: `pyrs/core/workspaces.py` (1288 lines).
+- Verdict: the claim is true — all five are real `@property` accessors, at
+  62, 70, 80, 92 and **1168**. But `sample_log_names` at 1168 falls **outside**
+  the cited `55-1155` range, so the citation does not span what the sentence
+  says it spans.
+- Action: corrected in place to `55-1168`. The same range appears at
+  `04b-multi-workspace-nxstress.md:195` and is corrected there too.
+
+**F1.3** (A5) — "`HidraWorkspace` has no notion of direction at all".
+- Referent: `pyrs/core/workspaces.py`.
+- Verdict: **confirmed.** `grep -c 'def direction'` returns 0; there is no
+  `direction` property, method or attribute. This spec's premise holds.
+
+**A5 gap, recorded rather than assumed.** This spec's central claims — that
+04b's bidirectional resolver will set `.direction` back onto each reconstructed
+workspace, and that three directions produce three contiguous on-disk blocks —
+**cannot be probed yet**, because 04b is unimplemented. They remain
+A5-**uncovered**, not A5-verified. What *was* probed is the invariant beneath
+them: the reader enforces only run-contiguity and monotonic `scan_point`, so a
+block-per-direction layout is safe
+([`probes/a5_peakcollection_ranges.py`](probes/a5_peakcollection_ranges.py)).

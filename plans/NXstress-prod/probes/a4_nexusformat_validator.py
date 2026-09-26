@@ -22,8 +22,12 @@ Claims under test
    and "Write a ``.nxs`` file and open it in the ``nexusformat`` validator
    (with ``nxstress.use_production_names = true`` temporarily...)".
 
-Claim 4 tells the implementer of spec 04 to run a tool that claims 1-3 say does
-not exist. Whichever way this resolves, one of these documents is wrong.
+Scope of this probe, stated precisely: it tests only what the **installed**
+package provides. The NeXus-org validator does exist, as a tool loaded and run
+from its own separate repository -- which is what claims 2 and 3 say. So the
+question is not whether a validator exists anywhere, but whether spec 04's
+Verification tells its implementer where to get one. Claims 2 and 3 hedge;
+claim 4 does not.
 
 Run: ``pixi run python plans/NXstress-prod/probes/a4_nexusformat_validator.py``
 """
@@ -94,11 +98,15 @@ def main() -> int:
     print("\n" + "-" * 78)
     print("VERDICT")
     print("-" * 78)
-    print("Claims 1, 2 and 3 are CONFIRMED: no validate module, no nxvalidate")
-    print("script, no validator name anywhere in the public API.")
-    print("Claim 4 is therefore WRONG in part: spec 04's Verification directs an")
-    print("implementer to a validator that does not exist. Its *other* half -- the")
-    print("nexusformat Python API -- does exist and is usable.")
+    print("Claims 1, 2 and 3 are CONFIRMED *of the installed package*: no validate")
+    print("module, no nxvalidate script, no validator name in the public API.")
+    print("This does NOT mean no validator exists -- the NeXus-org validator is a")
+    print("separate repository, exactly as claims 2 and 3 say.")
+    print("Claim 4 is therefore UNDER-SPECIFIED rather than false: spec 04 tells an")
+    print("implementer to run the validator without saying it must be fetched")
+    print("separately, while 09 and 10 both carry that hedge. Spec 04's other")
+    print("instructions -- the nexusformat Python API, and h5dump -- are fine: both")
+    print("are present in this environment.")
     return 0
 
 

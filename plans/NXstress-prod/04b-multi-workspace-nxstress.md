@@ -3,7 +3,7 @@
 **Plan:** [NXstress GUI Hookup](README.md)
 **Phase:** 2/3 (bridges NXstress internal cleanup and the StrainStressViewer hookup)
 **Depends on:**
-- [01 — Config infrastructure & test framework](01-config-and-test-infra.md)
+- [01 — Config infrastructure & test framework](01-config-and-test-infra-PR.md)
 - [04 — NXstress internal cleanup](04-nxstress-internal-cleanup.md)
 
 ---
@@ -22,7 +22,7 @@ between inputs at read time. Workspace boundaries are recovered from
 **explicit discriminator field(s) on the combined peak index**
 (`_peaks.py::PeakIndex`), named by a new config key,
 `nxstress.discriminator_fields: list[str]` (default `[]`) — see
-[01](01-config-and-test-infra.md), which this spec now depends on directly.
+[01](01-config-and-test-infra-PR.md), which this spec now depends on directly.
 The specific field names in use for any given deployment are a config-level
 policy decision, not a per-call argument, and are deliberately not fixed by
 this spec — see `open-questions/04b-multi-workspace-nxstress.md` Q2.
@@ -48,7 +48,7 @@ current code:
   agreed order satisfies that, not specifically lexicographic.
 - The monotonic-`scan_point`-within-a-run invariant is guaranteed
   upstream by PyRS itself, not by this sort:
-  `SubRuns.set` (`pyrs/dataobjects/sample_logs.py:164-166`) already
+  `SubRuns.set` (`pyrs/dataobjects/sample_logs.py:167-168`) already
   raises `"subruns are not sorted in increasing order"` unless
   `np.all(value[:-1] < value[1:])`, so every `PeakCollection.sub_runs`
   and `HidraWorkspace.get_sub_runs()` is strictly increasing by
@@ -143,7 +143,7 @@ machinery.
   `_Diffractogram.init_group` already writes
   `dg["scan_point"] = NXfield(ws.get_sub_runs())` verbatim (`_fit.py:410`),
   `_InputData.init_group` iterates `ws._raw_counts.keys()` in workspace
-  order (`_input_data.py:36`), and `_InputData.readSubruns`'s exact-match
+  order (`_input_data.py:37`), and `_InputData.readSubruns`'s exact-match
   check — `if ws.get_sub_runs() != scan_points: raise RuntimeError(...)`
   (`_input_data.py:70-72`) — keeps working unchanged specifically *because*
   each workspace's slice of the concatenated array equals its own
@@ -192,7 +192,7 @@ changes to that class.
 **Forward note for later specs:** `HidraWorkspace` already uses plain
 `@property` for this exact shape of accessor — `name`, `hidra_project_file`,
 `reduction_masks`, `calibration_file`, `sample_log_names`
-(`pyrs/core/workspaces.py:55-1155`) are all properties, none are
+(`pyrs/core/workspaces.py:55-1168`) are all properties, none are
 `()`-called methods. If a later spec (e.g. 05, for `direction`) wants a
 first-class dedicated accessor rather than relying on the `SampleLogs`
 fallback, it should add a `@property` matching that convention — NXstress's
@@ -278,11 +278,11 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
   discriminator field falls back to the log path rather than raising on
   `setattr`.
 - The get fallback reuses `HidraWorkspace.get_sample_log_value(name)`
-  (`pyrs/core/workspaces.py:693-724`) as-is — it already returns the single
+  (`pyrs/core/workspaces.py:713-745`) as-is — it already returns the single
   value when every sub-run agrees, and raises otherwise. No new
   constancy-checking code is needed. The set fallback reuses the existing
   `HidraWorkspace.set_sample_log(name, sub_runs, values, units="")`
-  (`pyrs/core/workspaces.py:981`).
+  (`pyrs/core/workspaces.py:1001`).
 - This bidirectional shape exists so that any later spec adding a dedicated
   `@property` (get **and** set — see 05's `direction` property) gets
   round-trip behavior for free: `write()` reads the property off each input
@@ -301,7 +301,7 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
 - `init_group` methods change from accepting one `ws` to accepting
   `list[HidraWorkspace]`; concatenate along the scan-point axis. Reuse the
   merge logic `HidraWorkspace.append_hidra_project` already implements
-  in-memory (`pyrs/core/workspaces.py:497`) rather than re-deriving it.
+  in-memory (`pyrs/core/workspaces.py:517`) rather than re-deriving it.
 - `_Instrument.init_group` treats two genuinely different kinds of field:
   - **Geometry, detector shift, and calibration state** are single,
     entry-wide values — validate they're consistent across all N input
@@ -309,7 +309,7 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
     mixed-calibration merges are not supported by this spec).
   - **Wavelength is not** one of these, even though an earlier draft of
     this bullet grouped it with geometry. It's stored per-scan-point
-    (`mono["wavelength"] = NXfield(wavelength, ...)`, `_instrument.py:103`)
+    (`mono["wavelength"] = NXfield(wavelength, ...)`, `_instrument.py:104`)
     and can already legitimately vary *within* a single workspace under
     existing PyRS semantics (`HidraWorkspace.get_wavelength` can return a
     per-subrun dict). It belongs to the scan-point family's concatenation
@@ -458,3 +458,104 @@ writeup of how this gap was found.
   multi-workspace cases.
 - `pytest tests/integration/test_nxstress_viewer_roundtrip.py` — all pass, no
   regression in specs 02/03.
+
+---
+
+## Follow-up 1 — 2026-09-25 (first seven-axis pass)
+
+**F1.1** (A3) — "`SubRuns.set` (`pyrs/dataobjects/sample_logs.py:164-166`)
+already raises `"subruns are not sorted in increasing order"` unless
+`np.all(value[:-1] < value[1:])`".
+- Referent: `pyrs/dataobjects/sample_logs.py`.
+- Verdict: **the claim is true; the pointer lands on a different `RuntimeError`
+  in the same method.** `:164-166` is the *"Cannot change subruns when
+  non-empty"* raise. The guard and message quoted verbatim above are at
+  line **167-168**. This is the most confusable possible miss: the right method,
+  the wrong error, three lines apart — and it is the single sentence that
+  Decisions item 17 rests two subspecs' design on, which is exactly the
+  situation `process.md` §5.3 warns about.
+  The claim itself is confirmed by probe
+  ([`probes/a5_peakcollection_ranges.py`](probes/a5_peakcollection_ranges.py)):
+
+  ```console
+    CLAIM   SubRuns.set raises unless strictly increasing
+    RESULT  RAISED RuntimeError: subruns are not sorted in increasing order
+  ```
+- Action: corrected in place to lines 167-168, here and at
+  `04c-nxstress-append.md:41` and `README.md:729`.
+
+**F1.2** (A3) — `pyrs/core/workspaces.py` citations are systematically stale, from
+a single upstream cause.
+- Referent: `pyrs/core/workspaces.py`.
+- Verdict: one insertion in that file explains **seven** stale citations across
+  two documents — roughly +2 lines before ~L463 and +20 after ~L500:
+
+  | Cited (superseded) | Claimed symbol | Actually at |
+  |---|---|---|
+  | 693-724 | `get_sample_log_value` | **713-745** |
+  | 981 | `set_sample_log` | **1001** |
+  | 497 | `append_hidra_project` | **517** |
+  | 55-1155 | the five `@property` accessors | `sample_log_names` is at **1168**, outside the range |
+  | README §1.1, ×4 | `load_hidra_project`, `append_hidra_project`, `save_experimental_data`, `save_reduced_diffraction_data` | **465, 517, 1045, 1116** |
+
+  **Every prose claim around them is still true.** This is the `process.md` §2.2
+  pattern: the pointers rotted and the sentences did not, and the superseded 497 now lands
+  on a plausible `except KeyError:` rather than on nothing, which is why
+  re-reading never caught it.
+- Action: all corrected in place, here and in `README.md`. The root cause is one
+  edit, not seven independent errors — worth recording so the next pass checks
+  `workspaces.py` citations as a *group* when that file moves.
+
+**F1.3** (A3) — Two citations land on the comment above the code they quote.
+- The citation at this spec's "merge logic" bullet gave `_input_data.py:36` for
+  "iterates `ws._raw_counts.keys()`"; that line is the comment, and the iteration
+  is at line **37**.
+- The wavelength bullet gave `_instrument.py:103` and quoted `mono["wavelength"]
+  = NXfield(wavelength, ...)`; that line is the `# wavelength by <sub run>?`
+  comment, and the code is at line **104**.
+- Action: both corrected in place.
+
+**F1.4** (A5) — Decisions item 17's central premise, on which this spec's
+discriminator-first `sort_key` depends.
+- Referent: `pyrs/utilities/NXstress/_peaks.py`, probed by
+  [`probes/a5_peakcollection_ranges.py`](probes/a5_peakcollection_ranges.py).
+- Verdict: **fully confirmed.** The reader accepts a globally unsorted index so
+  long as each compound key is contiguous, and enforces both stated invariants:
+
+  ```console
+    CLAIM   globally UNSORTED but each key contiguous -- 'locally sorted, globally
+            segmented' is accepted
+    RESULT  segmented: ACCEPTED -> 2 block(s) [(0, 3), (3, 6)]
+
+    CLAIM   a key split into two runs is rejected (contiguity IS enforced)
+    RESULT  interleaved: RAISED RuntimeError: Interleaved blocks detected for
+            sub-index ('Fe', 1, 1, 1, 'm')
+
+    CLAIM   descending scan_point within one run is rejected (monotonicity IS enforced)
+    RESULT  non-monotonic: RAISED RuntimeError: scan_point values are not strictly
+            increasing within PeakCollection block at ('Fe', 1, 1, 1, 'm'), indices [0, 3)
+
+    CLAIM   no searchsorted/argsort/binary search anywhere in _peaks.py
+    RESULT  occurrence counts: {'searchsorted': 0, 'argsort': 0, 'bisect': 0, 'np.sort': 0}
+  ```
+- Action: none — the design stands. Per `process.md` §5.3 the probe reproduces
+  the counterparty's block rule **locally** rather than importing it, so it fails
+  if `_peaks.py` changes its splitting rule instead of silently tracking the
+  change. **Promote that property into the test the 04b PR writes** — a test that
+  imports `_peaks.py`'s own rule would pass vacuously.
+
+**F1.5** (A2) — This spec's `## NXstress Changes` heading lists four modules in a
+single `###` where only the first is path-qualified:
+`### \`pyrs/utilities/NXstress/_input_data.py\`, \`_sample.py\`, \`_instrument.py\`, \`_fit.py\``.
+- Verdict: not wrong, but it is a fourth structural convention in a series that
+  already has three (see the README's Follow-up 1, F1.6). Any mechanical
+  ownership check must resolve the bare siblings against the first entry's
+  directory or they read as unclaimed.
+- Action: recorded, not changed — the heading is unambiguous to a human reader.
+
+**Checked and accurate — no action.** `_peaks.py:313`/`:332` (both interleave
+checks), `_peaks.py:306`/`:326` (both monotonicity checks), all three
+`sorted(peakss, key=_Peaks.PeakIndex.sort_key)` sites (`_peaks.py:184`,
+`_fit.py:87`, `_fit.py:287`) — the "three calls" count is exactly right —
+`_peaks.py:44-45`, `_fit.py:410`, `_input_data.py:70-72`,
+`_definitions.py:221-231`, `_peaks.py:246-338`.
