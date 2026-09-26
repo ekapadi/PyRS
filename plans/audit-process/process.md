@@ -394,6 +394,7 @@ no dependency is added. Worked example:
 | `git.base_commit` | **Triple-checked:** the object exists; `git merge-base --is-ancestor <sha> HEAD` passes; and `git log -1 --format=%s` **equals `base_subject`** |
 | `scope.*` | A glob matching zero files, a file in both lists, or a file matched by `subspecs` and in neither, are each errors |
 | `exclude.paths` | Same exhaustiveness rule: every discovered `*.md` matches exactly one classification. A zero-match pattern is an error; so is a path matched both here and by `subspecs` |
+| `series.probes`, `series.findings` | **Output paths, not inputs: created on demand, never existence-checked.** Every other path key fails loudly when absent; these two are absent on a series' first pass by definition, so applying the same rule would make the manifest unloadable exactly when it is first needed |
 | `code.roots` | Each root must exist; a citation resolving outside them is reported `OUT-OF-SCOPE`, never dropped |
 | any unknown key | Error. Typos are the thing this catches |
 

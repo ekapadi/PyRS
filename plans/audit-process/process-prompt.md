@@ -1,9 +1,26 @@
 # Agent prompt -- audit pass over a PyRS plan series
 
-*Copy everything below the rule into a fresh session. It assumes no prior context.*
+> **This header is for you, not the agent. Do not send it.**
+> Send everything from the `RETARGET` marker below to the end of the file.
 
-**To retarget this at a different PyRS feature series, edit the RETARGET block and
-nothing else.** Every field in it is series-specific; everything after it is not.
+### Pre-launch checklist
+
+Work down the RETARGET block. Three fields go stale on their own; the rest only
+change when you point this at a different series.
+
+| | Field | Check before every launch |
+|---|---|---|
+| [ ] | `CURRENT TEST STATE` | **Goes stale.** Re-run the three tiers if the branch moved. Never send an assumed value -- an audit that starts from "tests pass" and is wrong wastes the whole pass. |
+| [ ] | `KNOWN FINDINGS` | **Goes stale.** These are the calibration set; the line numbers behind them live in process.md section 2 and drift whenever the cited files change. The prompt tells the agent to re-verify, but confirm section 2 has been re-checked since the last landing. |
+| [ ] | `FULL PASS` / `FRESHNESS ONLY` | **Goes stale as subspecs land.** A landed subspec moves from the first list to the second. Every subspec must appear in exactly one. |
+| [ ] | `SERIES` / `WHAT IT IS` | Only when retargeting. `SERIES` must contain an `audit.toml`. |
+| [ ] | `PRIOR AUDIT EVIDENCE` | Only when retargeting -- it sets the agent's expectation of what earlier passes already covered. |
+| [ ] | `PROBE CANDIDATES` | Only when retargeting. A starting list, never a checklist. |
+| [ ] | `HIGHEST A7 EXPOSURE` | Only when retargeting -- the subspec whose referents have actually moved. |
+
+**To retarget at a different series:** edit the RETARGET block and nothing else.
+Everything after it is series-agnostic by construction; if you find yourself
+editing below the marker, that is a bug in this file.
 
 ---
 
@@ -24,7 +41,13 @@ nothing else.** Every field in it is series-specific; everything after it is not
                           recording a correction found by re-reading against the
                           codebase. Those rounds covered A2 and A3.
 
-    CURRENT TEST STATE    <FILL THIS IN -- run the suite; do not assume it passes>
+    CURRENT TEST STATE    All three tiers green, measured at 8634088a on 2026-09-25
+                          (QT_QPA_PLATFORM=offscreen):
+                            pixi run test-unit         298 passed, 140 deselected
+                            pixi run test-integration   94 passed, 28 skipped, 2 xfailed
+                            pixi run test-gui           16 passed
+                          Re-measure if the branch has moved; do not carry this
+                          forward as an assumption.
 
     KNOWN FINDINGS        The five in process.md section 2. They are the CALIBRATION
                           SET for the tools you build: 7 dead links across 5
@@ -72,7 +95,10 @@ Read, in this order:
 **Build the toolkit first; it does not exist yet.** Implement
 `plans/audit-process/tools/` per process.md section 7, against the manifest at
 `<SERIES>/audit.toml`. Then **tune it before you record anything**: KNOWN FINDINGS
-above are the calibration set. A link checker that does not report exactly those
+above are the calibration set. **Re-verify them first** -- process.md section 2
+gives the command for each, and its line numbers are themselves claims about a
+moving branch. Tuning a checker against a stale expected value is the defect this
+whole process exists to prevent. A link checker that does not report exactly those
 seven dead links is not ready to be trusted, and neither is a citation checker that
 misses those drifts. Every tool in this class needs a tuning round against
 known-good input -- a tool whose first output is wrong in a plausible-looking way
@@ -105,7 +131,7 @@ Deliverables:
   a pointer rather than a belief: fix it in the body **and** log the finding. Do
   **not** put findings in `open-questions/` or the README Decisions Log; both are
   human-facing records with different audiences.
-- **Probes committed** under `<SERIES>/probes/`, each with its real output pasted
+- **Probes written** under `<SERIES>/probes/`, each with its real output pasted
   into the document at the claim it supports, plus the index at
   `probes/README.md`.
 - **A findings document** at `<SERIES>/review/findings.md`, whose **section 0 is a
@@ -116,5 +142,10 @@ Deliverables:
 - **Invariants that should become tests: flagged, not written.** An audit flags;
   the implementing PR writes. Most of the code they would guard does not exist yet,
   so writing them now produces tests with no subject.
+
+**Do not commit anything, and do not stage anything.** Leave the working tree for
+the user to review; they write their own commit messages. This holds for every
+artifact above -- probes, Follow-up sections, corrected citations and the findings
+document alike.
 
 Start by proposing a plan for the pass before beginning it.
