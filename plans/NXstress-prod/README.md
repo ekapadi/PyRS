@@ -1039,3 +1039,24 @@ the rule this series follows, and why:
 A future session reading `CLAUDE.md:12` in isolation will reach for
 `ground_truths.md` first. It should read `CLAUDE.md:357-363` alongside it, and
 this entry.
+
+**F3.5** — **`audit.toml`'s `[code] roots` gained `plans/` and `CLAUDE.md`.**
+F3.4 above needed to cite `CLAUDE.md:357-363` and `plans/audit-process/process.md`
+— the two documents whose disagreement it records. Neither was in `roots`, so
+`check_citations.py` reported all six pointers as `out-of-scope` or
+`path-not-found`: correctly, since it is built never to guess at a path it cannot
+resolve.
+
+The alternative was to write them as prose so they stopped being citation-shaped,
+which the round-one Follow-ups did for *historical* line numbers. That is right
+for a superseded value and wrong here: these are live pointers into files that
+will move, and the whole purpose of F3.4 is to be found and re-read by a later
+session. Suppressing the check would have made them exactly the kind of quietly
+drifting pointer this toolkit exists to catch — ten of which it found in this
+README's own architecture tables.
+
+Widening the roots resolved all six and introduced **zero** new findings across
+the corpus: 364 citations, the same 3 accepted `open-questions/06` residue as
+before. `CLAUDE.md`'s line numbers are now checked on every run, which is the
+point — that file is shared and edited outside this series, so its numbers are
+more likely to drift than most, not less.

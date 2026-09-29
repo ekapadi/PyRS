@@ -1,16 +1,17 @@
 <!-- ===== UPDATE BEFORE EACH NEW SUBSPEC: edit these four fields ===== -->
 
-    SUBSPEC              04
+    SUBSPEC              04b
                          The subspec to implement this session. Its document is
-                         plans/NXstress-prod/04-nxstress-internal-cleanup.md
+                         plans/NXstress-prod/04b-multi-workspace-nxstress.md
 
-    LANDED THROUGH       03
+    LANDED THROUGH       04
                          Everything at or below this number has shipped. If
                          SUBSPEC depends on something above this, stop and say so
                          -- see README.md's "## Sub-specifications" table, whose
                          `Depends on` column was corrected by this audit.
+                         (04b depends on 01 and 04; both have landed.)
 
-    AUDIT BASE           7a5ef73f
+    AUDIT BASE           eb5457b16dab
                          The `git.base_commit` currently in
                          plans/NXstress-prod/audit.toml. Used as
                          `base_commit..HEAD`, which should span **exactly the
@@ -19,19 +20,26 @@
                          commit. Advanced each time a subspec lands (step 9).
                          Paired with `base_subject` and checked at load, so
                          update BOTH or every tool exits 2.
-                         NOTE: the current value is this branch's point of
-                         divergence, set so the first audit pass could see all
-                         of 01-03 at once. The first application of step 9 will
-                         narrow it to the one-subspec convention.
+                         This value is the first application of step 9: it is the
+                         commit immediately before subspec 04's first commit, so
+                         the range spans exactly 04's one commit ("subspec 04",
+                         27 files). The previous value was this branch's point of
+                         divergence, set wide on purpose so the first audit pass
+                         could see 01-03 at once; that is now discharged.
 
     LAST AUDIT PASS      2026-09-25 / 2026-09-26 (first seven-axis pass)
                          Claims verified before this date may have gone stale.
-
-    NOTE: `LANDED THROUGH` and `AUDIT BASE` are second copies of values that
-    live in plans/NXstress-prod/audit.toml. That is deliberate, and step 0 makes
-    them self-checking rather than merely duplicated -- a header that disagrees
-    with the manifest means one of the two was not updated, which is exactly
-    what you want to find out before you start rather than after.
+                         **04b was NOT re-audited when 04 landed on 2026-09-29.**
+                         That pass changed `_peaks.py`, `_definitions.py`,
+                         `_fit.py`, `_instrument.py` and `test_definitions.py` --
+                         all of which 04b and its open-questions cite. Expect
+                         `landing_trigger.py` in step 2 to flag them; it already
+                         does, and those hits are yours to resolve, not the
+                         accepted residue. Known-stale before you start:
+                         `test_definitions.py:100-105` (that test was rewritten
+                         wholesale) and the `_peaks.py` line ranges in
+                         `open-questions/04b-*.md` (a helper method and new
+                         imports were added above them).
 
 <!-- ===== end UPDATE ===== -->
 
@@ -54,11 +62,16 @@ disagree, **the Follow-up wins.**
 
 **So read your subspec's Follow-ups first, and look specifically for items that
 strike, supersede or re-scope something in the body above them.** They exist:
-the first audit pass found a subspec whose entire `## PyRS Changes` section
+the first audit pass found that subspec 04's entire `## PyRS Changes` section
 scheduled work that had already been done upstream -- removed by the very commit
 the plan's claims were written against. An implementer reading only the body
 would have done it twice. Assume yours may contain the same shape until you have
 checked.
+
+04's implementation pass then found the same shape twice more, so treat this as
+the norm rather than a one-off: its instrument-name item named a workspace field
+that does not exist anywhere in PyRS, and its rotation-order TODO turned out to
+sit beside a larger defect than the TODO described. Both are in 04's Follow-up 7.
 
 The single exception is a `path:LINE` citation, which is a pointer rather than a
 belief: those were corrected in place, so the body's line numbers were accurate
@@ -106,8 +119,10 @@ as of LAST AUDIT PASS. They drift again as code moves, which is what
    - `plans/NXstress-prod/probes/README.md` -- the Disposition column tells you
      which probes this PR is expected to promote into tests, and the
      failure-modes table tells you how these probes have misled people before.
-   - `README.md`'s `## 4. Decisions Log`. Rows 19-23 came out of the audit and
-     supersede parts of several subspec bodies.
+   - `README.md`'s `## 4. Decisions Log`. Rows 19-27 came out of the audit and
+     the 04 implementation pass, and supersede parts of several subspec bodies.
+     Note row 25 **supersedes row 23**, and rows 24-27 are new numbers, not a
+     revival of the 24/25 that Follow-up 6 F6.1 collapsed into 23.
    - `open-questions/<same number>.md`, if one exists. It is a stakeholder Q&A
      record, not specification -- but some entries carry the verification
      writeup a Decisions Log row rests on, so read it when a decision affecting
@@ -242,10 +257,24 @@ as of LAST AUDIT PASS. They drift again as code moves, which is what
    step 0 is for. Saying so here is the difference between a caught omission and
    a silently wrong base.
 
-10. **Ground truths.** If a probe turns up something true of PyRS generally
-    rather than of one document -- an installed library's real behaviour, an
-    environment constraint -- it belongs in `docs/ground_truths.md` in that
-    file's `**Why this matters going forward:**` form, with the probe linked.
+10. **Where a finding goes -- read this before writing one up.**
+    Findings go in an **append-only `## Follow-up N` section of the document
+    being audited** (`CLAUDE.md` lines 357-363). A finding about one of this
+    plan's documents goes in that document's Follow-up; a series-wide finding
+    goes in `README.md`'s. Nowhere else, in full.
+
+    `CLAUDE.md` line 12 separately says to ALWAYS record key findings in
+    `docs/ground_truths.md`, and that pulls the other way. **It misled the 04
+    pass**, which wrote two findings there in full, duplicating what 04's
+    Follow-up 7 already held -- the drift mechanism `process.md` section 9
+    rejects. Those were reverted.
+
+    The rule this series follows, and why, is `README.md`'s Follow-up 3 F3.4:
+    `docs/ground_truths.md` may carry at most a short durable fact POINTING AT
+    the Follow-up that holds the evidence -- never a copy of the finding. Note
+    `CLAUDE.md` is shared with the instrument scientist, who maintains a
+    separate one, so do not edit it to resolve this; the tension is known and
+    recorded.
 
 
 ## Working agreements
@@ -277,3 +306,14 @@ as of LAST AUDIT PASS. They drift again as code moves, which is what
 - **"Accepted without raising" is not "harmless".** Report the resulting state,
   not just the absence of an exception -- an HDF5 name containing `/` raises
   nothing and silently creates a nested group.
+- **Do not describe an array from its first few values.** The 04 pass printed
+  `log[:5]`, saw five identical numbers, and wrote "this log is constant" into a
+  Follow-up as evidence. Over all 150 values it varied by 60 mm; the five matched
+  only because they were one row of a nested scan. A test caught it. The
+  conclusion survived, the evidence did not -- print `min`/`max`/`ptp` and a
+  count of distinct values before characterising real data.
+- **A grep over the source is not a probe of the output.** Reading the order of
+  the transformations `_instrument.py` writes told an earlier pass what was
+  written; it could not show that seven of the eight were unreachable. Build the
+  artifact and traverse it. (More of these in `probes/README.md`'s failure-modes
+  table -- read it, per step 1.)
