@@ -27,6 +27,7 @@ from nexusformat.nexus import (
     NXtransformations,
 )
 import numpy as np
+import re
 from typing import List, Tuple
 
 from pyrs.dataobjects.constants import HidraConstants
@@ -218,17 +219,212 @@ def suffix_from_group_name(group_name: str, base_name: str) -> str:
         raise RuntimeError(f"Cannot extract suffix (e.g. mask name) from '{group_name}'")
 
 
+# NeXus `validItemName`, the authoritative rule for what may appear in a group or
+# field name. Reproduced verbatim from `nxdl.xsd` of the NeXus definitions
+# repository (`nexusformat/definitions`, NXDL v2026.01, commit 004da96e):
+#
+#     <xs:pattern value="[a-zA-Z0-9_]([a-zA-Z0-9_.]*[a-zA-Z0-9_])?" />
+#     <xs:maxLength value="63" />
+#
+# The rule is NOT shipped by the installed `nexusformat` package, and it is not
+# in the NXstress application definition either -- it belongs to the NXDL schema
+# that governs all of them. The application definition itself is vendored at
+# `docs/developer/source/design/nexus/NXstress.nxdl.xml`; this rule lives here,
+# beside the code that enforces it. `plans/NXstress-prod/probes/` reads the
+# upstream file live and fails if either value below has drifted from it.
+#
+# Two consequences that are easy to get wrong, and were:
+#   * '.' is legal in the INTERIOR only -- never leading or trailing;
+#   * a LEADING DIGIT is legal, so '2theta' (a real log name) needs no escaping.
+VALID_ITEM_NAME = r"[a-zA-Z0-9_]([a-zA-Z0-9_.]*[a-zA-Z0-9_])?"
+MAX_IDENTIFIER_LENGTH = 63
+
+_VALID_ITEM_NAME_RE = re.compile(f"^{VALID_ITEM_NAME}$")
+
+# `__` (two underscores) introduces an escape. Making the introducer two
+# characters rather than one is what keeps names legible: a lone '_' is then
+# never the start of an escape, so it passes through untouched. Of the 185 real
+# log names in `tests/data`, 118 encode verbatim and *none* needs an escaped
+# underscore -- where a single-'_' introducer would have rewritten all 37 names
+# containing one.
+_ESCAPE = "__"
+
+_EDGE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+_INTERIOR_CHARS = _EDGE_CHARS | {"."}
+
+
+def _legal_at(ch: str, *, edge: bool) -> bool:
+    # The rule is position-dependent in exactly one way: '.' is allowed in the
+    # interior but not at either end.
+    return ch in (_EDGE_CHARS if edge else _INTERIOR_CHARS)
+
+
+def _escape_char(ch: str) -> str:
+    codepoint = ord(ch)
+    return f"{_ESCAPE}{codepoint:02X}" if codepoint < 256 else f"{_ESCAPE}u{codepoint:04X}"
+
+
+# Throughout the PyRS codebase, `None` is the key for the default mask -- in
+# `HidraWorkspace._mask_dict` and `._diff_data_set` alike. NXstress cannot use `None`
+# as a group name, so it uses `DEFAULT_TAG`. The two functions below are the single
+# place that correspondence is expressed; before, each call site re-derived it inline
+# (`keys.discard(None); keys.add(DEFAULT_TAG)`), which is what the TODO in `_fit.py`
+# meant by "mask naming (and storage) is messed up". Writer and reader now agree by
+# construction rather than by coincidence.
+
+
+def workspace_mask_key(mask_name: str):
+    """Map an NXstress mask name to the key `HidraWorkspace` stores it under.
+
+    Args:
+        mask_name: Mask name as written to the NXstress file.
+
+    Returns:
+        `None` for the default mask, otherwise `mask_name` unchanged.
+
+    Example:
+        >>> workspace_mask_key(DEFAULT_TAG) is None
+        True
+    """
+    return None if mask_name == DEFAULT_TAG else mask_name
+
+
+def nxstress_mask_name(mask_key) -> str:
+    """Map a `HidraWorkspace` mask key to the name NXstress writes.
+
+    Args:
+        mask_key: Mask key as held by `HidraWorkspace`; `None` is the default mask.
+
+    Returns:
+        `DEFAULT_TAG` for the default mask, otherwise `mask_key` unchanged.
+
+    Example:
+        >>> nxstress_mask_name(None) == DEFAULT_TAG
+        True
+    """
+    return DEFAULT_TAG if mask_key is None else mask_key
+
+
+def nxstress_mask_names(*mask_keys) -> set:
+    """Normalise one or more collections of workspace mask keys to NXstress names.
+
+    The default mask is always present in the result: NXstress requires one, and it
+    is generated at write time when the workspace has none.
+
+    Args:
+        *mask_keys: Iterables of `HidraWorkspace` mask keys.
+
+    Returns:
+        The set of NXstress mask names, always including `DEFAULT_TAG`.
+    """
+    names = {DEFAULT_TAG}
+    for keys in mask_keys:
+        names.update(nxstress_mask_name(key) for key in keys)
+    return names
+
+
 def allowed_identifier(s: str) -> str:
-    # Convert PV-log name to NeXus-compliant identifier
+    """Convert an arbitrary PV-log name to a NeXus-compliant identifier.
 
-    # This function is simplified, for the moment (making several assumptions about the input string):
-    #
-    # -- ':' characters are not allowed, and are replaced by '_';
-    # -- '.' are allowed, and are assumed to be in the interior
-    #    of string;
-    # -- TODO: check for other disallowed chars, such as "$"?
+    The conversion is **injective and reversible** -- see :func:`decode_identifier`.
+    That matters more than it sounds: the previous implementation replaced ':'
+    with '_' and nothing else, which is many-to-one, so two distinct PV logs
+    (``HB2B:CS:X`` and ``HB2B_CS_X``) collapsed onto one group and the second
+    silently overwrote the first, including the ``local_name`` attribute that
+    exists to record the original name. Being injective makes that collision
+    impossible rather than merely detectable.
 
-    return s.replace(":", "_")
+    Encoding forms, all introduced by ``__``:
+
+    ==========  ==========================================================
+    ``__XX``    the character with byte value ``0xXX`` -- ``__3A`` is ``:``
+    ``__uXXXX`` a codepoint above U+00FF
+    ``__5F``    a literal ``_`` that would otherwise be read as an escape
+    ``_``       a lone underscore means itself
+    ==========  ==========================================================
+
+    Args:
+        s: PV-log name, as recorded by the control system. Arbitrary text.
+
+    Returns:
+        A name matching :data:`VALID_ITEM_NAME`, no longer than
+        :data:`MAX_IDENTIFIER_LENGTH` characters.
+
+    Raises:
+        ValueError: If `s` is empty, or if the encoded form exceeds the
+            63-character NeXus limit.
+
+    Example:
+        >>> allowed_identifier("HB2B:Mot:sz_real")
+        'HB2B__3AMot__3Asz_real'
+        >>> allowed_identifier("2theta")
+        '2theta'
+    """
+    if not s:
+        raise ValueError("Cannot convert an empty string to a NeXus identifier")
+
+    out: List[str] = []
+    last = len(s) - 1
+    for i, ch in enumerate(s):
+        edge = i == 0 or i == last
+        if ch == "_":
+            nxt = s[i + 1] if i + 1 < len(s) else ""
+            # A lone '_' only becomes ambiguous when the NEXT emitted token also
+            # starts with '_' -- that is, the next character is another '_', or is
+            # itself illegal and so will be escaped. One character of lookahead.
+            if nxt == "_" or (nxt != "" and not _legal_at(nxt, edge=(i + 1 == last))):
+                out.append(_escape_char("_"))
+            else:
+                out.append("_")
+        elif _legal_at(ch, edge=edge):
+            out.append(ch)
+        else:
+            out.append(_escape_char(ch))
+
+    encoded = "".join(out)
+    if len(encoded) > MAX_IDENTIFIER_LENGTH:
+        raise ValueError(
+            f"PV-log name '{s}' encodes to '{encoded}' ({len(encoded)} characters),\n"
+            f"  which exceeds the NeXus limit of {MAX_IDENTIFIER_LENGTH}."
+        )
+    return encoded
+
+
+def decode_identifier(s: str) -> str:
+    """Recover the original PV-log name from :func:`allowed_identifier` output.
+
+    Decoding needs no lookahead: ``__u`` begins a 7-character form, ``__`` a
+    4-character one, and anything else is a literal.
+
+    Args:
+        s: An identifier produced by :func:`allowed_identifier`.
+
+    Returns:
+        The original PV-log name.
+
+    Raises:
+        ValueError: If `s` contains a truncated or non-hexadecimal escape.
+
+    Example:
+        >>> decode_identifier("HB2B__3AMot__3Asz_real")
+        'HB2B:Mot:sz_real'
+    """
+    out: List[str] = []
+    i = 0
+    while i < len(s):
+        try:
+            if s.startswith(f"{_ESCAPE}u", i):
+                out.append(chr(int(s[i + 3 : i + 7], 16)))
+                i += 7
+            elif s.startswith(_ESCAPE, i):
+                out.append(chr(int(s[i + 2 : i + 4], 16)))
+                i += 4
+            else:
+                out.append(s[i])
+                i += 1
+        except ValueError as e:
+            raise ValueError(f"Malformed escape in NeXus identifier '{s}' at position {i}") from e
+    return "".join(out)
 
 
 def is_ISO_8601(s: str) -> bool:

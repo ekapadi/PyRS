@@ -1,4 +1,8 @@
-exclude: "^pixi.lock$"
+# `NXstress.nxdl.xml` is a VERBATIM vendored copy of an upstream artifact
+# (nexusformat/definitions). It is excluded so whitespace/format hooks cannot
+# alter it -- it must stay byte-identical to upstream to be diffable against it,
+# and its sha256 is recorded in IO_prototype.rst.
+exclude: "^(pixi\\.lock|docs/developer/source/design/nexus/NXstress\\.nxdl\\.xml)$"
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

@@ -23,7 +23,8 @@ this file is the index and the coverage record.
 unanswerable, and the rule that a partial audit is reported as partial has
 nothing to attach to.
 
-Key: **✓** covered · **~** partial (scope stated below) · **✗** not run ·
+Key: **✓** covered · **✓✓** covered, then re-covered against a referent that did not
+exist at the first pass · **~** partial (scope stated below) · **✗** not run ·
 **n/a** not applicable · **ex** exempt, with the exemption recorded
 
 | Document | A1 self | A2 siblings | A3 codebase | A4 library | A5 runtime | A6 draft | A7 fresh |
@@ -32,7 +33,7 @@ Key: **✓** covered · **~** partial (scope stated below) · **✗** not run ·
 | `01-config-and-test-infra-PR.md` | ✗ | ✗ | ✗ | ✓ | ✗ | n/a | ✓ |
 | `02-peak-and-texture-nxstress.md` | ✗ | ✗ | ~ | ✗ | ✗ | n/a | ✓ |
 | `03-combine-runs-nxstress.md` | ✗ | ✗ | ~ | ✗ | ✗ | n/a | ✓ |
-| `04-nxstress-internal-cleanup.md` | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | ✓ |
+| `04-nxstress-internal-cleanup.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-09-29) |
 | `04b-multi-workspace-nxstress.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
 | `04c-nxstress-append.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
 | `05-strain-stress-viewer.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
@@ -64,6 +65,16 @@ Key: **✓** covered · **~** partial (scope stated below) · **✗** not run ·
   `a4_fit_error_propagation.py`, `a4_basename_extensions.py` and
   `a5_nxstress_internals_today.py`; see each document's Follow-up 2. The general
   lesson is recorded in `probes/README.md`'s failure-modes table.
+- **04 — A4/A5 marked ✓✓, and A7 re-dated.** Both axes were genuinely covered on
+  2026-09-26 and both were *re-opened* by the 04 implementation pass on 2026-09-29,
+  because the NXstress schema and the NeXus `validItemName` rule turned out to be
+  available after the first pass recorded them as absent. A4's earlier verdict was
+  not sloppy — it was scoped to the installed `nexusformat` package — but it was
+  reported more broadly than it was tested, and a design decision (item 23) rested
+  on it. A5 was re-opened separately: the transformations claim had been probed by
+  *reading source*, which cannot see that the chain is unreachable. See 04's
+  Follow-up 7 and Decisions rows 25-27. **This is the axis-coverage equivalent of
+  "audited is not a terminal state": both axes were covered, and both were wrong.**
 - **A4/A5 "ex" on 06.** 06 asserts nothing third-party and nothing cross-module.
   Genuinely exempt — written down because afterwards "no probe was needed" and
   "no probe was written" look identical.
@@ -226,10 +237,24 @@ follow `CLAUDE.md`.
 | 3 | `neutrons_standard.config` is never imported before `init("pyrs")` — a source scan, since the failure is at import time | follow-up to 01 | now | unit |
 | 4 | `setEnabled(False)` leaves a `QAction` visible — a **third-party API-surface pin**, a net-new shape for this repo | 10 | 02 | gui + integration |
 | 5 | No viewer uses `setVisible` for a format-gated action — a **convention scan**, also net-new here | 10 | 02 | unit |
-| 6 | `pyrs/projectfile/file_object.py` carries no legacy-log-name `FIXME` | 04 | now | unit |
-| 7 | `encode(name).isidentifier()` for every name, including leading-digit and non-ASCII | 04 | now | unit |
-| 8 | `decode(encode(name)) == name` over adversarial inputs (`a_3Ab`, `__`, `_3A`) and the real `tests/data` log names | 04 | now | unit |
-| 9 | `encode` is injective — no two distinct inputs share an output (regression for F3.1) | 04 | now | unit |
+| 6 | `pyrs/projectfile/file_object.py` carries no legacy-log-name `FIXME` | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
+| 7 | `encode(name)` matches `VALID_ITEM_NAME` and fits the 63-char cap, for every name — *restated: was `isidentifier()`, superseded by Decisions row 25* | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
+| 8 | `decode(encode(name)) == name` over adversarial inputs (`a_3Ab`, `__`, `_3A`) and the real `tests/data` log names | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
+| 9 | `encode` is injective — no two distinct inputs share an output (regression for F3.1) | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
+
+| 10 | Every transformation written is reachable by following `depends_on` from the detector | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
+| 11 | Default and named masks round-trip, and `DEFAULT_TAG` never leaks into the workspace as a mask name | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
+
+Items 10 and 11 were not on the flagged list: 10 came out of probing the chain
+during implementation (Decisions row 26), and 11 is the test spec 04's `_fit.py`
+item asked for, which the existing round-trip fixture did not cover — it sets
+`with_masks=True` but no `mask_names`, so only the default mask was ever exercised.
+
+**A tier note on 7-9.** They are recorded as unit, and the unit tests do exhaust
+the rule — every byte value at every position, plus escape-shaped inputs. The
+*real-namespace* sweep those rows describe reads `tests/data`, which `CLAUDE.md`
+classifies as integration; it stays in the probe rather than being re-tiered, so
+the guarantee is checked on every commit and the measurement stays where it was.
 
 `process.md` §5.1 is explicit that nothing in PyRS yet pins a third-party API
 surface or scans source for a convention. Items 3, 4 and 5 are all net-new

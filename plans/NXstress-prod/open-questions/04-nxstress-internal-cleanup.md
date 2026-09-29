@@ -25,7 +25,7 @@ what's listed in this spec's own NXstress Changes section.
 keys they touch, and compare against what `_sample.py` / `_peaks.py` key off
 of today.
 
-**Response from Chris:** 
+**Response from Chris:**
 
 `file_object.py:404` has been updated to return `two_theta_vec = self._project_h5[HidraConstants.REDUCED_DATA][HidraConstants.TWO_THETA][()]`
 
@@ -71,7 +71,7 @@ whatever populates `SampleLogs`) for the actual key names used for sample
 x/y/z position before uncommenting.
 
 **Response from Chris:** `'sx'`, `'sy'`, and `'sz'` are teh specific `SampleLogs`
-keys for the stage motor positions.  But, these enteries not used as part of the 
+keys for the stage motor positions.  But, these enteries not used as part of the
 StressStrain workflow. Instead, the `'vx'`, `'vy'`, and `'vz'` are the critical keys.
 The stress/strain calculator pulls these enteries from the HIDRAWorkspace.
 
@@ -94,6 +94,43 @@ restrictions (and any additional NXstress schema restrictions) as a single
 reference list, rather than accumulating disallowed characters ad hoc as
 they're discovered.
 
-**Response from Chris:** We can define a specific schema. 
+**Response from Chris:** We can define a specific schema.
 
 ---
+
+## Q5 — In what reference frame are `peaks/(sx, sy, sz)` expressed?
+
+*Raised 2026-09-29, during the implementation pass. Not blocking: the values
+written are correct; what is undefined is the frame a reader should interpret
+them in.*
+
+The NXstress schema requires `peaks/sx`, `sy`, `sz` and documents each as
+*"component of the sample position in the **sample reference frame**. The sample
+reference frame is defined by the sample transformations"* — meaning the
+`NXtransformations` group under `SAMPLE_DESCRIPTION`.
+
+**PyRS does not write that group.** `_sample.py` writes `name`,
+`chemical_formula`, `scan_point`, `vx`/`vy`/`vz`, optionally `temperature` and
+`stress_field`, and a `logs` collection — no `NXtransformations`, and no
+`depends_on`. So the frame the schema points at does not exist in our files.
+
+**Why it matters:** for PyRS-to-PyRS round trips this is invisible — we write and
+read the same convention implicitly. For an external NXstress consumer, which is
+the entire point of writing the format, the positions are numerically present and
+semantically unanchored. It is the same class of defect as the detector
+`depends_on` chain (Follow-up 7 F7.5), differing only in that the detector chain
+was *wrong* whereas this one is *absent*.
+
+**Why it is not resolved here:** writing the group means asserting a goniometer
+and sample-stage convention — which axes, in which order, relative to what — and
+this spec has no referent for that. The detector side had one
+(`reduce_hb2b_pyrs.py::generate_rotation_matrix`); the sample side has no
+equivalent that has been located. Guessing would produce a file that is
+confidently wrong rather than honestly silent.
+
+**Next step:** determine whether HB2B's sample stage has a recorded convention
+(and whether `mrot`, `phi`, `chi`, `omega` are the relevant axes), then decide
+whether `SAMPLE_DESCRIPTION/NXtransformations` belongs in spec 08/09's
+calibration-fidelity work rather than here.
+
+**Response from Chris:**

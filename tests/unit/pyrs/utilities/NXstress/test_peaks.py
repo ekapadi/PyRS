@@ -6,7 +6,6 @@ Tests for pyrs/utilities/NXstress/_peaks.py
 from collections.abc import Callable
 import numpy as np
 from nexusformat.nexus import NXreflections
-import pytest
 
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
@@ -55,7 +54,9 @@ class TestPeaks:
         assert peaks["center_type"].nxdata == "d-spacing"
 
     def test_Peaks_init_group_data_values(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify one PeakCollection creates N_scan rows with correct values"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -103,7 +104,9 @@ class TestPeaks:
         np.testing.assert_array_equal(peaks["scan_point"].nxdata, subruns)
 
     def test_Peaks_init_group_multiple_peaks(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify two PeakCollections create 2×N_scan rows in lexicographic sort order"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -161,7 +164,9 @@ class TestPeaks:
         assert all(peaks["l"].nxdata[:N_subrun] == l)
 
     def test_PeakIndex_sort_key(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify PeakIndex.sort_key returns correct tuple for sorting"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -202,7 +207,9 @@ class TestPeaks:
         assert (key0 < key1) or (key0 > key1)
 
     def test_Peaks_qxyz_nan(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify qx, qy, qz fields exist but remain empty after init_group since implementation doesn't populate them"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -231,15 +238,22 @@ class TestPeaks:
         assert peaks["qy"].shape[0] == 0
         assert peaks["qz"].shape[0] == 0
 
-    def test_Peaks_sxyz_nan(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
-    ):
-        """Verify sx, sy, sz are filled with NaN after init_group"""
-        ws = minimal_HidraWorkspace(with_instrument=False)
+    # NXstress requires `peaks/sx,sy,sz` and defines them as the sample position in
+    # the sample reference frame. In PyRS that is `PointList.(vx, vy, vz)`, not the
+    # identically-spelled stage-position logs -- so these tests assert the values
+    # track `vx`/`vy`/`vz`. They replace a test that pinned the previous behaviour,
+    # where all three were written as NaN placeholders.
 
+    def test_Peaks_sample_position_from_coords(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
+    ):
+        """Verify sx, sy, sz carry the sample coordinates, tagged with their source"""
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=False)
         subruns = ws._sample_logs.subruns.raw_copy()
         N_subrun = len(subruns)
-
         peak0 = createPeakCollection(
             peak_tag="Al 111",
             peak_profile="Gaussian",
@@ -250,18 +264,74 @@ class TestPeaks:
             N_subrun=N_subrun,
         )
 
+        # Act
         peaks = _Peaks.init_group([peak0], ws._sample_logs)
 
-        # sx, sy, sz should exist and be filled with NaN
-        assert "sx" in peaks
-        assert "sy" in peaks
-        assert "sz" in peaks
+        # Assert: values are the sample coordinates, not NaN
+        for peak_axis, coord_axis in zip(("sx", "sy", "sz"), ("vx", "vy", "vz")):
+            assert peaks[peak_axis].shape[0] == N_subrun
+            np.testing.assert_allclose(peaks[peak_axis].nxdata, ws._sample_logs[coord_axis])
+            # The field name is NXstress's; the value's provenance is PyRS's.
+            assert peaks[peak_axis].attrs["local_name"] == coord_axis
 
-        assert peaks["sx"].shape[0] == N_subrun
-        assert peaks["sy"].shape[0] == N_subrun
-        assert peaks["sz"].shape[0] == N_subrun
+    def test_Peaks_sample_position_subset(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
+    ):
+        """Verify a PeakCollection covering some scan points gets only those positions.
 
-        # All values should be NaN
-        assert all(np.isnan(peaks["sx"].nxdata))
-        assert all(np.isnan(peaks["sy"].nxdata))
-        assert all(np.isnan(peaks["sz"].nxdata))
+        Regression for the defect that kept this block commented out: reading the log
+        wholesale yields one value per workspace scan point, but this slice needs one
+        per scan point *of this PeakCollection*.
+        """
+        # Arrange: the collection covers fewer subruns than the workspace holds.
+        ws = minimal_HidraWorkspace(with_instrument=False)
+        N_workspace = len(ws._sample_logs.subruns.raw_copy())
+        N_subset = N_workspace - 1
+        assert N_subset >= 1, "fixture must supply more than one subrun"
+        peak0 = createPeakCollection(
+            peak_tag="Al 111",
+            peak_profile="Gaussian",
+            background_type="Quadratic",
+            wavelength=25.4,
+            projectfilename="/does/not/exist.h5",
+            runnumber=12345,
+            N_subrun=N_subset,
+        )
+
+        # Act
+        peaks = _Peaks.init_group([peak0], ws._sample_logs)
+
+        # Assert: length and values follow the collection, not the workspace
+        assert peaks["sx"].shape[0] == N_subset
+        np.testing.assert_allclose(peaks["sx"].nxdata, ws._sample_logs["vx"][:N_subset])
+
+    def test_Peaks_sample_position_nan_fallback(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
+    ):
+        """Verify absent sample coordinates give NaN rather than failing the write"""
+        # Arrange: drop the coordinate logs entirely
+        ws = minimal_HidraWorkspace(with_instrument=False)
+        subruns = ws._sample_logs.subruns.raw_copy()
+        N_subrun = len(subruns)
+        for coord_axis in ("vx", "vy", "vz"):
+            del ws._sample_logs[coord_axis]
+        peak0 = createPeakCollection(
+            peak_tag="Al 111",
+            peak_profile="Gaussian",
+            background_type="Quadratic",
+            wavelength=25.4,
+            projectfilename="/does/not/exist.h5",
+            runnumber=12345,
+            N_subrun=N_subrun,
+        )
+
+        # Act
+        peaks = _Peaks.init_group([peak0], ws._sample_logs)
+
+        # Assert
+        for peak_axis in ("sx", "sy", "sz"):
+            assert all(np.isnan(peaks[peak_axis].nxdata))

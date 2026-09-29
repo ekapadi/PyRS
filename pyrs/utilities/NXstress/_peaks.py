@@ -7,16 +7,21 @@ This class provides I/O for the `peaks` `NXreflections` subgroup:
   this subgroup includes fitted peak data, as used in reduction.
 """
 
+import logging
 import numpy as np
 from nexusformat.nexus import NXreflections, NXfield
 import re
 from typing import NamedTuple
 
 from pyrs.peaks.peak_collection import PeakCollection
+from pyrs.dataobjects.constants import HidraConstants
 from pyrs.dataobjects.sample_logs import SampleLogs
 from pyrs.utilities.pydantic_transition import validate_call_
 
 from ._definitions import CHUNK_SHAPE, FIELD_DTYPE
+
+
+_logger = logging.getLogger(__name__)
 
 
 """
@@ -141,33 +146,45 @@ class _Peaks:
         peaks["center_type"] = NXfield("d-spacing")
 
         # Sample position for each subrun -- initialize to `NaN`.
+        #
+        # NXstress requires `peaks/sx,sy,sz` and defines them as the *sample position
+        # in the sample reference frame* (see the vendored application definition at
+        # `docs/developer/source/design/nexus/NXstress.nxdl.xml`). In PyRS that
+        # quantity is `PointList.(vx, vy, vz)` -- NOT the stage-position logs that
+        # happen to be spelled `sx`/`sy`/`sz`, which the stress/strain workflow does
+        # not use. Those remain available in their own right, under
+        # SAMPLE_DESCRIPTION/logs. Each field records its true source in
+        # `local_name`, the same convention `_sample.py` uses for retained logs,
+        # because the field name alone is misleading here.
         ss_units = {
             ## work around: units may be an empty string
-            "sx": logs.units("sx") if bool(logs.units("sx")) else "mm",
-            "sy": logs.units("sy") if bool(logs.units("sy")) else "mm",
-            "sz": logs.units("sz") if bool(logs.units("sz")) else "mm",
+            axis: logs.units(axis) if bool(logs.units(axis)) else "mm"
+            for axis in HidraConstants.SAMPLE_COORDINATE_NAMES
         }
         peaks["sx"] = NXfield(
             np.empty((0,), dtype=np.float64),
             maxshape=(None,),
             chunks=CHUNK_SHAPE(1),
             fillvalue=np.nan,
-            units=ss_units["sx"],
+            units=ss_units["vx"],
         )
         peaks["sy"] = NXfield(
             np.empty((0,), dtype=np.float64),
             maxshape=(None,),
             chunks=CHUNK_SHAPE(1),
             fillvalue=np.nan,
-            units=ss_units["sy"],
+            units=ss_units["vy"],
         )
         peaks["sz"] = NXfield(
             np.empty((0,), dtype=np.float64),
             maxshape=(None,),
             chunks=CHUNK_SHAPE(1),
             fillvalue=np.nan,
-            units=ss_units["sz"],
+            units=ss_units["vz"],
         )
+
+        for peak_axis, coord_axis in zip(("sx", "sy", "sz"), HidraConstants.SAMPLE_COORDINATE_NAMES):
+            peaks[peak_axis].attrs["local_name"] = coord_axis
 
         return peaks
 
@@ -232,16 +249,42 @@ class _Peaks:
         peaks["center"][curr_len:] = d_reference_arr.ravel()
         peaks["center_errors"][curr_len:] = d_reference_error_arr.ravel()
 
-        """ # This doesn't make sense!
-        peaks['sx'][curr_len:] = logs['sx']
-        peaks['sy'][curr_len:] = logs['sy']
-        peaks['sz'][curr_len:] = logs['sz']
-        """  # TODO: fix this!
-        peaks["sx"][curr_len:] = np.full((N_scan,), np.nan)
-        peaks["sy"][curr_len:] = np.full((N_scan,), np.nan)
-        peaks["sz"][curr_len:] = np.full((N_scan,), np.nan)
+        # The original form of this block read `logs['sx']` wholesale, which is why it
+        # was commented out as not making sense: a log spans *every* scan point in the
+        # workspace, while this slice needs only the scan points of THIS
+        # `PeakCollection`. `get_pointlist` takes the subrun subset directly.
+        for peak_axis, values in zip(("sx", "sy", "sz"), cls._sample_positions(logs, scan_point, N_scan)):
+            peaks[peak_axis][curr_len:] = values
 
         return peaks
+
+    @classmethod
+    def _sample_positions(cls, logs: SampleLogs, scan_point: np.ndarray, N_scan: int) -> tuple:
+        """Sample position for a `PeakCollection`'s scan points, as (vx, vy, vz).
+
+        Args:
+            logs: Sample logs for the whole workspace.
+            scan_point: The subrun numbers this `PeakCollection` covers.
+            N_scan: Number of scan points, used to shape the `NaN` fallback.
+
+        Returns:
+            Three arrays of length `N_scan`, in millimetres. All `NaN` when the
+            coordinate logs are absent or non-finite.
+        """
+        try:
+            point_list = logs.get_pointlist(scan_point)
+            return (point_list.vx, point_list.vy, point_list.vz)
+        except (ValueError, AssertionError) as e:
+            # Match `_sample.py`'s handling: a workspace with no usable sample
+            # coordinates still writes a valid file, with `NaN` where the positions
+            # would go, rather than failing an entire save.
+            _logger.warning(
+                f"NXstress._peaks: sample coordinates "
+                f"{HidraConstants.SAMPLE_COORDINATE_NAMES} are unavailable ({e});\n"
+                "  `peaks/sx,sy,sz` will be written as NaN."
+            )
+            nan = np.full((N_scan,), np.nan)
+            return (nan, nan.copy(), nan.copy())
 
     @classmethod
     def peakCollectionRanges(cls, peaks) -> list[tuple[tuple[str, int, int, int, str], int, int]]:

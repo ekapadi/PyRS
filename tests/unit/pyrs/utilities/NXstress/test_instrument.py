@@ -4,11 +4,14 @@ Tests for pyrs/utilities/NXstress/_instrument.py
 """
 
 from collections.abc import Callable
+import logging
+
 import numpy as np
 from nexusformat.nexus import NXcollection, NXinstrument, NXdetector_module
 import pytest
 
 from pyrs.core.workspaces import HidraWorkspace
+from pyrs.utilities.NXstress import _instrument as _instrument_module
 from pyrs.utilities.NXstress._instrument import _Instrument, _Masks
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG
 from tests.util.mask_helpers import add_named_detector_mask
@@ -171,5 +174,89 @@ class TestInstrument:
         assert trans["translation_z"].attrs["depends_on"] == "./transformations/translation_y"
         assert trans["distance"].attrs["depends_on"] == "./transformations/translation_z"
 
-        # Detector depends on first transformation
-        assert detector["depends_on"] == "./transformations/translation_x"
+        # The detector's depends_on is the chain's ENTRY POINT, so it must name the
+        # LAST link -- traversal follows each field's own depends_on back to ".".
+        # This previously asserted "translation_x", the first link, whose depends_on
+        # is "." -- a chain that terminates immediately, leaving the other seven
+        # transformations written but unreachable.
+        assert detector["depends_on"] == "./transformations/two_theta_zero"
+
+    # The instrument identity comes from config, not from the workspace: the Hidra
+    # project format records no instrument name anywhere. Overriding it is what lets
+    # this writer serve a beamline other than HB2B without a code change.
+
+    def test_Instrument_name_from_config(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Verify instrument name and short_name are taken from configuration"""
+        # Arrange
+        monkeypatch.setattr(
+            _instrument_module,
+            "Config",
+            {"nxstress.instrument_name": "HB2A", "nxstress.instrument_short_name": "PG3"},
+        )
+        ws = minimal_HidraWorkspace(with_instrument=True)
+
+        # Act
+        inst = _Instrument.init_group(ws)
+
+        # Assert
+        assert str(inst["name"].nxvalue) == "HB2A"
+        assert inst["name"].attrs["short_name"] == "PG3"
+
+    def test_Instrument_name_blank_falls_back(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """Verify a blank configured name falls back to HB2B, and says so"""
+        # Arrange
+        monkeypatch.setattr(
+            _instrument_module,
+            "Config",
+            {"nxstress.instrument_name": "   ", "nxstress.instrument_short_name": ""},
+        )
+        ws = minimal_HidraWorkspace(with_instrument=True)
+
+        # Act
+        with caplog.at_level(logging.WARNING):
+            inst = _Instrument.init_group(ws)
+
+        # Assert
+        assert str(inst["name"].nxvalue) == "HB2B"
+        assert inst["name"].attrs["short_name"] == "HB2B"
+        assert "unset or blank" in caplog.text
+
+    def test_Instrument_all_transformations_reachable(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    ):
+        """Verify every transformation written is reached from the detector.
+
+        A transformation the chain never reaches cannot affect the geometry, however
+        faithfully it was written. The traversal rule is spelled out here rather than
+        imported from the writer, so this fails if the writer changes rather than
+        tracking it.
+        """
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=True)
+        inst = _Instrument.init_group(ws)
+        detector = inst["DETECTOR"]
+        trans = detector["transformations"]
+        written = {name for name in trans}
+
+        # Act: follow depends_on from the detector until '.'
+        reached = []
+        current = str(detector["depends_on"].nxvalue)
+        while current and current != ".":
+            name = current.rsplit("/", 1)[-1]
+            assert name in trans, f"depends_on points outside the group: {current!r}"
+            assert name not in reached, f"cycle in the depends_on chain at {name!r}"
+            reached.append(name)
+            current = str(trans[name].attrs.get("depends_on", "."))
+
+        # Assert
+        assert set(reached) == written, f"unreachable: {sorted(written - set(reached))}"

@@ -196,18 +196,13 @@ class TestSample:
         assert "logs" in sample
         assert isinstance(sample["logs"], NXcollection)
 
-        # The ':' should be replaced by '_'
-        expected_field_name = "HB2B_CS_CustomValue"
+        # ':' is escaped as '__3A'. The literal is spelled out rather than computed
+        # from allowed_identifier, so this test fails if the encoding changes rather
+        # than silently tracking it. (It previously expected 'HB2B_CS_CustomValue',
+        # from a conversion that collided distinct log names onto one.)
+        expected_field_name = "HB2B__3ACS__3ACustomValue"
         assert expected_field_name in sample["logs"]
 
-        # Verify attributes
-        assert sample["logs"][expected_field_name].attrs["local_name"] == custom_log_name
-        assert sample["logs"][expected_field_name].attrs["units"] == "mm"
-
-        # The ':' should be replaced by '_'
-        expected_field_name = "HB2B_CS_CustomValue"
-        assert expected_field_name in sample["logs"]
-
-        # Verify attributes
+        # Verify attributes: local_name still recovers the original PV name
         assert sample["logs"][expected_field_name].attrs["local_name"] == custom_log_name
         assert sample["logs"][expected_field_name].attrs["units"] == "mm"

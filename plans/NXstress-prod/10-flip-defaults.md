@@ -306,3 +306,38 @@ explicit about:
 2. **A convention scan** — that no viewer reintroduces `setVisible` for
    format-gated actions, which is the rule Decisions item 11 rests on. Owner:
    this PR. Tier: unit (source scan, no widget).
+
+---
+
+## Follow-up 2 — 2026-09-29 (schema doc landed; the validator did not)
+
+**F2.1** — This spec's Overview carries a reminder to add two artifacts to the
+repo: the NeXus-org NXstress **validator** (as a link to its separate repository)
+and the `NXstress.xml`/`.html` **schema doc** (under
+`docs/developer/source/design/nexus/`, linked from that directory's
+`IO_prototype.rst`). Decisions item 16(b) records the same pair.
+
+**The schema doc half is done**, landed by the subspec-04 implementation pass
+because the identifier and sample-position work both needed it as a referent.
+`applications/NXstress.nxdl.xml` is vendored verbatim at
+`docs/developer/source/design/nexus/NXstress.nxdl.xml` from
+`nexusformat/definitions` at NXDL v2026.01 (commit `004da96e`, sha256
+`bee46c07…`), linked from `IO_prototype.rst` with its provenance recorded there.
+It is excluded from pre-commit's whitespace hooks so it stays byte-identical to
+upstream and therefore diffable against it.
+
+**The validator half is not**, and this spec still owns it. The installed
+`nexusformat` 1.0.8 has no validator capability
+([`probes/a4_nexusformat_validator.py`](probes/a4_nexusformat_validator.py)), and
+the NeXus-org validator remains a separate repository. Spec 04's Verification
+hedge (its Follow-up 1 F1.3) therefore stands unchanged, and
+`nxstress.use_production_names` stays gated on it.
+
+**F2.2** — A related artifact this spec did not track, now available: the
+authoritative identifier rule `validItemName` lives in `nxdl.xsd` of the same
+definitions repository, **not** in the application definition. It is not vendored
+as a file — a one-line regex is not a document — but is reproduced with its
+provenance beside `allowed_identifier` in `pyrs/utilities/NXstress/_definitions.py`,
+and [`probes/a4_validitemname_rule.py`](probes/a4_validitemname_rule.py) reads it
+live from an upstream checkout when one is reachable, reporting plainly when not.
+See Decisions row 25.

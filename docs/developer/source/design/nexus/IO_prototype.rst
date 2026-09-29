@@ -19,6 +19,30 @@ The next sections provide a correspondance between the python classes, and secti
 
 For purposes of the prototype, the ``nexusformat`` python package is used in the implementation, and that working group's validator has been used for validation of compliance.  With respect to validation, its important to use a validator that allows *overriding* NeXus base-class definitions, which ``NXstress`` does extensively.  In this regard, NeXus International Advisory Committee's (NIAC) C-language validator is an *incomplete* implementation, and gives misleading results.  Also noted were several *bugs* in the implementation of the ``nexusformat`` validator: during validation of role-specified groups (noted as ``UPPERCASE`` in the schema), which allow any desired name to be used for the group.  Unfortunately, in this case the validator actually requires ``UPPERCASE``, and won't allow *custom* names.
 
+Schema reference
+----------------
+
+The authoritative ``NXstress`` application definition is vendored into this
+directory as :download:`NXstress.nxdl.xml <NXstress.nxdl.xml>`, copied verbatim
+from the NeXus definitions repository:
+
+* source: ``nexusformat/definitions``, ``applications/NXstress.nxdl.xml``
+* NXDL version: ``v2026.01``
+* commit: ``004da96ef29bc6b7529e1f8e5d9415cd000bccb8`` ("Update copytright dates to 2026")
+* sha256: ``bee46c0723720bc440570cc8f74be37cea6145b15b7e6f4c3ec00c421144b905``
+
+It is a *snapshot*, not a submodule.  Refresh it by re-copying from an updated
+checkout and updating the three provenance values above.
+
+Note that the schema is **not** the validator.  The NeXus-org ``NXstress``
+validator lives in its own repository and is still not present here; the
+installed ``nexusformat`` 1.0.8 package has no validator capability at all.
+
+Identifier names are constrained by ``validItemName``, defined in ``nxdl.xsd``
+of the same repository rather than in the application definition itself.  That
+rule is reproduced, with its provenance, beside the code that implements it in
+``pyrs/utilities/NXstress/_definitions.py``.
+
 Primary ``NXentry`` group
 -------------------------
 
@@ -42,7 +66,7 @@ Issues found:
 
 #. **It's assumed that ``PeakCollection.d_reference`` provides the required values to include in this section**.
 
-#. **``(sx, sy, sz)`` are included from the logs**, but mostly just because the logs had the same variable names -- **this is probably incorrect**!
+#. ``(sx, sy, sz)``: *resolved*.  The doubt recorded here was justified -- the fields were filled from the identically-named logs, and that was indeed incorrect.  The schema defines ``peaks/sx``, ``sy``, ``sz`` as the *sample position in the sample reference frame* (required, dimension ``n_Peaks``), which in PyRS terms is ``PointList.(vx, vy, vz)`` and **not** the stage-position logs that happen to share the spelling.  These fields are now written from the sample coordinates, subrun-subset indexed per ``PeakCollection``, and each carries a ``local_name`` attribute naming the log it actually came from.
 
 #. **``(qx, qy, qz)`` are required by ``NXstress``** (, components of the normalized scattering vector Q in the sample reference frame)**.   These seem to have no correspondance in the current PyRS codebase -- these values are initialized to ``NaN``.
 
@@ -62,7 +86,7 @@ This was complicated!  Again the main issue is the *naming* of things in ``NXstr
 
 Issues found:
 
-#. **Using ``PointList.(vx, vy, vz)`` as the sample positions**?  Is this correct?
+#. Using ``PointList.(vx, vy, vz)`` as the sample positions: *yes*.  The schema's sample-position fields are ``peaks/(sx, sy, sz)``, documented as the sample position in the sample reference frame, and ``PointList.(vx, vy, vz)`` is what PyRS records for that quantity.  Note the two differ in *indexing*: ``peaks/*`` is per peak-row (``n_Peaks``) while the ``vx``/``vy``/``vz`` fields written here are per scan-point (``nP``).  The latter are a PyRS extension -- the schema does not define them -- retained because the reader round-trips ``SampleLogs`` through them.
 
 #. **Possible mis-match between per-scan-point logs, and logs which have a single value for the entire experiment**.  This still needs to be checked log-by-log!
 

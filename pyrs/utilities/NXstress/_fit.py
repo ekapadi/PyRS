@@ -19,7 +19,15 @@ from pyrs.core.workspaces import HidraWorkspace
 from pyrs.dataobjects.sample_logs import SampleLogs
 from pyrs.utilities.pydantic_transition import validate_call_
 
-from ._definitions import FIELD_DTYPE, CHUNK_SHAPE, DEFAULT_TAG, GROUP_NAME, group_naming_scheme, UNDEFINED_PEAK_TAG
+from ._definitions import (
+    FIELD_DTYPE,
+    CHUNK_SHAPE,
+    GROUP_NAME,
+    group_naming_scheme,
+    nxstress_mask_names,
+    UNDEFINED_PEAK_TAG,
+    workspace_mask_key,
+)
 from ._peaks import _Peaks
 
 """
@@ -383,8 +391,8 @@ class _Diffractogram:
 
     @classmethod
     def _diffraction_data_key(cls, mask_name: str) -> str | None:
-        # Workaround for PyRS codebase use of `None` as the default key.
-        return mask_name if mask_name != DEFAULT_TAG else None
+        # See `_definitions.workspace_mask_key` for why this mapping exists.
+        return workspace_mask_key(mask_name)
 
     @classmethod
     def _init(cls, ws: HidraWorkspace) -> NXdata:
@@ -539,14 +547,11 @@ class _Fit:
         fit[GROUP_NAME.BACKGROUND_PARAMETERS] = _BackgroundParameters.init_group(peakss)
 
         # Add one DIFFRACTOGRAM group for each reduced diffraction dataset present in the workspace.
-        mask_keys = set(ws._diff_data_set.keys())
-        mask_keys.discard(None)
-        mask_keys.add(DEFAULT_TAG)
+        # `nxstress_mask_names` is the single definition of the default-mask
+        # correspondence (`None` in the workspace, `DEFAULT_TAG` in the file), shared
+        # with `_Masks.mask_keys` and with the read side.
+        mask_keys = nxstress_mask_names(ws._diff_data_set.keys())
         for mask in mask_keys:
-            ## TODO: mask naming (and storage) is messed up.  They all need to be accessed the same way,
-            ##   regardless of whether or not the "default" mask is being accessed.
-            ##   Here we assume that this loop also accesses data for the _DEFAULT_ mask, and that the default
-            ##   mask has the '_DEFAULT_' name, and not some other name, such as 'main' or `None`?!
             dgram_name = group_naming_scheme(GROUP_NAME.DIFFRACTOGRAM, mask)
             if dgram_name in fit.NXdata:
                 raise RuntimeError(
@@ -568,9 +573,7 @@ class _Fit:
                 f"Diffraction-data keys '{diff_data_keys}' and variance keys '{var_data_keys}' are not the same."
             )
 
-        mask_keys = set(ws._mask_dict.keys())
-        mask_keys.discard(None)
-        mask_keys.add(DEFAULT_TAG)
+        mask_keys = nxstress_mask_names(ws._mask_dict.keys())
 
         for peaks in peakss:
             # VERIFY that any <scan point> referenced by any `PeakCollection` is included in the workspace.

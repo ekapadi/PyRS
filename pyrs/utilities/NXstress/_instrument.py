@@ -24,9 +24,10 @@ import json
 
 from pyrs.core.instrument_geometry import DENEXDetectorGeometry, DENEXDetectorShift
 from pyrs.core.workspaces import HidraWorkspace
+from pyrs.utilities.config import Config
 from pyrs.utilities.pydantic_transition import validate_call_
 
-from ._definitions import CHUNK_SHAPE, DEFAULT_TAG, FIELD_DTYPE, GROUP_NAME
+from ._definitions import CHUNK_SHAPE, DEFAULT_TAG, FIELD_DTYPE, GROUP_NAME, nxstress_mask_names
 
 
 _logger = logging.getLogger(__name__)
@@ -56,6 +57,35 @@ class _Instrument:
         return inst
 
     @classmethod
+    def _instrument_names(cls) -> tuple[str, str]:
+        """Instrument name and short name for the NXinstrument group.
+
+        Drawn from configuration rather than from the workspace: the Hidra project
+        format records no instrument name anywhere, so there is nothing to read.
+        Overriding `nxstress.instrument_name` is therefore what makes this writer
+        usable at another beamline without a code change.
+
+        Returns:
+            `(name, short_name)`, falling back to `("HB2B", "HB2B")` if either is
+            unset or blank.
+        """
+        fallback = "HB2B"
+        names = []
+        for key in ("nxstress.instrument_name", "nxstress.instrument_short_name"):
+            try:
+                value = Config[key]
+            except Exception:  # noqa: BLE001 - any config failure falls back, loudly
+                value = None
+            if not isinstance(value, str) or not value.strip():
+                _logger.warning(
+                    f"NXstress._instrument: config key '{key}' is unset or blank;\n"
+                    f"  falling back to '{fallback}'. Set it to write files for another instrument."
+                )
+                value = fallback
+            names.append(value.strip())
+        return names[0], names[1]
+
+    @classmethod
     @validate_call_
     def init_group(cls, ws: HidraWorkspace) -> NXinstrument:
         """
@@ -67,7 +97,7 @@ class _Instrument:
           - DENEXDetectorGeometry.pixeldimension -> (px, py) (meters)
           - If present, setup._geometryshift is DENEXDetectorShift.
         """
-        inst = cls._init("HB2B", "HB2B")
+        inst = cls._init(*cls._instrument_names())
 
         N_scan_point = len(ws.get_sub_runs())
 
@@ -174,8 +204,25 @@ class _Instrument:
             depends = f"./transformations/{name}"
 
         det["transformations"] = trans
-        # detector depends on the first transformation in the chain
-        det["depends_on"] = "./transformations/translation_x"
+
+        # The detector's `depends_on` is the chain's ENTRY POINT, and NeXus resolves a
+        # chain by following each field's own `depends_on` from there until ".".
+        # `depends` currently holds the LAST link written, whose chain runs back
+        # through every other one -- so naming it here makes all eight transformations
+        # part of the geometry.
+        #
+        # This previously named `translation_x`, the FIRST link, whose own `depends_on`
+        # is "." -- so traversal terminated immediately and the composed transform was
+        # a bare x-translation with identity rotation. The other seven, including all
+        # three rotations and the two-theta zero, were written to the file but never
+        # reached. `instrumentFromNexus` reads each field by name and ignores the
+        # chain, which is why nothing in PyRS ever noticed.
+        #
+        # The written ORDER was already correct: traversed from the last link, the
+        # rotation sub-chain composes to Rx @ Ry @ Rz, matching
+        # `reduce_hb2b_pyrs.py::generate_rotation_matrix`. Verified by
+        # `plans/NXstress-prod/probes/a5_transformations_chain.py`.
+        det["depends_on"] = depends
 
         # Add a calibrated flag as extra metadata
         det["transformations"].attrs["calibrated"] = bool(is_calibrated)
@@ -419,11 +466,8 @@ class _Masks:
         #   * At present, there's no special name for any default solid-angle mask.
         #
 
-        keys = set(ws._mask_dict.keys()).union(ws._diff_data_set.keys())
-        keys.discard(None)
-        # a key for the default detector-mask must always be present
-        keys.add(DEFAULT_TAG)
-        return keys
+        # `nxstress_mask_names` also guarantees the default-mask key is present.
+        return nxstress_mask_names(ws._mask_dict.keys(), ws._diff_data_set.keys())
 
     @classmethod
     def _generate_default_mask(cls, ws: HidraWorkspace, *, detector_mask: bool) -> np.ndarray | list[float]:
