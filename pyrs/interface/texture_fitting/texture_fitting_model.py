@@ -12,6 +12,7 @@ from pyrs.core.pyrscore import PyRsCore
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.core.summary_generator import SummaryGenerator
 from pyrs.utilities.NXstress.NXstress import NXstress
+from pyrs.interface.nxstress_load import read_single_workspace
 
 # from pyrs.interface.gui_helper import pop_message
 from pyrs.peaks import FitEngineFactory as PeakFitEngineFactory  # type: ignore
@@ -49,8 +50,9 @@ class TextureFittingModel(QObject):
                 # deliberately isn't wired into the fit table / plot overlay yet
                 # (Phase-1 scope: model/NXstress round trip only, not full
                 # interactive re-use of a loaded .nxs file).
-                with NXstress(Path(filename), "r") as nx:
-                    self.ws, peaks = nx.read()
+                # This model holds one workspace. A file holding more is refused
+                # by name rather than silently truncated -- see `nxstress_load`.
+                self.ws, peaks = read_single_workspace(Path(filename))
                 self.fit_result = FitResult(peakcollections=peaks, fitted=None, difference=None) if peaks else None
             else:
                 source_project = HidraProjectFile(filename, mode=HidraProjectFileMode.READONLY)
@@ -193,7 +195,7 @@ class TextureFittingModel(QObject):
             # from the in-memory workspace + fit result.
             assert self.ws is not None, "save_fit_result called before a workspace was set"
             with NXstress(Path(out_file_name), "w") as nx:
-                nx.write(self.ws, fit_result.peakcollections)
+                nx.write([self.ws], [fit_result.peakcollections])
             return
 
         # NOTE: this branch previously referenced `self.parent._curr_file_name`,

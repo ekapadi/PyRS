@@ -36,6 +36,11 @@ from pyrs.projectfile.file_object import HidraProjectFile, HidraProjectFileMode
 import pytest
 from tests.util.peak_collection_helpers import createPeakCollection  # noqa: F401
 
+#: `n_subruns`' default, named so that `minimal_HidraWorkspace` can tell a caller
+#: who passed it explicitly from one who did not, and refuse the first in
+#: combination with `sub_runs` rather than silently discarding it.
+_DEFAULT_N_SUBRUNS = 3
+
 
 @pytest.fixture
 def minimal_HidraWorkspace() -> Generator[Callable[..., HidraWorkspace]]:
@@ -45,7 +50,8 @@ def minimal_HidraWorkspace() -> Generator[Callable[..., HidraWorkspace]]:
     def _init(
         *,
         name: str = "test_workspace",
-        n_subruns: int = 3,
+        n_subruns: int = _DEFAULT_N_SUBRUNS,
+        sub_runs: np.ndarray | None = None,
         with_instrument: bool = True,
         with_masks: bool = False,
         mask_names: tuple = (),
@@ -55,7 +61,24 @@ def minimal_HidraWorkspace() -> Generator[Callable[..., HidraWorkspace]]:
     ) -> HidraWorkspace:
         ws = HidraWorkspace(name)
 
-        subruns = np.arange(1, n_subruns + 1, dtype=int)
+        # `sub_runs` replaces the default 1..N. Two workspaces sharing one
+        # NXstress entry must cover disjoint scan points, and the interesting
+        # case -- values that interleave between workspaces -- cannot be built
+        # from 1..N at all.
+        #
+        # It also replaces an explicitly passed `n_subruns`, so the two are
+        # refused together rather than one silently winning: a test reading
+        # `n_subruns=6, sub_runs=(1, 2, 3)` asks for six and would get three.
+        if sub_runs is None:
+            subruns = np.arange(1, n_subruns + 1, dtype=int)
+        else:
+            subruns = np.asarray(sub_runs, dtype=int)
+            if n_subruns != len(subruns) and n_subruns != _DEFAULT_N_SUBRUNS:
+                raise ValueError(
+                    f"minimal_HidraWorkspace: n_subruns={n_subruns} disagrees with "
+                    f"sub_runs={subruns.tolist()} ({len(subruns)} values). Pass one or the other."
+                )
+            n_subruns = len(subruns)
         ws.set_sub_runs(subruns)
 
         # Minimal sample logs: coordinates, timestamps, sample rotation.
