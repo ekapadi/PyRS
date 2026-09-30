@@ -1,9 +1,77 @@
 #!/usr/bin/python
+import hashlib
 import os
+import shutil
+from pathlib import Path
+from typing import Callable
+
 from pyrs.core import pyrscore
+from pyrs.core.workspaces import HidraWorkspace
 import pytest
 
 pytestmark = pytest.mark.integration
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class TestLoadDoesNotModifyTheFile:
+    """Loading a project file is a read, and must leave it byte-identical.
+
+    `ReductionManager.load_hidra_project` used to choose its HDF5 mode from
+    `os.access(project_file_name, os.W_OK)` -- the file's *permissions* rather
+    than what the operation needed -- so loading any writable project file
+    opened it in append mode. HDF5 marks the superblock on a read-write open,
+    so merely loading a file changed it on disk. The handle was also not closed
+    when loading raised, and pytest's traceback keeps the frame alive, so the
+    modification survived for the rest of the session. The visible symptom was
+    committed fixtures under `tests/data/` appearing in `git status`.
+
+    Both paths are covered, because only one of them leaked: a load that
+    succeeds, and a load that raises part-way through.
+    """
+
+    def test_failing_load_leaves_the_file_unchanged(self, tmp_path: Path) -> None:
+        # Arrange -- a writable copy; the bug cannot reproduce on a read-only file,
+        # which is exactly why it went unnoticed on archive-mounted data.
+        source = Path("tests/data/Hidra_16-1_cor_log.h5")
+        assert source.exists(), f"missing fixture {source}"
+        target = tmp_path / source.name
+        shutil.copy2(source, target)
+        assert os.access(target, os.W_OK)
+        digest_before = _digest(target)
+
+        # Act -- this fixture uses the legacy capitalized '2Theta' key, so the
+        # load raises part-way through. That is the path that leaked the handle.
+        rs_core = pyrscore.PyRsCore()
+        with pytest.raises(RuntimeError):
+            rs_core.load_hidra_project(str(target), "no-mutation-on-failure", False, True)
+
+        # Assert
+        assert _digest(target) == digest_before, "a failed load modified the project file on disk"
+
+    def test_successful_load_leaves_the_file_unchanged(
+        self,
+        write_minimal_h5_project: Callable[..., Path],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        tmp_path: Path,
+    ) -> None:
+        # Arrange -- a synthetic project that loads cleanly, so this covers the
+        # normal path rather than only the error path above.
+        project = write_minimal_h5_project(
+            minimal_HidraWorkspace(with_instrument=True), filename="loadable.h5", with_instrument=True
+        )
+        assert os.access(project, os.W_OK)
+        digest_before = _digest(Path(project))
+
+        # Act
+        rs_core = pyrscore.PyRsCore()
+        workspace = rs_core.load_hidra_project(str(project), "no-mutation-on-success", False, True)
+
+        # Assert
+        assert workspace is not None
+        assert _digest(Path(project)) == digest_before, "a successful load modified the project file on disk"
 
 
 def broken_test_pole_figure_calculation():

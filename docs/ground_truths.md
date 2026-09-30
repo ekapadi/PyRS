@@ -861,3 +861,45 @@ split before rebuilding PyRS objects — a merged in-memory workspace is not an
 available intermediate — and has to normalise string values explicitly at both
 ends, or string-keyed lookups will stop matching after a round trip without
 raising.
+
+---
+
+## Loading a project file modified it on disk, because the mode came from permissions (2026-09-30)
+
+Found while closing out subspec 04b: committed fixtures under `tests/data/`
+kept appearing in `git status` as modified, with no test that writes to them.
+
+`ReductionManager.load_hidra_project` chose its HDF5 mode from
+`os.access(project_file_name, os.W_OK)` — the file's *permissions* rather than
+what the operation needed — so loading any **writable** project file opened it
+in append mode. HDF5 marks the superblock on a read-write open, so the bytes
+change the moment the file is opened, and change back only when the handle is
+closed. The same method also failed to close the handle when loading raised, so
+for an unreadable file the modification persisted for as long as something kept
+the frame alive. Under pytest that is the rest of the session, because the
+traceback retained by a failure report retains the frame.
+
+That combination is why it looked non-deterministic: whether the file was still
+modified when you ran `git status` depended on whether the leaked handle had
+been garbage-collected yet.
+
+```console
+writable on disk: True
+load: RAISED RuntimeError: ... non-empty "reduced diffraction data" entry ...
+bytes changed immediately after the raise: True     # before the fix
+bytes changed after gc.collect():          False    # ... and then not
+```
+
+Fixed by opening `READONLY` unconditionally in that method — it only reads, and
+every genuine save path opens its own `READWRITE` handle by filename — and by
+closing in a `finally`. Pinned by
+`tests/integration/test_pyrscore.py::TestLoadDoesNotModifyTheFile`, which
+covers the succeeding and the raising path separately, since only the latter
+leaked.
+
+**Why this matters going forward:** choose an HDF5 mode from what the operation
+does, never from what the filesystem permits — `os.access(..., os.W_OK)` says a
+write is *allowed*, not that one is *intended*. And a read path that can raise
+needs its handle closed in a `finally`, or a failed read leaves the file marked
+as open-for-write. A fixture showing up in `git status` after a test run is the
+symptom to look for.
