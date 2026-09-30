@@ -63,11 +63,13 @@ def roundtrip_nxstress(minimal_HidraWorkspace, createPeakCollection, tmp_path):
     # Write to NXstress file
     nxstress_file = tmp_path / "test_roundtrip.nxs"
     with NXstress(nxstress_file, mode="w") as nxs:
-        nxs.write(ws_original, peaks_original)
+        nxs.write([ws_original], [peaks_original])
 
     # Re-open and read back
     with NXstress(nxstress_file, mode="r") as nxs:
-        ws_readback, peaks_readback = nxs.read()
+        # `read` returns one entry's workspaces and their peak collections,
+        # parallel lists; this file was written from a single workspace.
+        (ws_readback,), (peaks_readback,) = nxs.read()
 
     yield ws_original, peaks_original, ws_readback, peaks_readback
 
@@ -231,7 +233,7 @@ class TestReadErrors:
 
         nxstress_file = tmp_path / "test_nonexistent.nxs"
         with NXstress(nxstress_file, mode="w") as nxs:
-            nxs.write(ws, [])
+            nxs.write([ws], [[]])
 
         with pytest.raises(NeXusError, match=r".*Invalid path.*"):
             with NXstress(nxstress_file, mode="r") as nxs:
@@ -244,7 +246,7 @@ class TestReadErrors:
 
         nxstress_file = tmp_path / "test_outside_context.nxs"
         with NXstress(nxstress_file, mode="w") as nxs:
-            nxs.write(ws, [])
+            nxs.write([ws], [[]])
 
         # Now try to read without context manager
         nxs = NXstress(nxstress_file, mode="r")
@@ -409,10 +411,12 @@ def roundtrip_named_masks(minimal_HidraWorkspace, createPeakCollection, tmp_path
 
     nxstress_file = tmp_path / "test_named_masks.nxs"
     with NXstress(nxstress_file, mode="w") as nxs:
-        nxs.write(ws_original, [peak])
+        nxs.write([ws_original], [[peak]])
 
     with NXstress(nxstress_file, mode="r") as nxs:
-        ws_readback, peaks_readback = nxs.read()
+        # `read` returns one entry's workspaces and their peak collections,
+        # parallel lists; this file was written from a single workspace.
+        (ws_readback,), (peaks_readback,) = nxs.read()
 
     yield ws_original, ws_readback
 

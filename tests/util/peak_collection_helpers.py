@@ -33,6 +33,7 @@ def createPeakCollection() -> Generator[Callable[..., PeakCollection]]:
         projectfilename: str,
         runnumber: int,
         N_subrun: int,
+        sub_runs=None,
         exclude_list=None,
         N_counts=1000,  # range for random counts
         N_span=10000.0,  # domain for random axes
@@ -61,7 +62,16 @@ def createPeakCollection() -> Generator[Callable[..., PeakCollection]]:
         subruns = next(islice(permutations((n for n in range(3 * N_subrun)), N_subrun), 2 * N_subrun, 2 * N_subrun + 1))
         """
         # Assume subruns are supposed to be in order. Why would that be the case?
-        subruns = [n + 1 for n in range(N_subrun)]
+        # `sub_runs` overrides the default 1..N: a multi-workspace NXstress entry
+        # needs its inputs to cover *disjoint* scan points, which 1..N cannot express.
+        if sub_runs is not None:
+            subruns = [int(n) for n in sub_runs]
+            if len(subruns) != N_subrun:
+                raise ValueError(
+                    f"createPeakCollection: sub_runs has {len(subruns)} entries but N_subrun is {N_subrun}"
+                )
+        else:
+            subruns = [n + 1 for n in range(N_subrun)]
 
         # Ensure that the parameter values are somewhat physically meaningful:
         #   for example, no negative peak widths or out-of-range mixing fractions.

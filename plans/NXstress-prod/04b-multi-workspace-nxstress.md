@@ -35,14 +35,14 @@ consequence of checking what the reader actually requires, against the
 current code:
 
 - The only reader-side splitter, `_Peaks.peakCollectionRanges`
-  (`_peaks.py:246-338`), enforces exactly two invariants: each compound
+  (`_peaks.py:419-529`), enforces exactly two invariants: each compound
   key occupies one *contiguous* run (raises `"Interleaved blocks
-  detected"` at `_peaks.py:313`/`:332` otherwise), and `scan_point`
-  increases within a run (`_peaks.py:306`/`:326`). It never checks that
+  detected"` at `_peaks.py:505`/`:524` otherwise), and `scan_point`
+  increases within a run (`_peaks.py:499`/`:519`). It never checks that
   the runs themselves are globally ordered — there is no
   `searchsorted`/`argsort`/binary search anywhere in the module. The
   three `sorted(peakss, key=_Peaks.PeakIndex.sort_key)` calls
-  (`_peaks.py:184`, `_fit.py:87`, `_fit.py:287`) exist only to give the
+  (`_peaks.py:303`, `_fit.py:98`, `_fit.py:298`) exist only to give the
   peak-index-family groups a **shared, deterministic block order** so
   their rows stay positionally aligned with each other — any commonly
   agreed order satisfies that, not specifically lexicographic.
@@ -58,7 +58,7 @@ current code:
   is what makes the read-side split and the scan-point-family merge
   both trivial — see the corresponding Scope bullets below — rather than
   requiring new indexing machinery.
-- Consequently, `_peaks.py:44-45`'s docstring (which currently states
+- Consequently, `_peaks.py:51-58`'s docstring (which currently states
   the index is *"sorted lexographically prior to output"* as a format
   guarantee, specifically to support append) should be corrected during
   implementation: the actual guarantee is the two invariants above, not
@@ -84,9 +84,9 @@ machinery.
 > **Schema precedent already exists — not a hard blocker.** `_peaks.py::_init`
 > already writes `mask`, `scan_point`, `center`, `center_errors`,
 > `center_type`, and `sx`/`sy`/`sz` onto `NXreflections`
-> ([_peaks.py:100-172](../../pyrs/utilities/NXstress/_peaks.py#L100)), and the
+> ([_peaks.py:168-262](../../pyrs/utilities/NXstress/_peaks.py#L168)), and the
 > module's own docstring
-> ([_peaks.py:37-40](../../pyrs/utilities/NXstress/_peaks.py#L37)) states only
+> ([_peaks.py:30-37](../../pyrs/utilities/NXstress/_peaks.py#L30)) states only
 > `h`/`k`/`l`/`phase_name` (plus the unused `qx`/`qy`/`qz`) are
 > schema-required — `mask` explicitly was not part of `PeakCollection` before
 > this implementation added it. A discriminator column is the same category
@@ -141,11 +141,11 @@ machinery.
   **plain concatenation in workspace order** —
   `concat(ws0.get_sub_runs(), ws1.get_sub_runs(), …)` — not a merge-and-sort:
   `_Diffractogram.init_group` already writes
-  `dg["scan_point"] = NXfield(ws.get_sub_runs())` verbatim (`_fit.py:410`),
+  `dg["scan_point"] = NXfield(ws.get_sub_runs())` verbatim (`_fit.py:466`),
   `_InputData.init_group` iterates `ws._raw_counts.keys()` in workspace
-  order (`_input_data.py:37`), and `_InputData.readSubruns`'s exact-match
+  order (`_input_data.py:49`), and `_InputData.readSubruns`'s exact-match
   check — `if ws.get_sub_runs() != scan_points: raise RuntimeError(...)`
-  (`_input_data.py:70-72`) — keeps working unchanged specifically *because*
+  (`_input_data.py:95-97`) — keeps working unchanged specifically *because*
   each workspace's slice of the concatenated array equals its own
   `get_sub_runs()` as-is. A global-`scan_point` merge order would have
   interleaved workspaces with interleaving scan ranges (e.g. `[1,3,5]` and
@@ -223,13 +223,13 @@ resolver picks it up automatically, with no change to NXstress itself.
   with discriminator values attached, vs. one list per workspace — TBD).
   On-disk, each discriminator field becomes one `NXfield` on `NXreflections`,
   named via the existing `allowed_identifier()` sanitizer
-  (`_definitions.py:221-231`).
+  (`_definitions.py:326-390`).
 - `peakCollectionsFromNexus` reconstructs the flattened index as today. The
   per-workspace split is a `groupby` over the discriminator-value prefix of
   the ranges `peakCollectionRanges` already returns — not a new indexing
   mechanism — because the slowest-varying ordering rule above guarantees
   each workspace's ranges are contiguous. The existing block-detection
-  algorithm (`_peaks.py:246-338`) generalizes by *prepending* the
+  algorithm (`_peaks.py:419-529`) generalizes by *prepending* the
   discriminator columns to its key tuple; the contiguity/monotonicity
   checks it already performs are otherwise unchanged.
 - Collision guard: raise if a configured discriminator field name collides
@@ -309,7 +309,7 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
     mixed-calibration merges are not supported by this spec).
   - **Wavelength is not** one of these, even though an earlier draft of
     this bullet grouped it with geometry. It's stored per-scan-point
-    (`mono["wavelength"] = NXfield(wavelength, ...)`, `_instrument.py:104`)
+    (`mono["wavelength"] = NXfield(wavelength, ...)`, `_instrument.py:205`)
     and can already legitimately vary *within* a single workspace under
     existing PyRS semantics (`HidraWorkspace.get_wavelength` can return a
     per-subrun dict). It belongs to the scan-point family's concatenation
@@ -559,3 +559,271 @@ checks), `_peaks.py:306`/`:326` (both monotonicity checks), all three
 `_fit.py:87`, `_fit.py:287`) — the "three calls" count is exactly right —
 `_peaks.py:44-45`, `_fit.py:410`, `_input_data.py:70-72`,
 `_definitions.py:221-231`, `_peaks.py:246-338`.
+
+---
+
+## Follow-up 2 — 2026-09-30 (implementation pass)
+
+Eleven findings from implementing this spec. Four are corrections to claims the
+body makes, three are consequences the body did not anticipate, and four are
+citation drift from 04 landing. Probes are under
+[`probes/`](probes/); each is run with
+`pixi run python plans/NXstress-prod/probes/<name>.py`.
+
+**F2.1** (A2/A3) — **the two config keys were never delivered.** Scope says they
+"land in `pyrs/resources/application.yml`, delivered by spec 01".
+- Referent: `pyrs/resources/application.yml`,
+  [`01-config-and-test-infra-PR.md`](01-config-and-test-infra-PR.md).
+- Verdict: **false.** 01 has landed; the file carried `enable`, `extension`,
+  `use_production_names`, `instrument_name` and `instrument_short_name` and
+  neither of these two, and the string `discriminator` appears nowhere in 01.
+  This is the shape the session prompt warns about in the opposite direction —
+  not work already done upstream, but work *assumed* done upstream and never
+  scheduled anywhere.
+- Action: shipped by this PR, together with type-checking in
+  `validate_config()`. `neutrons_standard.Config` has no defaulting mechanism
+  (a missing key raises `KeyError`), so a key that is not in the shipped
+  `application.yml` is not "empty by default", it is an error at every call.
+
+**F2.2** (A3) — **`append_hidra_project` cannot be reused as this spec's merge.**
+The `init_group` bullet says to "reuse the merge logic
+`HidraWorkspace.append_hidra_project` already implements in-memory
+(`pyrs/core/workspaces.py:517`)".
+- Referent: `pyrs/core/workspaces.py`, probed by
+  [`probes/a5_subruns_nonmonotonic.py`](probes/a5_subruns_nonmonotonic.py).
+- Verdict: **the pointer is right and the claim is wrong, twice.** It takes a
+  `HidraProjectFile`, not an in-memory workspace; and it *renumbers* the
+  appended subruns rather than preserving them — which is precisely what this
+  spec's exact-match reader depends on:
+
+  ```console
+    CLAIM   append_hidra_project takes an in-memory HidraWorkspace (claim 4, part a)
+    RESULT  signature (self, hidra_file); type-checked against HidraProjectFile in
+            body: True; accepts a workspace: False
+
+    CLAIM   append_hidra_project preserves each input's own scan points (claim 4, part b)
+    RESULT  renumbers via `append_list = np.arange(len(hidra_file.read_sub_runs()))
+            + 1 + self._sample_logs.subruns.size`: True -- so appended subruns become
+            1..N of the merged workspace, not their original values
+  ```
+- Action: bullet struck; merging is raw-array concatenation inside NXstress.
+  Decisions row 31.
+
+**F2.3** (A5) — **the merged scan-point axis cannot be held by `SubRuns` at all,
+so no merged `HidraWorkspace` can exist as an intermediate.** Unstated by this
+spec, and load-bearing for its own specified `[1,3,5]`/`[2,4,6]` test.
+- Referent: `pyrs/dataobjects/sample_logs.py`, `_sample.py`, probed by
+  [`probes/a5_subruns_nonmonotonic.py`](probes/a5_subruns_nonmonotonic.py).
+- Verdict: **confirmed, and it forces the shape of both sides.**
+
+  ```console
+    CLAIM   04b's own specified test case, as an array (not as its first few values)
+    RESULT  A=[1, 3, 5] B=[2, 4, 6] -> concatenated [1, 3, 5, 2, 4, 6]; n=6 min=1
+            max=6 ptp=5 distinct=6 strictly_increasing=False
+
+    CLAIM   SubRuns accepts the workspace-order CONCATENATION of the two (claims 1, 2)
+    RESULT  concatenated: RAISED RuntimeError: subruns are not sorted in increasing order
+
+    CLAIM   the rejection is value-dependent, not intrinsic to concatenating
+    RESULT  A ++ [7,8,9]: ACCEPTED -> [1, 3, 5, 7, 8, 9]
+
+    CLAIM   _sample.py:272's `logs.subruns = SubRuns(scan_point)` over an unsplit
+            axis (claim 3)
+    RESULT  sampleLogsFromNexus shape: RAISED RuntimeError: subruns are not sorted
+            in increasing order
+  ```
+- Action: write concatenates `NXfield`s directly; read splits the axis *before*
+  constructing any `SampleLogs`, which is why `sampleLogsFromNexus`,
+  `instrumentFromNexus`, `diffractogramFromNexus` and `readSubruns` each gained
+  a row-selection argument. Decisions row 31.
+- Note the probe also records that `SubRuns.append` bypasses the guard
+  `SubRuns.set` enforces, so the invariant is a property of one entry point
+  rather than of the type. Nothing here relies on that, but 04c's append work
+  might.
+
+**F2.4** (A4) — **Q1 is now answerable, and the answer is yes.** Verification
+defers the schema cross-check until "both land in the repo"; the schema landed
+with Decisions row 27(b), the validator did not.
+- Referent: `docs/developer/source/design/nexus/NXstress.nxdl.xml`, probed by
+  [`probes/a4_nxstress_extra_columns.py`](probes/a4_nxstress_extra_columns.py).
+- Verdict: **the precedent argument is confirmed from the schema itself.**
+
+  ```console
+    CLAIM   the definition does NOT carry `restricts`, so it states a minimum,
+            not a closed set
+    RESULT  restricts=None; attributes present: ['category', 'extends', 'name', 'type']
+
+    CLAIM   PyRS already ships `peaks` columns the schema does not declare (claim 1)
+    RESULT  undeclared-but-written = ['scan_point', 'mask'];
+            declared-but-unwritten = ['lattice', 'space_group']
+
+    CLAIM   04b's reserved-column list matches what `_init` writes (claim 3)
+    RESULT  written-not-in-guard = []; guard-not-written = []; equal=True
+  ```
+- Action: Q1 answered in the affirmative; a discriminator column is the same
+  category of extension already shipping. The validator half of Verification
+  remains unrunnable and stays recorded as such — see F2.10.
+
+**F2.5** (A4, for spec 05) — **the schema has a first-class
+`measurement_direction` field**, `NXstress.nxdl.xml:185-196`, `NX_CHAR`,
+`minOccurs="0"`, enumerated {radial, longitudinal, normal, tangential,
+multiple}, at `NXentry` level.
+- Verdict: not a substitute for a per-row discriminator — one value per entry,
+  and PyRS's directions are `"11"`/`"22"`/`"33"`, outside the enumeration — but
+  no document in this series mentions it, and a three-direction entry arguably
+  ought to set it to `"multiple"`.
+- Action: **flagged for spec 05**, not implemented here. Recorded so that
+  "nobody considered it" and "considered and deferred" stay distinguishable.
+
+**F2.6** (A4) — **a string-*valued* sample log cannot be written at all**, which
+this spec's own motivating case produces.
+- Referent: h5py via `nexusformat`, probed by
+  [`probes/a4_string_log_dtypes.py`](probes/a4_string_log_dtypes.py).
+- **This is about log values, not log names**, and the two are independent
+  mechanisms. `allowed_identifier` (Decisions rows 23 and 25) is total,
+  injective and reversible over arbitrary text: there is no PV-log *key* it
+  cannot encode, and the probe's claim 5 re-confirms that rather than leaving
+  it to be assumed — `HB2B:Mot:sz_real`, `a b/c$d` and `__weird__` all encode,
+  round-trip and write. What had never been checked is the NumPy dtype of the
+  *array of values* stored under the encoded name. A field with an entirely
+  plain name still fails when its values are `<U`.
+- Verdict: **two defects, and the second is the dangerous one.**
+
+  ```console
+    CLAIM   a NumPy fixed-width unicode array is writable (claim 1)
+    RESULT  <U: WRITE RAISED TypeError: No conversion path for dtype: dtype('<U2')
+
+    CLAIM   a bytes array is writable -- why the existing fixtures work (claim 2)
+    RESULT  |S: wrote dtype |S2 -> read dtype |S2, element np.bytes_(b'11')
+            (type bytes_), equal to input: True
+
+    CLAIM   the h5py variable-length UTF-8 dtype is writable (claim 3)
+    RESULT  vlen utf-8: wrote dtype object -> read dtype object, element b'11'
+            (type bytes), equal to input: False
+  ```
+
+  A `direction` log *value array* built as `np.array(["11", "11", "11"])` is
+  dtype `<U2` and crashes the save, under any name at all. The existing fixtures never hit this because every string
+  log they build (`start_time`, `end_time`, `Filename`) is deliberately bytes.
+  And even the writable vlen **UTF-8** dtype reads back as `bytes`, so a value
+  does not survive a round trip as the same Python object — which for a
+  discriminator would not raise, it would split one workspace into two.
+- Action: `_Sample._writable` coerces `<U` logs to the vlen dtype, and
+  `_discriminator._as_text` normalises a resolved value to `str` on both sides,
+  so a discriminator compares equal to itself across a round trip. Covered by
+  `test_multi_workspace.py::TestScanPointFamilySplit`.
+
+**F2.7** (A1) — **`read()`'s declared return type contradicts round-trip
+symmetry.** The `NXstress.py` bullet declares
+`read(entry_number) -> (list[HidraWorkspace], list[PeakCollection])` — flat —
+while `write`'s `peakss` shape is left "TBD in implementation". A flat read
+cannot say which collection belongs to which of the N workspaces it returns
+alongside.
+- Action: both sides are per-workspace,
+  `list[list[PeakCollection]]`. Decisions row 28.
+
+**F2.8** (A3) — **`HidraWorkspace` defines no property *setters*.** The
+forward note is right that its accessors are properties, but none has an
+`fset`, so `_apply_discriminator_value`'s settable-property branch has no live
+subject until spec 05 adds `direction`.
+- Referent: probed by
+  [`probes/a5_discriminator_resolution.py`](probes/a5_discriminator_resolution.py).
+
+  ```console
+    CLAIM   HidraWorkspace's @property accessors, and which are settable (claim 4)
+    RESULT  6 properties: ['calibration_file', 'hidra_project_file', 'name',
+            'reduction_masks', 'sample_log_names', 'sample_logs_for_plot'];
+            settable (fset is not None): NONE
+  ```
+- Verdict: every other branch of both resolver halves is confirmed against the
+  real class, including that `save_experimental_data` resolves as a bound
+  method under a bare `hasattr` and falls through correctly under the
+  `isinstance(..., property)` test the spec specifies.
+- Action: the branch is written anyway — 05 needs it — and tested against a
+  stub subclass rather than asserted of a class that has none. The probe also
+  records that with a settable property present, the set half writes the
+  property and leaves the underlying log stale; the two can disagree, and the
+  property wins on both halves.
+
+**F2.9** (A3) — **`get_sub_runs()` returns `SubRuns`, not an array**
+(`pyrs/core/workspaces.py:403-415`), so the Overview's
+`concat(ws0.get_sub_runs(), …)` needs `.raw_copy()`. Cosmetic; noted because
+the sentence reads as if it were already array-valued.
+
+**F2.10** (A4) — **one Verification step remains unrunnable, and that is
+recorded rather than skipped.** "Cross-check against `NXstress.html` and the
+`nexusformat`-org validator once both land in the repo": the schema has landed
+and is cross-checked (F2.4); the **validator has not**. `nexusformat` 1.0.8
+still ships none, and the NeXus-org validator lives in a separate repository —
+the state [`probes/a4_nexusformat_validator.py`](probes/a4_nexusformat_validator.py)
+already tracks and the gate Decisions row 27 leaves open. Not a blocker for
+this PR; the schema half is what Q1 needed.
+
+**F2.11** (A1) — **`merge_workspaces` merges the scan-point family, not the peak
+index.** Scope says that with the flag set "the workspaces are silently merged
+into one combined index with no discriminator columns at all". It does not say
+what happens when two inputs contribute the same `(phase, h, k, l, mask)`.
+- Verdict: **they cannot be merged.** With no discriminator, two such
+  collections become two blocks of the *same* compound key, which
+  `peakCollectionRanges` rejects as interleaved — so the file would be written
+  and then be unreadable. The existing `validateNoDuplicatePeaks` already
+  catches it at write time, loudly, which is the right behaviour; what was
+  missing was the statement that it *will*.
+- Action: documented here and pinned by
+  `test_multi_workspace.py::TestEmptyConfigPolicy::test_merging_inputs_that_share_a_compound_key_raises`.
+  `merge_workspaces` is therefore usable when the inputs' peak collections have
+  distinct compound keys, or none at all (spec 03's shape) — not as a general
+  "combine anything" switch.
+
+### Invariants written by this PR
+
+| Invariant | Where | Tier |
+|---|---|---|
+| `_peaks.py`'s splitter enforces contiguity and monotonic `scan_point` **and nothing more**, with the rule reproduced locally so it fails rather than tracks a change | `test_peaks_read.py::TestSplitterEnforcesOnlyContiguityAndMonotonicity` | unit |
+| `RESERVED_PEAK_COLUMNS` equals what `_Peaks._init` writes, by iterating the real group | `test_discriminator.py::TestReservedColumns::test_reserved_columns_matches_peaks_init` | unit |
+| The identifier encoding is injective over discriminator names, which is why guarding the *encoded* name is sufficient | `test_discriminator.py::TestReservedColumns::test_only_a_reserved_name_encodes_onto_a_reserved_column` | unit |
+
+The first is the promotion this PR owed, from
+[`probes/a5_peakcollection_ranges.py`](probes/a5_peakcollection_ranges.py) via
+`review/findings.md` §5 row 1.
+
+### One new accepted-residue row in `check_ownership.py`
+
+`README.md  in-table-but-unclaimed  pyrs/utilities/NXstress/_discriminator.py`.
+The file is in §5 because this PR creates it; no subspec heading *claims* it
+because this spec's heading for it — `### Discriminator value resolution (new,
+NXstress-internal)` — deliberately names no path, the module's location having
+been left to implementation by `open-questions/04b` Q5. That is the fifth
+structural convention in the series, the same shape Follow-up 1 F1.5 recorded
+and did not change. Now that the module exists and is called
+`_discriminator.py`, the resolution is recorded here rather than by rewriting a
+heading in the body. Expected residue, not an unfixed finding; total goes 9 → 10.
+
+### Citations corrected in place
+
+All from 04 landing; every surrounding claim re-read and still true.
+
+| Claim | Superseded | Now |
+|---|---|---|
+| `peakCollectionRanges` | 246-338 | `_peaks.py:419-529` |
+| interleave raises | 313 / 332 | `_peaks.py:505` / `:524` |
+| monotonicity raises | 306 / 326 | `_peaks.py:499` / `:519` |
+| the three `sorted(...)` sites | 184, 87, 287 | `_peaks.py:303`, `_fit.py:98`, `_fit.py:298` |
+| the sort-order docstring | 44-45 | `_peaks.py:51-58` |
+| `_init` writes non-required columns | 100-172 | `_peaks.py:168-262` |
+| "only h/k/l/phase_name required" | 37-40 | `_peaks.py:30-37` |
+| `allowed_identifier` | 221-231 | `_definitions.py:326-390` |
+| `dg["scan_point"] = ...` | 410 | `_fit.py:466` |
+| iterating `_raw_counts.keys()` | 37 | `_input_data.py:49` |
+| the exact-match check | 70-72 | `_input_data.py:95-97` |
+| `mono["wavelength"] = ...` | 104 (103 in open-questions) | `_instrument.py:205` |
+
+Several of these moved again within this PR, since it rewrote the same
+functions; the values above are as of this Follow-up.
+
+**Follow-up 1's closing "Checked and accurate" list is left untouched**, and its
+pointers (`_peaks.py:184`, `:44-45`, `:246-338`) have since drifted. They were
+accurate when written, an earlier Follow-up is never edited, and the current
+values are in the table above. `landing_trigger.py` will keep surfacing them
+whenever `_peaks.py` moves; that is the expected cost of an append-only record,
+not an unfixed finding.

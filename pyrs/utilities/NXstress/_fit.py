@@ -28,7 +28,7 @@ from ._definitions import (
     UNDEFINED_PEAK_TAG,
     workspace_mask_key,
 )
-from ._peaks import _Peaks
+from ._peaks import IndexedPeaks
 
 """
 REQUIRED PARAMETERS FOR NXstress:
@@ -87,13 +87,16 @@ class _PeakParameters:
         return pp
 
     @classmethod
-    @validate_call_
-    def init_group(cls, peakss: list[PeakCollection]) -> NXparameters:
+    def init_group(cls, indexed: list[IndexedPeaks]) -> NXparameters:
         # required 'peak_parameters' subgroup
-        pp = cls._init(peakss)
+        #
+        # Sorted with the same key as the PEAKS group and `_BackgroundParameters`:
+        # these three are position-aligned, and that alignment is the only thing
+        # making row `n` of each describe the same peak.
+        pp = cls._init([item.collection for item in indexed])
 
-        for peak_collection in sorted(peakss, key=_Peaks.PeakIndex.sort_key):
-            cls._append_peak(pp, peak_collection)
+        for item in sorted(indexed, key=IndexedPeaks.sort_key):
+            cls._append_peak(pp, item.collection)
 
         return pp
 
@@ -287,13 +290,13 @@ class _BackgroundParameters:
         return bp
 
     @classmethod
-    @validate_call_
-    def init_group(cls, peakss: list[PeakCollection]) -> NXparameters:
+    def init_group(cls, indexed: list[IndexedPeaks]) -> NXparameters:
         # required 'background_parameters' subgroup
-        bp = cls._init(peakss)
+        #   -- position-aligned with PEAKS and `_PeakParameters`; see that class's `init_group`.
+        bp = cls._init([item.collection for item in indexed])
 
-        for peak_collection in sorted(peakss, key=_Peaks.PeakIndex.sort_key):
-            cls._append_peak(bp, peak_collection)
+        for item in sorted(indexed, key=IndexedPeaks.sort_key):
+            cls._append_peak(bp, item.collection)
 
         return bp
 
@@ -395,18 +398,63 @@ class _Diffractogram:
         return workspace_mask_key(mask_name)
 
     @classmethod
-    def _init(cls, ws: HidraWorkspace) -> NXdata:
-        if ws._2theta_matrix is None:
-            raise RuntimeError("Usage error: cannot write NXstress file: workspace doesn't include any reduced data.")
+    def _init(cls, wss: list[HidraWorkspace]) -> NXdata:
+        for n, ws in enumerate(wss):
+            if ws._2theta_matrix is None:
+                raise RuntimeError(
+                    f"Usage error: cannot write NXstress file: input workspace [{n}] doesn't include any reduced data."
+                )
         dg = NXdata()
         return dg
 
     @classmethod
+    def _concatenated_diffraction(cls, wss: list[HidraWorkspace], mask_name: str) -> tuple:
+        """Reduced data for one mask across every input, concatenated in workspace order.
+
+        An input that has no reduced data for this mask still occupies its rows
+        of the scan-point axis -- filled with `NaN`, rather than being dropped
+        and shifting every later input onto the wrong rows.
+
+        A mask *no* input reduced is still an error, as it was before: the
+        NaN fill exists to align inputs that genuinely differ, not to turn a
+        caller's bad mask name into a diffractogram of nothing.
+        """
+        if not any(cls._diffraction_data_key(mask_name) in ws._diff_data_set for ws in wss):
+            # Raised from here rather than from `_get_diffraction_data` below,
+            # which is never reached for a mask absent everywhere.
+            where = "the workspace" if len(wss) == 1 else "any input workspace"
+            raise RuntimeError(
+                f"NXstress._fit._Diffractogram: usage error: diffraction data "
+                f"'{cls._diffraction_data_key(mask_name)}' is not present in {where}"
+            )
+
+        two_theta, data, errors = [], [], []
+        for ws in wss:
+            n_scan = len(ws.get_sub_runs())
+            two_theta.append(np.asarray(ws._2theta_matrix))
+            if cls._diffraction_data_key(mask_name) in ws._diff_data_set:
+                ws_data, ws_errors = cls._get_diffraction_data(ws, mask_name)
+                data.append(np.asarray(ws_data))
+                errors.append(np.asarray(ws_errors))
+            else:
+                n_two_theta = np.asarray(ws._2theta_matrix).shape[-1]
+                data.append(np.full((n_scan, n_two_theta), np.nan))
+                errors.append(np.full((n_scan, n_two_theta), np.nan))
+
+        widths = {arr.shape[-1] for arr in two_theta}
+        if len(widths) > 1:
+            raise RuntimeError(
+                "NXstress._fit: input workspaces have different numbers of two-theta channels "
+                f"({sorted(widths)}); they cannot share one diffractogram array."
+            )
+        return np.concatenate(two_theta), np.concatenate(data), np.concatenate(errors)
+
+    @classmethod
     @validate_call_
-    def init_group(cls, ws: HidraWorkspace, maskName: str, peakss: list[PeakCollection]) -> NXdata:
+    def init_group(cls, wss: list[HidraWorkspace], maskName: str, indexed: list[IndexedPeaks]) -> NXdata:
         # required DIFFRACTOGRAM (NXdata) subgroup:
 
-        dg = cls._init(ws)
+        dg = cls._init(wss)
         dg.attrs["signal"] = GROUP_NAME.DGRAM_DIFFRACTOGRAM
         dg.attrs["auxiliary_signals"] = [
             GROUP_NAME.DGRAM_DIFFRACTOGRAM_ERRORS,
@@ -415,15 +463,14 @@ class _Diffractogram:
         ]
         dg.attrs["axes"] = ["scan_point", "."]  # do _not_ specify a 2-D theta in 'axes'
         dg.attrs["two_theta_indices"] = [0, 1]  # two-theta has shape (<N scan points>, <N 2-theta, per scan-point>)
-        dg["scan_point"] = NXfield(ws.get_sub_runs())
+        dg["scan_point"] = NXfield(np.concatenate([ws.get_sub_runs().raw_copy() for ws in wss]))
         dg["scan_point"].attrs["units"] = ""
 
-        two_theta = ws._2theta_matrix
+        two_theta, data, errors = cls._concatenated_diffraction(wss, maskName)
         dg[GROUP_NAME.DGRAM_TWO_THETA_NAME] = NXfield(  # *** DEBUG *** validator bug
             two_theta, units="degree"
         )
 
-        data, errors = cls._get_diffraction_data(ws, maskName)
         dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM] = NXfield(
             data, dtype=FIELD_DTYPE.FLOAT_DATA.value, interpretation="spectrum", units="counts"
         )
@@ -449,13 +496,16 @@ class _Diffractogram:
 
     @classmethod
     @validate_call_
-    def diffractogramFromNexus(cls, dg):
+    def diffractogramFromNexus(cls, dg, rows=None):
         """Read diffractogram data from NXdata group.
 
         Parameters
         ----------
         dg : NXdata
             The DIFFRACTOGRAM NXdata group from the HDF5 file
+        rows : np.ndarray, optional
+            Boolean mask selecting one input workspace's rows of the
+            concatenated scan-point axis.
 
         Returns
         -------
@@ -467,15 +517,19 @@ class _Diffractogram:
         The write side stores variance in 'diffractogram_errors', so this is
         returned directly without conversion.
         """
+
+        def selected(values):
+            return values[rows] if rows is not None else values
+
         # Read scan_point array
-        scan_points = dg["scan_point"].nxdata
+        scan_points = selected(dg["scan_point"].nxdata)
 
         # Read two_theta array (using the correct field name from GROUP_NAME)
-        two_theta = dg[GROUP_NAME.DGRAM_TWO_THETA_NAME].nxdata
+        two_theta = selected(dg[GROUP_NAME.DGRAM_TWO_THETA_NAME].nxdata)
 
         # Read diffractogram and diffractogram_errors (which stores variance)
-        diffractogram = dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM].nxdata
-        diffractogram_errors = dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM_ERRORS].nxdata
+        diffractogram = selected(dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM].nxdata)
+        diffractogram_errors = selected(dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM_ERRORS].nxdata)
 
         return scan_points, two_theta, diffractogram, diffractogram_errors
 
@@ -498,7 +552,7 @@ class _Fit:
     ##
     @classmethod
     @validate_call_
-    def _init(cls, logs: SampleLogs, *, processing_description: str, processing_time) -> NXprocess:
+    def _init(cls, logss: list[SampleLogs], *, processing_description: str, processing_time) -> NXprocess:
         # Initialize the 'FIT' (NXprocess) group:
 
         fit = NXprocess()
@@ -510,7 +564,12 @@ class _Fit:
         # Required information fields:
         fit["date"] = NXfield(processing_time)
         fit["program"] = NXfield("PyRS")
-        fit["raw_data_file"] = NXfield(logs["Filename"][0].decode("utf-8"))
+        # The NXstress schema allows one `raw_data_file` per FIT group, so a
+        # multi-workspace entry records the first input's. Nothing is lost:
+        # `Filename` is a per-scan-point log and is not one of
+        # `_Sample.NXstress_logs`, so every input's filenames are retained in
+        # full under SAMPLE_DESCRIPTION/logs.
+        fit["raw_data_file"] = NXfield(logss[0]["Filename"][0].decode("utf-8"))
 
         note = NXnote(
             type="text/plain",
@@ -527,9 +586,9 @@ class _Fit:
     @validate_call_
     def init_group(
         cls,
-        ws: HidraWorkspace,
-        peakss: list[PeakCollection],
-        logs: SampleLogs,
+        wss: list[HidraWorkspace],
+        indexed: list[IndexedPeaks],
+        logss: list[SampleLogs],
         processing_description: str = "",
         processing_time: str | None = None,
     ):
@@ -539,25 +598,31 @@ class _Fit:
         ## Under `NXstress`: `FIT` (NXprocess) groups contain peak and background-fit results, including any
         ##    information relevant to the fitting process used.
         fit = cls._init(
-            logs,
+            logss,
             processing_description=processing_description,
             processing_time=processing_time if bool(processing_time) else datetime.now().astimezone().isoformat(),
         )
-        fit[GROUP_NAME.PEAK_PARAMETERS] = _PeakParameters.init_group(peakss)
-        fit[GROUP_NAME.BACKGROUND_PARAMETERS] = _BackgroundParameters.init_group(peakss)
+        fit[GROUP_NAME.PEAK_PARAMETERS] = _PeakParameters.init_group(indexed)
+        fit[GROUP_NAME.BACKGROUND_PARAMETERS] = _BackgroundParameters.init_group(indexed)
 
-        # Add one DIFFRACTOGRAM group for each reduced diffraction dataset present in the workspace.
+        # Add one DIFFRACTOGRAM group for each reduced diffraction dataset present in the workspaces.
         # `nxstress_mask_names` is the single definition of the default-mask
         # correspondence (`None` in the workspace, `DEFAULT_TAG` in the file), shared
         # with `_Masks.mask_keys` and with the read side.
-        mask_keys = nxstress_mask_names(ws._diff_data_set.keys())
-        for mask in mask_keys:
+        #
+        # The union across inputs, not just the first workspace's: each group
+        # spans the whole concatenated scan-point axis, so a mask any input
+        # reduced needs a group even if the others did not.
+        mask_keys = set()
+        for ws in wss:
+            mask_keys |= set(nxstress_mask_names(ws._diff_data_set.keys()))
+        for mask in sorted(mask_keys):
             dgram_name = group_naming_scheme(GROUP_NAME.DIFFRACTOGRAM, mask)
             if dgram_name in fit.NXdata:
                 raise RuntimeError(
                     f"Usage error: DIFFRACTOGRAM (NXdata) group '{dgram_name}' already exists in the current (NXprocess) group."
                 )
-            fit[dgram_name] = _Diffractogram.init_group(ws, mask, peakss)
+            fit[dgram_name] = _Diffractogram.init_group(wss, mask, indexed)
 
         return fit
 

@@ -182,3 +182,24 @@ and nothing else**.
 
 **F1.2** (A7) — No other stale citations in this document or its open-questions
 companion.
+
+---
+
+## Follow-up 2 — 2026-09-30 (04b implementation pass)
+
+**F2.1** (A2) — **the export call is now `write([self._hidra_ws], [[]])`.**
+This spec's body and its "Pre-merge stays" section spell it
+`NXstress.write([self._hidra_ws], [])`, which was correct for the shape 04b
+left "TBD". 04b resolved that shape to one `PeakCollection` list **per
+workspace** (Decisions row 28), so a workspace contributing no peak
+collections is an empty *inner* list.
+- Nothing else about this spec changes: the decision it rests on — that
+  `combine_project_files`' in-PyRS pre-merge stays, because it already produces
+  the same indistinguishable-merge semantics and the `.h5` path needs the
+  merged workspace regardless (Decisions row 10, `open-questions/04b` Q3) — is
+  untouched. The call site really is a wrap.
+- The landed call site is
+  [`combine_runs_model.py`](../../pyrs/interface/combine_runs/combine_runs_model.py),
+  updated by the 04b PR, and the regression is pinned by
+  `tests/integration/test_nxstress_viewer_roundtrip.py::TestCombineRunsViewerRoundtrip::test_export_project_files_wraps_the_merged_workspace_in_a_length_one_list`,
+  which feeds three runs in and asserts one workspace comes back.

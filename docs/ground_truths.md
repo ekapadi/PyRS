@@ -824,3 +824,40 @@ directory above the repo root. A test that merely sets `env=<something>_test.yml
 will fail for a reason that has nothing to do with what it is testing. Either
 avoid `"test"` in the `env` value, or raise the off-by-one with the
 `neutrons_standard` maintainers.
+
+---
+
+## Two data-model limits that bite any multi-record NeXus write (2026-09)
+
+Both found while implementing `plans/NXstress-prod/`'s subspec 04b. Recorded
+here as pointers only — the evidence, the probe output and the corrections live
+in that subspec's
+[Follow-up 2](../plans/NXstress-prod/04b-multi-workspace-nxstress.md#follow-up-2--2026-09-30-implementation-pass),
+so there is one copy to keep true rather than two.
+
+**1. A NumPy fixed-width unicode array (`<U`) cannot be written to HDF5.**
+This is a constraint on a dataset's *values*, independent of its name —
+NXstress's `allowed_identifier` already encodes any PV-log key totally and
+reversibly, and a plain name fails just the same. `np.array(["11", "22"])` raises
+`TypeError: No conversion path for dtype: dtype('<U2')` — an h5py limitation,
+not a NeXus rule. The variable-length UTF-8 dtype (`FIELD_DTYPE.STRING`) holds
+the same values, **but reads back as `bytes`**, so a string does not survive a
+round trip as the same Python object. Probe:
+[`a4_string_log_dtypes.py`](../plans/NXstress-prod/probes/a4_string_log_dtypes.py).
+
+**2. `SubRuns` rejects a non-monotonic array, so concatenated scan points
+cannot be held by `SampleLogs` or `HidraWorkspace` at all.** `SubRuns.set`
+raises `"subruns are not sorted in increasing order"`, and `SubRuns.__init__`
+calls it — while `SubRuns.append` bypasses it. Two workspaces with scan points
+`[1,3,5]` and `[2,4,6]` concatenate to something no PyRS container can
+represent. Separately, `HidraWorkspace.append_hidra_project` takes a
+`HidraProjectFile` rather than a workspace and **renumbers** appended subruns
+to 1..N. Probe:
+[`a5_subruns_nonmonotonic.py`](../plans/NXstress-prod/probes/a5_subruns_nonmonotonic.py).
+
+**Why this matters going forward:** any future code that merges several
+workspaces into one on-disk record has to concatenate at the array level and
+split before rebuilding PyRS objects — a merged in-memory workspace is not an
+available intermediate — and has to normalise string values explicitly at both
+ends, or string-keyed lookups will stop matching after a round trip without
+raising.

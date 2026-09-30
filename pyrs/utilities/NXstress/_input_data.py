@@ -29,15 +29,33 @@ class _InputData:
 
     @classmethod
     @validate_call_
-    def init_group(cls, ws: HidraWorkspace, data: NXdata = None):
-        # Initialize the input-data group.
+    def init_group(cls, wss: list[HidraWorkspace], data: NXdata = None):
+        # Initialize the input-data group, concatenating the inputs in workspace order.
 
         # Raw data may not actually be loaded in the `HidraWorkspace`:
         #   in that case, just initialize an empty NXdata group.
-        scan_points = ws._raw_counts.keys()
+        loaded = [bool(len(ws._raw_counts)) for ws in wss]
+        if len(wss) > 1 and any(loaded) and not all(loaded):
+            # A partial concatenation would produce a `scan_point` axis that is
+            # neither every input's scan points nor one input's, and `readSubruns`
+            # below compares it for exact equality -- so the file would be
+            # unreadable rather than merely incomplete.
+            raise RuntimeError(
+                "NXstress._input_data: raw detector counts are loaded for some input workspaces "
+                f"and not others (loaded={loaded}).\n"
+                "  Load raw counts for every input, or for none of them."
+            )
+
+        per_workspace = [(ws, list(ws._raw_counts.keys())) for ws in wss if len(ws._raw_counts)]
+        scan_points = [p for _, points in per_workspace for p in points]
         scans = (
-            np.stack([ws.get_detector_counts(p).astype(FIELD_DTYPE.FLOAT_DATA.value) for p in scan_points])
-            if len(scan_points)
+            np.concatenate(
+                [
+                    np.stack([ws.get_detector_counts(p).astype(FIELD_DTYPE.FLOAT_DATA.value) for p in points])
+                    for ws, points in per_workspace
+                ]
+            )
+            if scan_points
             else np.empty((0, 0), dtype=FIELD_DTYPE.FLOAT_DATA.value)
         )
 
@@ -57,7 +75,7 @@ class _InputData:
 
     @classmethod
     @validate_call_
-    def readSubruns(cls, ws: HidraWorkspace, data: NXdata):
+    def readSubruns(cls, ws: HidraWorkspace, data: NXdata, rows: np.ndarray | None = None):
         # Initialize `HidraWorkspace` detector_counts from input-data group.
 
         # TODO: append to the `HidraWorkspace`, if any detector_counts data already exists.
@@ -67,10 +85,19 @@ class _InputData:
         if len(scan_points) == 0:
             return
 
+        # A multi-workspace entry concatenates every input's counts into one
+        # array; `rows` selects this workspace's slice of it. The exact-match
+        # check below is what makes that slice meaningful, so it is applied to
+        # the selection rather than skipped for it.
+        if rows is not None:
+            scan_points = scan_points[rows]
+
         # `HidraWorkspace` must already contain its `SampleLogs`, and scan-points must match.
         if ws.get_sub_runs() != scan_points:
             raise RuntimeError("not implemented: append or change detector_counts data on existing workspace")
 
         scans = data["detector_counts"].nxdata
+        if rows is not None:
+            scans = scans[rows]
         for n, p in enumerate(scan_points):
             ws.set_raw_counts(p, scans[n])

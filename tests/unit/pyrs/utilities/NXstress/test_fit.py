@@ -11,13 +11,16 @@ from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.utilities.NXstress._fit import _BackgroundParameters, _Diffractogram, _Fit, _PeakParameters
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG
+from pyrs.utilities.NXstress._peaks import _Peaks
 
 
 class TestFit:
     """Test suite for _fit.py"""
 
     def test_PeakParameters_data_values(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify numeric values in peak parameters match get_effective_params()"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -37,7 +40,7 @@ class TestFit:
 
         params_value, params_error = peak0.get_effective_params()
 
-        peak_params = _PeakParameters.init_group([peak0])
+        peak_params = _PeakParameters.init_group(_Peaks.indexed([peak0]))
 
         assert isinstance(peak_params, NXparameters)
 
@@ -61,7 +64,9 @@ class TestFit:
         np.testing.assert_array_almost_equal(peak_params["form_factor"].nxdata, expected_form_factor)
 
     def test_PeakParameters_multiple_peaks(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify two PeakCollections create 2×N_scan rows in sort order"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -89,13 +94,15 @@ class TestFit:
             N_subrun=N_subrun,
         )
 
-        peak_params = _PeakParameters.init_group([peak0, peak1])
+        peak_params = _PeakParameters.init_group(_Peaks.indexed([peak0, peak1]))
 
         # Should have 2 * N_subrun rows
         assert peak_params["center"].shape[0] == 2 * N_subrun
 
     def test_PeakParameters_mismatched_profile_raises(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify ValueError when PeakCollections have different peak_profile"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -124,10 +131,12 @@ class TestFit:
         )
 
         with pytest.raises(ValueError, match=r".*must share the same peak profile.*"):
-            _PeakParameters.init_group([peak0, peak1])
+            _PeakParameters.init_group(_Peaks.indexed([peak0, peak1]))
 
     def test_BackgroundParameters_data_values(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify A0, A1, A2 (and errors) match get_effective_params()"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -147,7 +156,7 @@ class TestFit:
 
         params_value, params_error = peak0.get_effective_params()
 
-        bg_params = _BackgroundParameters.init_group([peak0])
+        bg_params = _BackgroundParameters.init_group(_Peaks.indexed([peak0]))
 
         assert isinstance(bg_params, NXparameters)
 
@@ -162,7 +171,9 @@ class TestFit:
             )
 
     def test_BackgroundParameters_multiple_peaks(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify two PeakCollections create 2×N_scan rows"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -190,13 +201,15 @@ class TestFit:
             N_subrun=N_subrun,
         )
 
-        bg_params = _BackgroundParameters.init_group([peak0, peak1])
+        bg_params = _BackgroundParameters.init_group(_Peaks.indexed([peak0, peak1]))
 
         # Should have 2 * N_subrun rows
         assert bg_params["A0"].shape[0] == 2 * N_subrun
 
     def test_BackgroundParameters_mismatched_type_raises(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify ValueError when PeakCollections have different background_type"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -225,7 +238,7 @@ class TestFit:
         )
 
         with pytest.raises(ValueError, match=r".*must share the same background type.*"):
-            _BackgroundParameters.init_group([peak0, peak1])
+            _BackgroundParameters.init_group(_Peaks.indexed([peak0, peak1]))
 
     def test_Diffractogram_data_key_default(self):
         """Verify _diffraction_data_key returns `None` for DEFAULT_TAG"""
@@ -250,10 +263,12 @@ class TestFit:
         ws._2theta_matrix = None
 
         with pytest.raises(RuntimeError, match=r".*doesn't include any reduced data.*"):
-            _Diffractogram._init(ws)
+            _Diffractogram._init([ws])
 
     def test_Diffractogram_init_group_missing_mask_raises(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify RuntimeError when mask data not in workspace"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -273,10 +288,12 @@ class TestFit:
 
         # Try to create diffractogram for non-existent mask
         with pytest.raises(RuntimeError, match=r".*is not present in the workspace.*"):
-            _Diffractogram.init_group(ws, "non_existent_mask", [peak0])
+            _Diffractogram.init_group([ws], "non_existent_mask", _Peaks.indexed([peak0]))
 
     def test_Diffractogram_data_values(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify diffractogram/diffractogram_errors match workspace arrays"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -294,7 +311,7 @@ class TestFit:
             N_subrun=N_subrun,
         )
 
-        dgram = _Diffractogram.init_group(ws, DEFAULT_TAG, [peak0])
+        dgram = _Diffractogram.init_group([ws], DEFAULT_TAG, _Peaks.indexed([peak0]))
 
         assert isinstance(dgram, NXdata)
 
@@ -324,7 +341,7 @@ class TestFit:
         ws = minimal_HidraWorkspace(with_instrument=False)
 
         logs = ws._sample_logs
-        fit = _Fit._init(logs, processing_description="Test description", processing_time="2024-01-15T10:30:00")
+        fit = _Fit._init([logs], processing_description="Test description", processing_time="2024-01-15T10:30:00")
 
         assert isinstance(fit, NXprocess)
         assert "date" in fit
@@ -337,7 +354,9 @@ class TestFit:
         assert isinstance(fit["DESCRIPTION"], NXnote)
 
     def test_Fit_multiple_masks(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify a workspace with multiple named reduced-diffraction masks creates exactly
         one DIFFRACTOGRAM per configured mask, plus the always-present default.
@@ -371,7 +390,7 @@ class TestFit:
             N_subrun=N_subrun,
         )
 
-        fit = _Fit.init_group(ws, [peak0], ws._sample_logs)
+        fit = _Fit.init_group([ws], _Peaks.indexed([peak0], ws._sample_logs), [ws._sample_logs])
 
         # Count NXdata groups (diffractograms)
         diffractogram_count = sum(1 for key in fit.keys() if isinstance(fit[key], NXdata))
@@ -380,7 +399,9 @@ class TestFit:
         assert diffractogram_count == len(mask_names) + 1
 
     def test_Fit_duplicate_diffractogram_raises(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify RuntimeError when diffractogram name collision occurs"""
         # This test checks the internal logic - would need to manipulate
@@ -389,7 +410,9 @@ class TestFit:
         pass
 
     def test_validateWorkspaceAndPeaksData_valid(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify validation passes for matching workspace and peaks data"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -411,7 +434,9 @@ class TestFit:
         _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
     def test_validateWorkspaceAndPeaksData_missing_scan_points(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify ValueError when PeakCollection references missing scan points"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -441,7 +466,9 @@ class TestFit:
             _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
     def test_validateWorkspaceAndPeaksData_missing_mask_data(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify ValueError when PeakCollection references missing mask data"""
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -466,7 +493,9 @@ class TestFit:
             _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
 
     def test_peakParametersForRange_intensity_error_roundtrip(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """σ_Intensity survives a write→read round-trip for PseudoVoigt; Gaussian does not crash.
 
@@ -497,7 +526,7 @@ class TestFit:
         _, orig_errors_pv = peak_pv.get_effective_params()
         sigma_I_orig = orig_errors_pv["Intensity"].astype(np.float64)
 
-        pp_pv = _PeakParameters.init_group([peak_pv])
+        pp_pv = _PeakParameters.init_group(_Peaks.indexed([peak_pv]))
         native_values_pv, native_errors_pv = _PeakParameters.peakParametersForRange(pp_pv, 0, N_subrun)
 
         # For PseudoVoigt, Intensity is a native parameter — verify exact round-trip.
@@ -533,7 +562,7 @@ class TestFit:
 
         orig_values_g, orig_errors_g = peak_g.get_effective_params()
 
-        pp_g = _PeakParameters.init_group([peak_g])
+        pp_g = _PeakParameters.init_group(_Peaks.indexed([peak_g]))
         native_values_g, native_errors_g = _PeakParameters.peakParametersForRange(pp_g, 0, N_subrun)
 
         # Height is stored directly on the write path — must survive exactly.

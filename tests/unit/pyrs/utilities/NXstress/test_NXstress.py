@@ -90,7 +90,7 @@ class TestNXstress:
         assert not file_path.exists()
 
         with NXstress(file_path, "w") as nx:
-            nx.write(ws, [peak0])
+            nx.write([ws], [[peak0]])
             assert nx._root is not None
         assert file_path.exists()
 
@@ -105,13 +105,15 @@ class TestNXstress:
 
         required_datasets = ("definition", "start_time", "end_time", "processing_type")
 
-        entry = NXstress._init(ws)
+        entry = NXstress._init([ws])
         assert isinstance(entry, NXentry)
         for key in required_datasets:
             assert key in entry
 
     def test_NXentry_subgroups(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         # Verify that all required subgroups are present
         #   on the `NXentry`
@@ -137,14 +139,16 @@ class TestNXstress:
             (GROUP_NAME.PEAKS, NXreflections),
         )
 
-        entry = NXstress.init_group(ws, [peak0])
+        entry = NXstress.init_group([ws], [[peak0]])
         assert isinstance(entry, NXentry)
         for key, NXclass_ in required_groups:
             assert key in entry
             assert isinstance(entry[key], NXclass_)
 
     def test_NXentry_input_data(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         # Verify that an optional `input_data` `NXdata` group will be created on the `NXentry`
         #   when detector-counts data is attached to the source workspace.
@@ -164,14 +168,16 @@ class TestNXstress:
             N_subrun=N_subrun,
         )
 
-        entry = NXstress.init_group(ws, [peak0])
+        entry = NXstress.init_group([ws], [[peak0]])
         assert isinstance(entry, NXentry)
         key, NXclass_ = GROUP_NAME.INPUT_DATA, NXdata
         assert key in entry
         assert isinstance(entry[key], NXclass_)
 
     def test_NXentry_input_data_optional(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         # When no input data is attached to the source workspace:
         #   verify that an empty (i.e. no scan-points) `input_data` `NXdata` group is created on the `NXentry`.
@@ -195,7 +201,7 @@ class TestNXstress:
             N_subrun=N_subrun,
         )
 
-        entry = NXstress.init_group(ws, [peak0])
+        entry = NXstress.init_group([ws], [[peak0]])
         assert isinstance(entry, NXentry)
         key, NXclass_ = GROUP_NAME.INPUT_DATA, NXdata
         assert key in entry
@@ -234,8 +240,8 @@ class TestNXstress:
 
         file_path = tmp_path / "test_NXstress_multiple_NXentry.nxs"
         with NXstress(file_path, "w") as nx:
-            nx.write(ws, [peak0])
-            nx.write(ws, [peak1])
+            nx.write([ws], [[peak0]])
+            nx.write([ws], [[peak1]])
             root = nx._root
 
             assert root is not None
@@ -264,7 +270,7 @@ class TestNXstress:
             (GROUP_NAME.MASKS, NXcollection),
         )
 
-        inst = _Instrument.init_group(ws)
+        inst = _Instrument.init_group([ws])
         assert isinstance(inst, NXinstrument)
         for key in required_fields:
             assert key in inst
@@ -304,7 +310,7 @@ class TestNXstress:
         )
         required_subgroups: list[tuple[str, type[object]]] = []
 
-        sample = _Sample.init_group(ws._sample_logs)
+        sample = _Sample.init_group([ws._sample_logs])
         assert isinstance(sample, NXsample)
         for key in required_fields:
             assert key in sample
@@ -314,7 +320,9 @@ class TestNXstress:
             assert isinstance(sample[key], NXclass_)
 
     def test__Fit_fields_and_subgroups(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         ws = minimal_HidraWorkspace(with_instrument=False)
         sampleLogs = ws._sample_logs
@@ -340,7 +348,7 @@ class TestNXstress:
             (GROUP_NAME.DIFFRACTOGRAM, NXdata),
         )
 
-        fit = _Fit.init_group(ws, [peak0], sampleLogs)
+        fit = _Fit.init_group([ws], _Peaks.indexed([peak0], sampleLogs), [sampleLogs])
         assert isinstance(fit, NXprocess)
         for key in required_fields:
             assert key in fit
@@ -374,7 +382,7 @@ class TestNXstress:
         nx = NXstress(file_path, "w")
 
         with pytest.raises(RuntimeError, match=r".*only usage as context manager is supported.*"):
-            nx.write(ws, [peak0])
+            nx.write([ws], [[peak0]])
 
     def test_NXentry_init_fallback_timestamps(
         self,
@@ -390,13 +398,15 @@ class TestNXstress:
         ws._sample_logs["end_time"] = bad_timestamps
 
         # Should not raise - fallback path handles this
-        entry = NXstress._init(ws)
+        entry = NXstress._init([ws])
         assert isinstance(entry, NXentry)
         assert "start_time" in entry
         assert "end_time" in entry
 
     def test_validateWorkspaceAndPeaksData_valid(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         """Verify _validateWorkspaceAndPeaksData completes without error for valid data"""
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True, with_raw_counts=True)
@@ -415,7 +425,7 @@ class TestNXstress:
         )
 
         # Should not raise
-        NXstress._validateWorkspaceAndPeaksData(ws, [peak0])
+        NXstress._validateWorkspaceAndPeaksData([ws], [[peak0]], _Peaks.indexed([peak0], sampleLogs))
 
     def test_NXentry_definition_value(
         self,
@@ -424,12 +434,14 @@ class TestNXstress:
         """Verify entry['definition'] is 'NXstress' and processing_type is 'd-spacing'"""
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True, with_raw_counts=True)
 
-        entry = NXstress._init(ws)
+        entry = NXstress._init([ws])
         assert entry["definition"] == "NXstress"
         assert entry["processing_type"] == "d-spacing"
 
     def test__PeakParameters_fields_and_subgroups(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         # Load a workspace in order to get a realistic <scan point> axis.
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -462,7 +474,7 @@ class TestNXstress:
             "form_factor_errors",
         )
 
-        peak_parameters = _PeakParameters.init_group([peak0])
+        peak_parameters = _PeakParameters.init_group(_Peaks.indexed([peak0]))
         assert isinstance(peak_parameters, NXparameters)
         for key in required_fields:
             assert key in peak_parameters
@@ -473,7 +485,9 @@ class TestNXstress:
         )
 
     def test__BackgroundParameters_fields_and_subgroups(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         # Load a workspace in order to get a realistic <scan point> axis.
         ws = minimal_HidraWorkspace(with_instrument=False)
@@ -504,13 +518,15 @@ class TestNXstress:
             "A2_errors",
         )
 
-        background_parameters = _BackgroundParameters.init_group([peak0])
+        background_parameters = _BackgroundParameters.init_group(_Peaks.indexed([peak0]))
         assert isinstance(background_parameters, NXparameters)
         for key in required_fields:
             assert key in background_parameters
 
     def test__Diffractogram_fields_and_subgroups(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection: Callable[..., PeakCollection]
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
     ):
         ws = minimal_HidraWorkspace(with_instrument=False)
         sampleLogs = ws._sample_logs
@@ -538,7 +554,7 @@ class TestNXstress:
         )
         required_subgroups: list[tuple[str, type[object]]] = []
 
-        dgram = _Diffractogram.init_group(ws, "_DEFAULT_", [peak0])
+        dgram = _Diffractogram.init_group([ws], "_DEFAULT_", _Peaks.indexed([peak0]))
         assert isinstance(dgram, NXdata)
         for key in required_attributes:
             assert key in dgram.attrs
@@ -587,7 +603,7 @@ class TestNXstress:
         )
         required_subgroups: list[tuple[str, type[object]]] = []
 
-        peaks = _Peaks.init_group([peak0], sampleLogs)
+        peaks = _Peaks.init_group(_Peaks.indexed([peak0], sampleLogs), sampleLogs)
         assert isinstance(peaks, NXreflections)
         for key in required_fields:
             assert key in peaks
@@ -637,7 +653,7 @@ class TestNXstress:
         required_fields = ("scan_point", "detector_counts")
         required_subgroups: list[tuple[str, type[object]]] = []
 
-        data = _InputData.init_group(ws)
+        data = _InputData.init_group([ws])
         assert isinstance(data, NXdata)
         for key in required_attributes:
             assert key in data.attrs
@@ -660,7 +676,7 @@ class TestNXstress:
         required_fields = ("scan_point", "detector_counts")
         required_subgroups: list[tuple[str, type[object]]] = []
 
-        data = _InputData.init_group(ws)
+        data = _InputData.init_group([ws])
         assert isinstance(data, NXdata)
         for key in required_attributes:
             assert key in data.attrs

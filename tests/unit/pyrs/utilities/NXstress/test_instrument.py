@@ -113,7 +113,7 @@ class TestInstrument:
         """Verify NXdetector_module contains required fields"""
         ws = minimal_HidraWorkspace(with_instrument=True)
 
-        inst = _Instrument.init_group(ws)
+        inst = _Instrument.init_group([ws])
 
         assert "DETECTOR" in inst
         detector = inst["DETECTOR"]
@@ -139,7 +139,7 @@ class TestInstrument:
         """Verify all 8 transformations exist and depends_on chain is correct"""
         ws = minimal_HidraWorkspace(with_instrument=True)
 
-        inst = _Instrument.init_group(ws)
+        inst = _Instrument.init_group([ws])
 
         detector = inst["DETECTOR"]
         assert "transformations" in detector
@@ -200,7 +200,7 @@ class TestInstrument:
         ws = minimal_HidraWorkspace(with_instrument=True)
 
         # Act
-        inst = _Instrument.init_group(ws)
+        inst = _Instrument.init_group([ws])
 
         # Assert
         assert str(inst["name"].nxvalue) == "HB2A"
@@ -223,7 +223,7 @@ class TestInstrument:
 
         # Act
         with caplog.at_level(logging.WARNING):
-            inst = _Instrument.init_group(ws)
+            inst = _Instrument.init_group([ws])
 
         # Assert
         assert str(inst["name"].nxvalue) == "HB2B"
@@ -243,7 +243,7 @@ class TestInstrument:
         """
         # Arrange
         ws = minimal_HidraWorkspace(with_instrument=True)
-        inst = _Instrument.init_group(ws)
+        inst = _Instrument.init_group([ws])
         detector = inst["DETECTOR"]
         trans = detector["transformations"]
         written = {name for name in trans}

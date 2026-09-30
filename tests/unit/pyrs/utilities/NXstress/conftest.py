@@ -46,6 +46,7 @@ def minimal_HidraWorkspace() -> Generator[Callable[..., HidraWorkspace]]:
         *,
         name: str = "test_workspace",
         n_subruns: int = 3,
+        sub_runs: np.ndarray = None,
         with_instrument: bool = True,
         with_masks: bool = False,
         mask_names: tuple = (),
@@ -55,7 +56,12 @@ def minimal_HidraWorkspace() -> Generator[Callable[..., HidraWorkspace]]:
     ) -> HidraWorkspace:
         ws = HidraWorkspace(name)
 
-        subruns = np.arange(1, n_subruns + 1, dtype=int)
+        # `sub_runs` overrides the default 1..N. Two workspaces sharing one
+        # NXstress entry must cover disjoint scan points, and the interesting
+        # case -- values that interleave between workspaces -- cannot be built
+        # from 1..N at all.
+        subruns = np.arange(1, n_subruns + 1, dtype=int) if sub_runs is None else np.asarray(sub_runs, dtype=int)
+        n_subruns = len(subruns)
         ws.set_sub_runs(subruns)
 
         # Minimal sample logs: coordinates, timestamps, sample rotation.
@@ -122,9 +128,17 @@ def minimal_PeakCollection(createPeakCollection):
     # Convenience wrapper around `createPeakCollection` with defaults suited to
     # `minimal_HidraWorkspace` -- still fully overridable.
 
-    def _init(*, N_subrun: int, peak_tag: str = "Fe 110", peak_profile: str = "Gaussian",
-              background_type: str = "Linear", wavelength: float = 1.486,
-              projectfilename: str = "/does/not/exist.h5", runnumber: int = 1, **kwargs):
+    def _init(
+        *,
+        N_subrun: int,
+        peak_tag: str = "Fe 110",
+        peak_profile: str = "Gaussian",
+        background_type: str = "Linear",
+        wavelength: float = 1.486,
+        projectfilename: str = "/does/not/exist.h5",
+        runnumber: int = 1,
+        **kwargs,
+    ):
         return createPeakCollection(
             peak_tag=peak_tag,
             peak_profile=peak_profile,

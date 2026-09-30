@@ -95,7 +95,9 @@ class PeakFittingModel(QObject):
 
             nxs_file = project_files_list[0]
             with NXstress(Path(nxs_file), "r") as nx:
-                ws, peaks = nx.read()
+                # A viewer holds one workspace; an entry written by this viewer holds one.
+                wss, peakss = nx.read()
+            ws, peaks = wss[0], peakss[0]
 
             self._set_up_project_name(project_files_list)
             self._curr_file_name = nxs_file
@@ -230,7 +232,7 @@ class PeakFittingModel(QObject):
             # no "existing .nxs file to patch" concept; NXstress always writes fresh
             # from the in-memory workspace + fit result.
             with NXstress(Path(out_file_name), "w") as nx:
-                nx.write(self.hidra_workspace, fit_result.peakcollections)
+                nx.write([self.hidra_workspace], [fit_result.peakcollections])
             return
 
         if out_file_name is not None and self._curr_file_name != out_file_name:

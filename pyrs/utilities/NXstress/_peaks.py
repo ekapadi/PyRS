@@ -19,6 +19,8 @@ from pyrs.dataobjects.sample_logs import SampleLogs
 from pyrs.utilities.pydantic_transition import validate_call_
 
 from ._definitions import CHUNK_SHAPE, FIELD_DTYPE
+from . import _discriminator
+from ._discriminator import DiscriminatorKey
 
 
 _logger = logging.getLogger(__name__)
@@ -42,22 +44,78 @@ REQUIRED PARAMETERS FOR NXstress:
 - A flattened index is used `(<phase>, h, k, l, <mask>, <scan point>)`: all <scan point> may not be present, and to support legacy code specifying the <mask> is optional,
   and it will default to the key '_DEFAULT_';  Note that <mask> was not retained as a `PeakCollection` field prior to this implementation, but it does seem to be required;
 
-- This flattened index allows appending (not yet implemented), however each index value must identify a *unique* entry (i.e. there can be no duplicates);
+- This flattened index allows appending, however each index value must identify a *unique* entry (i.e. there can be no duplicates);
 
 - Each combination of `(<phase>, h, k, l, <mask>, ...)` corresponds to *one* `PeakCollection` instance;
 
-- For input and output purposes (to and from HDF5), the entire index set will be sorted lexographically prior to output.  This makes the append operation more complicated,
-  but provides robustness against duplicates (or overwrites).
+- The format guarantees exactly two things about row order, and *not* a global lexicographic sort:
+  each compound key occupies one contiguous run, and `scan_point` increases within a run.  `peakCollectionRanges`
+  -- the only reader-side splitter -- enforces both and checks nothing else, so a file may be "locally sorted,
+  globally segmented".  A single-step write does still emit a fully sorted index, but that is a property of this
+  writer, not a promise the reader relies on.  Robustness against duplicates comes from `validateNoDuplicatePeaks`
+  and the contiguity check, independently of sort order.  See `plans/NXstress-prod/04b-multi-workspace-nxstress.md`
+  (Decisions Log item 17), which relaxed the earlier lexicographic framing precisely so that append could be a
+  plain tail-append;
+
+- When more than one `HidraWorkspace` is written into one NXentry, the index additionally carries one
+  *discriminator* column per configured field (see `_discriminator.py`).  Discriminator values are the most
+  slowly varying coordinates of the sort key, so each input workspace's rows form one contiguous super-block;
 
 2. `diffractogram` are stored as 'diffractogram_<mask key>', and indexed by <scan point>.  Any single <scan point> that does not have an entry will be filled in with `NaN`.
 
 """
 
 
+class IndexedPeaks(NamedTuple):
+    """A `PeakCollection` together with the input workspace it came from.
+
+    The workspace is identified by its discriminator values rather than by
+    position, so a single flattened list can carry the peak collections of
+    all N inputs while remaining splittable.
+
+    Attributes:
+        discriminators: Name-keyed discriminator values for the input
+            workspace this collection came from. Empty for a
+            single-workspace or merged write.
+        collection: The peak collection itself.
+        logs: Sample logs of that same input workspace, used to look up
+            the sample position for this collection's scan points. `None`
+            on the read side, where no workspace exists yet.
+    """
+
+    discriminators: DiscriminatorKey
+    collection: PeakCollection
+    logs: SampleLogs | None = None
+
+    @classmethod
+    def sort_key(cls, item: "IndexedPeaks") -> tuple:
+        """Ordering with discriminators as the most slowly varying coordinates.
+
+        Putting them first is what makes each input workspace's rows one
+        contiguous super-block in every position-aligned group, which in
+        turn makes the read-side split a `groupby` over ranges
+        `peakCollectionRanges` already returns.
+
+        The three groups that must stay positionally aligned -- this one,
+        `_PeakParameters` and `_BackgroundParameters` -- all sort the same
+        decorated list with this key, which is the only reason their rows
+        correspond.
+        """
+        return (
+            *_discriminator.sort_values(item.discriminators),
+            *_Peaks.PeakIndex.sort_key(item.collection),
+        )
+
+
 class _Peaks:
     ########################################
     # ALL methods must be `classmethod`.  ##
     ########################################
+
+    # Re-exported so callers can reach it as `_Peaks.IndexedPeaks`; it lives at
+    # module scope because `@validate_call_` resolves annotations while the class
+    # body is still executing, when a nested name does not yet exist.
+    IndexedPeaks = IndexedPeaks
 
     class PeakIndex(NamedTuple):
         # Corresponds to the `n_Peaks` index in the `NXstress` schema.
@@ -77,6 +135,11 @@ class _Peaks:
             phase_name, (h, k, l) = _Peaks._parse_peak_tag(peaks.peak_tag)
             mask = peaks.mask
             return (phase_name, h, k, l, mask)
+
+    @classmethod
+    def indexed(cls, peakss: list[PeakCollection], logs: SampleLogs = None) -> list[IndexedPeaks]:
+        """Wrap a single workspace's peak collections with an empty discriminator key."""
+        return [IndexedPeaks((), peaks, logs) for peaks in peakss]
 
     @classmethod
     def _parse_peak_tag(cls, tag: str) -> tuple[str, tuple[int, int, int]]:
@@ -102,9 +165,19 @@ class _Peaks:
         return phase, (h, k, l_)
 
     @classmethod
-    def _init(cls, logs: SampleLogs) -> NXreflections:
+    def _init(cls, logs: SampleLogs, discriminator_dtypes: dict | None = None) -> NXreflections:
         # Initialize the 'PEAKS' group
         peaks = NXreflections()
+
+        # Discriminator columns, one per configured field, written FIRST so the
+        # group's own ordering mirrors the sort key's. Each records the original
+        # (un-encoded) field name in `local_name`, the convention `_sample.py`
+        # already uses for retained logs -- the on-disk name is the NeXus-legal
+        # encoding of it, which is not always the same string.
+        for name, dtype in (discriminator_dtypes or {}).items():
+            column = _discriminator.column_name(name)
+            peaks[column] = NXfield(np.empty((0,), dtype=dtype), maxshape=(None,), chunks=CHUNK_SHAPE(1), units="")
+            peaks[column].attrs["local_name"] = name
 
         peaks["scan_point"] = NXfield(np.empty((0,), dtype=np.int32), maxshape=(None,), chunks=CHUNK_SHAPE(1))
 
@@ -189,23 +262,59 @@ class _Peaks:
         return peaks
 
     @classmethod
-    def init_group(cls, peakss: list[PeakCollection], logs: SampleLogs) -> NXreflections:
+    def discriminator_dtypes(cls, indexed: list[IndexedPeaks], names: tuple[str, ...]) -> dict:
+        """HDF5 dtype for each discriminator column, inferred from its values.
+
+        Inferred rather than fixed, so a numeric discriminator (a run number,
+        say) stays numeric on disk instead of being stringified. Strings use the
+        same variable-length dtype as `phase_name` and `mask`, which is what
+        makes the column resizable.
+
+        Args:
+            indexed: Every peak collection being written, with its workspace's
+                discriminator values.
+            names: Configured discriminator field names.
+
+        Returns:
+            Field name -> dtype, in `names` order.
+        """
+        dtypes = {}
+        for name in names:
+            values = [dict(item.discriminators)[name] for item in indexed]
+            inferred = np.asarray(values).dtype
+            dtypes[name] = FIELD_DTYPE.STRING.value if inferred.kind in ("U", "S", "O") else inferred
+        return dtypes
+
+    @classmethod
+    def init_group(
+        cls,
+        indexed: list[IndexedPeaks],
+        logs: SampleLogs,
+        discriminator_names: tuple[str, ...] = (),
+    ) -> NXreflections:
         # Initialize the PEAKS group:
         #   according to the NXstress schema, this group contains the canonical reduction data,
         #   in a form usable for stress / strain calculations.
 
         # TODO: these code sections are implemented in a form that allows new scan-point data to be appended
         #   However, at present, appending data is not yet supported.
-        peaks = cls._init(logs)
+        peaks = cls._init(logs, cls.discriminator_dtypes(indexed, discriminator_names))
 
-        for peak_collection in sorted(peakss, key=_Peaks.PeakIndex.sort_key):
-            cls._append_peak(peaks, peak_collection, logs)
+        for item in sorted(indexed, key=IndexedPeaks.sort_key):
+            cls._append_peak(peaks, item, logs, discriminator_names)
 
         return peaks
 
     @classmethod
-    def _append_peak(cls, peaks: NXreflections, peak_collection: PeakCollection, logs: SampleLogs) -> NXreflections:
+    def _append_peak(
+        cls,
+        peaks: NXreflections,
+        item: IndexedPeaks,
+        logs: SampleLogs,
+        discriminator_names: tuple[str, ...] = (),
+    ) -> NXreflections:
         # Append a `PeakCollection` to an initialized PEAKS group.
+        peak_collection = item.collection
         scan_point = peak_collection.sub_runs.raw_copy()
         N_scan = len(scan_point)
         phase_name, (h, k, l_) = cls._parse_peak_tag(peak_collection.peak_tag)
@@ -239,6 +348,14 @@ class _Peaks:
         peaks["sy"].resize((new_len,))
         peaks["sz"].resize((new_len,))
 
+        # Discriminator values are per input workspace, so every row this
+        # collection contributes carries the same value.
+        discriminators = dict(item.discriminators)
+        for name in discriminator_names:
+            column = _discriminator.column_name(name)
+            peaks[column].resize((new_len,))
+            peaks[column][curr_len:] = np.array((discriminators[name],) * N_scan)
+
         peaks["scan_point"][curr_len:] = scan_point
         peaks["h"][curr_len:] = h_arr
         peaks["k"][curr_len:] = k_arr
@@ -253,7 +370,12 @@ class _Peaks:
         # was commented out as not making sense: a log spans *every* scan point in the
         # workspace, while this slice needs only the scan points of THIS
         # `PeakCollection`. `get_pointlist` takes the subrun subset directly.
-        for peak_axis, values in zip(("sx", "sy", "sz"), cls._sample_positions(logs, scan_point, N_scan)):
+        # This collection's scan points index into its *own* workspace's logs:
+        # in a multi-workspace entry the entry-level `logs` argument belongs to
+        # the first input only, and would give the wrong sample positions -- or
+        # none at all -- for every other input's collections.
+        collection_logs = item.logs if item.logs is not None else logs
+        for peak_axis, values in zip(("sx", "sy", "sz"), cls._sample_positions(collection_logs, scan_point, N_scan)):
             peaks[peak_axis][curr_len:] = values
 
         return peaks
@@ -287,21 +409,38 @@ class _Peaks:
             return (nan, nan.copy(), nan.copy())
 
     @classmethod
-    def peakCollectionRanges(cls, peaks) -> list[tuple[tuple[str, int, int, int, str], int, int]]:
+    def _decoded(cls, values: np.ndarray) -> np.ndarray:
+        """HDF5 string columns come back as bytes; index keys must be `str`."""
+        if values.dtype.kind in ("S", "O"):
+            return np.array([v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in values])
+        return values
+
+    @classmethod
+    def peakCollectionRanges(
+        cls, peaks, discriminator_names: tuple[str, ...] = ()
+    ) -> list[tuple[DiscriminatorKey, tuple[str, int, int, int, str], int, int]]:
         """Identify contiguous blocks of PeakCollection data in NXreflections group.
 
         Each PeakCollection corresponds to a unique 5-tuple (phase_name, h, k, l, mask)
-        with multiple scan-points written as a contiguous block in increasing order.
+        -- prefixed by its discriminator values, when the entry holds more than one
+        input workspace -- with multiple scan-points written as a contiguous block in
+        increasing order.
 
         Parameters
         ----------
         peaks : NXreflections
             The peaks group from which to read the flattened index
+        discriminator_names : tuple[str, ...]
+            Discriminator fields this entry was written with, already
+            cross-checked against the file by `_discriminator.names_for_read`.
+            Empty for a single-workspace or merged entry.
 
         Returns
         -------
-        list[tuple[tuple[str, int, int, int, str], int, int]]
-            List of (key, start, end) where:
+        list[tuple[DiscriminatorKey, tuple[str, int, int, int, str], int, int]]
+            List of (discriminators, key, start, end) where:
+            - discriminators is the name-keyed discriminator value tuple, empty
+              when the entry has no discriminator columns
             - key is (phase_name, h, k, l, mask)
             - start is the first index (inclusive)
             - end is the last index (exclusive)
@@ -314,31 +453,40 @@ class _Peaks:
             If interleaved blocks are detected for the same sub-index key
         """
         # Read index arrays via .nxdata
-        phase_name = peaks["phase_name"].nxdata[:]
+        phase_name = cls._decoded(peaks["phase_name"].nxdata[:])
         h = peaks["h"].nxdata[:]
         k = peaks["k"].nxdata[:]
         l_ = peaks["l"].nxdata[:]
-        mask = peaks["mask"].nxdata[:]
+        mask = cls._decoded(peaks["mask"].nxdata[:])
         scan_point = peaks["scan_point"].nxdata[:]
+
+        # Discriminator columns, read in name order so a key built here compares
+        # equal to one built by `_discriminator.key` regardless of config order.
+        ordered_names = tuple(sorted(discriminator_names))
+        discriminators = [cls._decoded(peaks[_discriminator.column_name(n)].nxdata[:]) for n in ordered_names]
 
         if len(phase_name) == 0:
             return []
 
-        # Decode bytes to strings if necessary
-        if phase_name.dtype.kind == "S" or phase_name.dtype.kind == "O":
-            phase_name = np.array([p.decode("utf-8") if isinstance(p, bytes) else str(p) for p in phase_name])
-        if mask.dtype.kind == "S" or mask.dtype.kind == "O":
-            mask = np.array([m.decode("utf-8") if isinstance(m, bytes) else str(m) for m in mask])
+        def key_at(i: int) -> tuple[DiscriminatorKey, tuple[str, int, int, int, str]]:
+            disc = tuple((n, column[i].item()) for n, column in zip(ordered_names, discriminators))
+            return disc, (str(phase_name[i]), int(h[i]), int(k[i]), int(l_[i]), str(mask[i]))
+
+        def described(key: tuple) -> str:
+            # Name the block the way a caller thinks of it: the compound key,
+            # and the discriminators only when the entry actually has any.
+            disc, base = key
+            return f"{base}" + (f" for {dict(disc)}" if disc else "")
 
         ranges = []
         seen_keys = set()
 
         # Track current block
-        current_key = (str(phase_name[0]), int(h[0]), int(k[0]), int(l_[0]), str(mask[0]))
+        current_key = key_at(0)
         start_idx = 0
 
         for i in range(1, len(phase_name)):
-            key = (str(phase_name[i]), int(h[i]), int(k[i]), int(l_[i]), str(mask[i]))
+            key = key_at(i)
 
             if key != current_key:
                 # Block boundary - validate and record current block
@@ -349,15 +497,15 @@ class _Peaks:
                 if not np.all(block_scan_points[1:] > block_scan_points[:-1]):
                     raise RuntimeError(
                         f"scan_point values are not strictly increasing within PeakCollection block "
-                        f"at {current_key}, indices [{start_idx}, {end_idx})"
+                        f"at {described(current_key)}, indices [{start_idx}, {end_idx})"
                     )
 
                 # Check for interleaved blocks
                 if current_key in seen_keys:
-                    raise RuntimeError(f"Interleaved blocks detected for sub-index {current_key}")
+                    raise RuntimeError(f"Interleaved blocks detected for sub-index {described(current_key)}")
 
                 seen_keys.add(current_key)
-                ranges.append((current_key, start_idx, end_idx))
+                ranges.append((*current_key, start_idx, end_idx))
 
                 # Start new block
                 current_key = key
@@ -369,27 +517,32 @@ class _Peaks:
         if not np.all(block_scan_points[1:] > block_scan_points[:-1]):
             raise RuntimeError(
                 f"scan_point values are not strictly increasing within PeakCollection block "
-                f"at {current_key}, indices [{start_idx}, {end_idx})"
+                f"at {described(current_key)}, indices [{start_idx}, {end_idx})"
             )
 
         if current_key in seen_keys:
-            raise RuntimeError(f"Interleaved blocks detected for sub-index {current_key}")
+            raise RuntimeError(f"Interleaved blocks detected for sub-index {described(current_key)}")
 
         seen_keys.add(current_key)
-        ranges.append((current_key, start_idx, end_idx))
+        ranges.append((*current_key, start_idx, end_idx))
 
         return ranges
 
     @classmethod
-    def validateNoDuplicatePeaks(cls, peakss: list[PeakCollection]) -> None:
+    def validateNoDuplicatePeaks(cls, indexed: list[IndexedPeaks]) -> None:
         """Validate that no duplicate PeakCollections exist in the list.
 
-        Each PeakCollection must have a unique 5-tuple key (phase_name, h, k, l, mask).
+        Each PeakCollection must have a unique key. The discriminator values
+        are part of that key, so the same `(phase_name, h, k, l, mask)`
+        arriving from two different input workspaces is *not* a duplicate --
+        that is the ordinary multi-workspace case, and the two are told apart
+        on disk by their discriminator columns.
 
         Parameters
         ----------
-        peakss : list[PeakCollection]
-            List of PeakCollection instances to validate
+        indexed : list[_Peaks.IndexedPeaks]
+            Peak collections to validate, each tagged with the discriminator
+            values of the input workspace it came from.
 
         Raises
         ------
@@ -397,18 +550,18 @@ class _Peaks:
             If any duplicate keys are found
         """
         seen_keys = {}
-        for peaks in peakss:
-            key = cls.PeakIndex.sort_key(peaks)
+        for item in indexed:
+            key = IndexedPeaks.sort_key(item)
             if key in seen_keys:
                 raise ValueError(
                     f"Duplicate PeakCollection detected in output list at {key} "
                     f"-- did you forget to initialize the `mask` key?"
                 )
-            seen_keys[key] = peaks
+            seen_keys[key] = item
 
     @classmethod
     @validate_call_
-    def peakCollectionsFromNexus(cls, peaks, fit) -> list[PeakCollection]:
+    def peakCollectionsFromNexus(cls, peaks, fit, discriminator_names: tuple[str, ...] = ()) -> list[IndexedPeaks]:
         """Read PeakCollections from NXreflections and NXprocess groups.
 
         Note: This implementation assumes positive Miller indices. Negative indices
@@ -420,11 +573,18 @@ class _Peaks:
             The peaks (NXreflections) group containing d-spacing and Miller indices
         fit : NXprocess
             The FIT (NXprocess) group containing peak_parameters and background_parameters
+        discriminator_names : tuple[str, ...]
+            Discriminator fields this entry was written with, already
+            cross-checked against the file by `_discriminator.names_for_read`.
 
         Returns
         -------
-        list[PeakCollection]
-            List of reconstructed PeakCollection instances
+        list[_Peaks.IndexedPeaks]
+            Reconstructed peak collections, each tagged with the discriminator
+            values of the input workspace it came from. Group by
+            `.discriminators` to recover the per-workspace lists; that grouping
+            is `NXstress.read`'s job, because it also needs the scan-point sets
+            the groups imply.
         """
         from ._fit import _PeakParameters, _BackgroundParameters
         from ._definitions import GROUP_NAME, UNDEFINED_PEAK_TAG
@@ -453,10 +613,10 @@ class _Peaks:
         background_function = BackgroundFunction.getFunction(bp["title"].nxdata)
 
         # Get ranges for each PeakCollection
-        ranges = cls.peakCollectionRanges(peaks)
+        ranges = cls.peakCollectionRanges(peaks, discriminator_names)
 
         peak_collections = []
-        for (phase_name, h, k, l_, mask), start, end in ranges:
+        for discriminators, (phase_name, h, k, l_, mask), start, end in ranges:
             # Extract scan points for this range
             sub_runs_array = peaks["scan_point"].nxdata[start:end]
 
@@ -508,6 +668,6 @@ class _Peaks:
             fit_costs = np.full(N, np.nan)
             pc.set_peak_fitting_values(sub_runs_array, param_values, param_errors, fit_costs)
 
-            peak_collections.append(pc)
+            peak_collections.append(IndexedPeaks(discriminators, pc))
 
         return peak_collections

@@ -26,7 +26,7 @@ class TestInputData:
         existing_data = NXdata()
 
         with pytest.raises(RuntimeError, match=r".*not implemented: append detector_counts data to NXstress file.*"):
-            _InputData.init_group(ws, data=existing_data)
+            _InputData.init_group([ws], data=existing_data)
 
     def test_InputData_init_group_data_values(
         self,
@@ -35,7 +35,7 @@ class TestInputData:
         """Verify detector_counts shape and scan_point values match workspace"""
         ws = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True)
 
-        data = _InputData.init_group(ws)
+        data = _InputData.init_group([ws])
 
         # Verify structure
         assert isinstance(data, NXdata)
@@ -66,7 +66,7 @@ class TestInputData:
         ws_write = minimal_HidraWorkspace(name="test_workspace_write", with_instrument=True, with_raw_counts=True)
 
         # Create input data
-        data = _InputData.init_group(ws_write)
+        data = _InputData.init_group([ws_write])
 
         # Write to file
         file_path = tmp_path / "test_readSubruns.nxs"
@@ -106,7 +106,7 @@ class TestInputData:
         ws = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True)
 
         # Create input data and write to file
-        data = _InputData.init_group(ws)
+        data = _InputData.init_group([ws])
         file_path = tmp_path / "test_existing_subruns.nxs"
         with nxopen(str(file_path), "w") as nx:
             nx["input_data"] = data

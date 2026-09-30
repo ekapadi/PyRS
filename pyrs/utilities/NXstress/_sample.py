@@ -44,7 +44,48 @@ class _Sample:
     }
 
     @classmethod
-    def init_group(cls, sampleLogs: SampleLogs) -> NXsample:
+    def _scalar(cls, logss: list[SampleLogs], key: str, fallback: str) -> str:
+        """One entry-wide value drawn from N inputs, which must agree.
+
+        `name` and `chemical_formula` describe the sample, and the NXstress
+        schema allows exactly one of each per entry. Writing one input's value
+        while silently discarding a different one would misdescribe the file,
+        so a disagreement raises.
+        """
+        values = [logs.get(key, (fallback,))[0] for logs in logss]
+        distinct = {v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in values}
+        if len(distinct) > 1:
+            raise RuntimeError(
+                f"NXstress._sample: input workspaces disagree on '{key}': {sorted(distinct)}.\n"
+                "  A single NXentry describes one sample; write them to separate entries."
+            )
+        return values[0]
+
+    @classmethod
+    def _concatenated_pointlist(cls, logss: list[SampleLogs], counts: list[int]) -> tuple:
+        """Sample positions for every input, concatenated in workspace order.
+
+        Taken per input rather than from a merged `SampleLogs`, because the
+        concatenated scan-point axis need not be strictly increasing and so
+        cannot be held by a `SubRuns` at all -- see
+        `plans/NXstress-prod/probes/a5_subruns_nonmonotonic.py`.
+        """
+        per_axis: list[list[np.ndarray]] = [[], [], []]
+        for logs, n_scan in zip(logss, counts):
+            try:
+                pl = logs.get_pointlist()
+                vv = (pl.vx, pl.vy, pl.vz)
+            except AssertionError as e:
+                if "some coordinates do not have finite values" in str(e):
+                    vv = (np.full((n_scan,), np.nan),) * 3
+                else:
+                    raise
+            for axis, values in zip(per_axis, vv):
+                axis.append(np.asarray(values))
+        return tuple(np.concatenate(axis) for axis in per_axis)
+
+    @classmethod
+    def init_group(cls, logss: list[SampleLogs]) -> NXsample:
         """
         Create SAMPLE_DESCRIPTION (NXsample) group following NXstress schema:
           - subrun[nP]: link to the scanpoint axis
@@ -52,16 +93,23 @@ class _Sample:
           - name: sample descriptive name if present in logs; otherwise 'unknown'
           - chemical_formula: sample formula if present in logs; otherwise 'unknown'
           - [optional fields, only if present in the logs]: 'temperature', 'stress_field'
+
+        Accepts the sample logs of all N input workspaces and concatenates the
+        per-scan-point fields in workspace order. Everything here is raw-array
+        concatenation: the merged scan-point axis is not required to be
+        monotonic, so it is never routed through a `SampleLogs` or `SubRuns`.
         """
         # Create SAMPLE_DESCRIPTION as an NXsample
         sd = NXsample()
 
         # Name of sample (required): try the expected log key; fall back to 'unknown'.
-        sd["name"] = NXfield(sampleLogs.get(HidraConstants.SAMPLE_NAME, ("unknown",))[0])
+        sd["name"] = NXfield(cls._scalar(logss, HidraConstants.SAMPLE_NAME, "unknown"))
 
         # Link scanpoints to subruns: subrun[nP] (unitless)
         # SampleLogs.subruns is a SubRuns object; use .raw_copy() to get a NumPy array
-        scan_points = sampleLogs.subruns.raw_copy()
+        per_workspace = [logs.subruns.raw_copy() for logs in logss]
+        counts = [len(points) for points in per_workspace]
+        scan_points = np.concatenate(per_workspace) if per_workspace else np.empty((0,), dtype=int)
         sd["scan_point"] = NXfield(
             scan_points.astype(FIELD_DTYPE.INT_DATA.value), chunks=CHUNK_SHAPE(1), maxshape=(None,), units=""
         )
@@ -69,14 +117,7 @@ class _Sample:
 
         # 3) Sample positions per scanpoint (mm). Use SampleLogs.get_pointlist().
         # PointList returns vx, vy, vz arrays in millimeters.
-        try:
-            pl = sampleLogs.get_pointlist()
-            vv = (pl.vx, pl.vy, pl.vz)
-        except AssertionError as e:
-            if "some coordinates do not have finite values" in str(e):
-                vv = (np.full((N_scan,), np.nan),) * 3
-            else:
-                raise
+        vv = cls._concatenated_pointlist(logss, counts)
         for axis_name, axis_values in zip(HidraConstants.SAMPLE_COORDINATE_NAMES, vv):
             vs = np.asarray(axis_values, dtype=FIELD_DTYPE.FLOAT_DATA.value)
             if vs.shape[0] != N_scan:
@@ -92,24 +133,27 @@ class _Sample:
         #   - `HidraConstants.TEMPERATURE`[nTemp] (NXTEMPERATURE)
         #   - `HidraConstants.STRESS_FIELD`[nsField] (with `@direction` attr = 'x'|'y'|'z')
         # The lines below are safe no-ops if the corresponding logs are not present.
-        sd["chemical_formula"] = NXfield(sampleLogs.get(HidraConstants.CHEMICAL_FORMULA, ("unknown",))[0])
+        sd["chemical_formula"] = NXfield(cls._scalar(logss, HidraConstants.CHEMICAL_FORMULA, "unknown"))
 
         # Example of temperature if present (stored as numeric array and units carried separately)
-        if HidraConstants.TEMPERATURE in sampleLogs:
+        if cls._present_in_all(logss, HidraConstants.TEMPERATURE):
             tkey = HidraConstants.TEMPERATURE
-            tvals = np.asarray(sampleLogs[tkey], dtype=FIELD_DTYPE.FLOAT_DATA.value)
+            tvals = np.concatenate([np.asarray(logs[tkey], dtype=FIELD_DTYPE.FLOAT_DATA.value) for logs in logss])
             tf = NXfield(tvals, name="temperature")
-            tf.attrs["units"] = sampleLogs.units(tkey) or "K"
+            tf.attrs["units"] = logss[0].units(tkey) or "K"
             sd["temperature"] = tf
 
         # Example of stress_field if present (values + direction attribute)
-        if HidraConstants.STRESS_FIELD in sampleLogs:
+        if cls._present_in_all(logss, HidraConstants.STRESS_FIELD):
+            sampleLogs = logss[0]
             # TODO: we don't have an example of these entries, so the dimensions may not be correct!
             # -- Assuming:
             #      <stress field> :: (<scan points>, ...)
             #      <stress field direction > :: {'x', 'y', 'z'}: scalar
             #
-            sf = np.asarray(sampleLogs[HidraConstants.STRESS_FIELD], dtype=FIELD_DTYPE.FLOAT_DATA.value)
+            sf = np.concatenate(
+                [np.asarray(logs[HidraConstants.STRESS_FIELD], dtype=FIELD_DTYPE.FLOAT_DATA.value) for logs in logss]
+            )
             if sf.shape[0] != N_scan:
                 raise RuntimeError(
                     f"NXstress required log '{HidraConstants.STRESS_FIELD}' has unexpected shape.\n"
@@ -124,29 +168,90 @@ class _Sample:
 
         # Retain any additional logs that happen to be present.
         sd["logs"] = NXcollection()
-        for key in sampleLogs:
+        for key in cls._retained_log_keys(logss):
             # convert ':' to '_':
             name = allowed_identifier(key)
-            if key not in cls.NXstress_logs:
-                sd["logs"][name] = NXfield(
-                    sampleLogs[key],
-                    # source PV-log name as attribute
-                    local_name=key,
-                    # 'units' as attribute
-                    units=sampleLogs.units(key),
-                )
+            sd["logs"][name] = NXfield(
+                cls._writable(np.concatenate([np.asarray(logs[key]) for logs in logss])),
+                # source PV-log name as attribute
+                local_name=key,
+                # 'units' as attribute
+                units=logss[0].units(key),
+            )
 
         return sd
 
     @classmethod
+    def _writable(cls, values: np.ndarray) -> np.ndarray:
+        """Coerce a log array to something HDF5 can actually store.
+
+        NumPy's fixed-width unicode dtype (`<U`) has no h5py conversion path --
+        writing one raises `TypeError: No conversion path for dtype`, which is an
+        h5py limitation rather than a NeXus rule. The variable-length UTF-8 dtype
+        already used for `phase_name` and `mask` holds the same values, so a
+        unicode log is converted rather than rejected.
+
+        Bytes logs (`start_time`, `end_time`, `Filename`) are already writable and
+        are left exactly as they are. Evidence:
+        `plans/NXstress-prod/probes/a4_string_log_dtypes.py`.
+        """
+        return values.astype(FIELD_DTYPE.STRING.value) if values.dtype.kind == "U" else values
+
+    @classmethod
+    def _present_in_all(cls, logss: list[SampleLogs], key: str) -> bool:
+        """Whether an optional per-scan-point log is present in every input.
+
+        Present in some inputs and not others is rejected rather than
+        part-filled: the field is written as one array spanning every scan
+        point, so a partial log would silently misalign with the scan-point
+        axis from the first gap onwards.
+        """
+        present = [key in logs for logs in logss]
+        if any(present) and not all(present):
+            raise RuntimeError(
+                f"NXstress._sample: log '{key}' is present in some input workspaces and not others "
+                f"(present={present}).\n"
+                "  Every input must carry it, or none of them."
+            )
+        return all(present) and bool(present)
+
+    @classmethod
+    def _retained_log_keys(cls, logss: list[SampleLogs]) -> list[str]:
+        """Non-schema log keys to retain, which every input must share.
+
+        Same reasoning as `_present_in_all`: each retained log is written as a
+        single array over the concatenated scan-point axis, so a key missing
+        from one input has no values to contribute and would shift every
+        later input's values onto the wrong scan points.
+        """
+        key_sets = [{k for k in logs if k not in cls.NXstress_logs} for logs in logss]
+        shared = set.intersection(*key_sets) if key_sets else set()
+        divergent = set.union(*key_sets) - shared if key_sets else set()
+        if divergent:
+            raise RuntimeError(
+                f"NXstress._sample: input workspaces carry different sample logs; "
+                f"{sorted(divergent)} is absent from at least one.\n"
+                "  Every input must carry the same set of logs."
+            )
+        return sorted(shared)
+
+    @classmethod
     @validate_call_
-    def sampleLogsFromNexus(cls, sample) -> SampleLogs:
+    def sampleLogsFromNexus(cls, sample, rows=None) -> SampleLogs:
         """Read SampleLogs from an NXsample group.
 
         Parameters
         ----------
         sample : NXsample
             The NXsample group from the HDF5 file
+        rows : np.ndarray, optional
+            Boolean mask selecting one input workspace's rows of the
+            concatenated scan-point axis. Required when the entry holds more
+            than one workspace, and applied *before* any `SubRuns` is built:
+            the concatenated axis is not required to be monotonic and
+            `SubRuns` rejects a non-monotonic array outright, so splitting
+            afterwards is not merely wasteful but impossible. See
+            `plans/NXstress-prod/probes/a5_subruns_nonmonotonic.py`.
 
         Returns
         -------
@@ -156,6 +261,11 @@ class _Sample:
 
         # Read scan_point array
         scan_point = sample["scan_point"].nxdata
+        if rows is not None:
+            scan_point = scan_point[rows]
+
+        def selected(values):
+            return values[rows] if rows is not None else values
 
         # Initialize SampleLogs and set subruns
         logs = SampleLogs()
@@ -165,7 +275,7 @@ class _Sample:
         for coord_name in HidraConstants.SAMPLE_COORDINATE_NAMES:
             if coord_name in sample:
                 coord_field = sample[coord_name]
-                values = coord_field.nxdata
+                values = selected(coord_field.nxdata)
                 units = coord_field.attrs.get("units", "mm")
                 logs[coord_name, units] = values
 
@@ -177,7 +287,7 @@ class _Sample:
                 # Get the original PV-log key from local_name attribute
                 original_key = field.attrs.get("local_name", field_name)
                 units = field.attrs.get("units", "")
-                values = field.nxdata
+                values = selected(field.nxdata)
                 logs[original_key, units] = values
 
         # Read optional scalar fields
@@ -195,13 +305,13 @@ class _Sample:
 
         if "temperature" in sample:
             temp_field = sample["temperature"]
-            temp_values = temp_field.nxdata
+            temp_values = selected(temp_field.nxdata)
             temp_units = temp_field.attrs.get("units", "K")
             logs[HidraConstants.TEMPERATURE, temp_units] = temp_values
 
         if "stress_field" in sample:
             stress_field = sample["stress_field"]
-            stress_values = stress_field.nxdata
+            stress_values = selected(stress_field.nxdata)
             logs[HidraConstants.STRESS_FIELD, ""] = stress_values
             # Read direction attribute if present
             if "direction" in stress_field.attrs:

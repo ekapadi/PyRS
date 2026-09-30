@@ -34,7 +34,7 @@ exist at the first pass · **~** partial (scope stated below) · **✗** not run
 | `02-peak-and-texture-nxstress.md` | ✗ | ✗ | ~ | ✗ | ✗ | n/a | ✓ |
 | `03-combine-runs-nxstress.md` | ✗ | ✗ | ~ | ✗ | ✗ | n/a | ✓ |
 | `04-nxstress-internal-cleanup.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-09-29) |
-| `04b-multi-workspace-nxstress.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
+| `04b-multi-workspace-nxstress.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-09-30) |
 | `04c-nxstress-append.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
 | `05-strain-stress-viewer.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
 | `06-manual-reduction-prereqs.md` | ✓ | ✓ | ✓ | ex | ex | n/a | ✓ |
@@ -75,6 +75,16 @@ exist at the first pass · **~** partial (scope stated below) · **✗** not run
   *reading source*, which cannot see that the chain is unreachable. See 04's
   Follow-up 7 and Decisions rows 25-27. **This is the axis-coverage equivalent of
   "audited is not a terminal state": both axes were covered, and both were wrong.**
+- **04b — A4/A5 raised to ✓✓, and A7 re-dated (2026-09-30).** A5 was `~` for the
+  stated reason that the code did not exist; the 04b PR wrote it, and the four
+  claim clusters §3 listed are now covered by tests. A4 was `✓`, scoped to the
+  precedent argument in Q1, and is re-covered against the **vendored schema**,
+  which did not exist at the first pass — plus a second A4 axis nothing had
+  asked about, whether a Python-string sample log is writable at all. It is
+  not. Four of the eleven findings in 04b's Follow-up 2 came from probing
+  before implementing; two of those falsified instructions in the spec body
+  that would have produced code that could not work. **The same lesson as 04:
+  both axes were covered, and both were incomplete.**
 - **A4/A5 "ex" on 06.** 06 asserts nothing third-party and nothing cross-module.
   Genuinely exempt — written down because afterwards "no probe was needed" and
   "no probe was written" look identical.
@@ -139,6 +149,7 @@ rows 19–22.
 | F1.1 | 09 | A3 | **No defects.** All 21 citations land exactly. | — |
 | F1.2 | 10 | A3 | The `filesSelected` citation points at the slots, not the handler. | Fixed in place |
 | F1.3 | 10 | A1 | `## Tests` names no test file, for the one spec adding new UI. | **Decision 21** scope |
+| F2.1-11 | 04b | A1/A2/A3/A4/A5 | **Eleven from the implementation pass.** The two config keys spec 01 was said to deliver were never shipped; `append_hidra_project` is unusable as the merge and the merged scan-point axis cannot be a `SubRuns` at all; the vendored schema answers Q1; a Python-string sample log cannot be written, and even the writable form returns `bytes`; `merge_workspaces` cannot merge two inputs sharing a compound key. | **Decisions 28-31** |
 | F1.1 | 01 | A4 | Two undocumented `neutrons_standard` behaviours: a write to `~/.pyrs/` on every load; and under a test env the resources root resolves **outside the repository**. | Flagged for a follow-up PR |
 | F1.1 | 02 | A3 | Heading named `texture_fitting/model.py`, which does not exist. Landed with it intact. | Fixed in place |
 | F1.1 | 03 | A7 | `combine_runs_model.py:17` → the cited call is at `:21`. Caught by the landing trigger. | Fixed in place |
@@ -175,6 +186,8 @@ than being reported as a missing source file.
 the recorded-not-fixed material in F1.6, F1.8 and F1.9, plus the boilerplate
 `process.md` §7.4 predicts.
 
+**Updated 2026-09-30 (04b PR):** `check_citations.py` resolves 388 citations, still with the same three `open-questions/06` findings; `check_ownership.py` goes from 9 findings to 10, the new row being `_discriminator.py`, which 04b's own heading never path-qualified because Q5 left the module's location open. Recorded in 04b's Follow-up 2. Test tiers re-measured after the PR: `test-unit` 360 passed / 148 deselected · `test-integration` 102 passed / 28 skipped / 2 xfailed · `test-gui` 16 passed.
+
 **Test tiers re-measured at `68639d3b`** under `QT_QPA_PLATFORM=offscreen`,
 rather than carried forward from the `8634088a` figures — identical:
 `test-unit` 298 passed / 140 deselected · `test-integration` 94 passed /
@@ -188,7 +201,7 @@ Stated so gaps are not mistaken for coverage.
 
 | Claim cluster | Axis | Why |
 |---|---|---|
-| 04b's N-workspace write/read, discriminator resolution, scan-point-family split, the `≥1 PeakCollection when N>1` invariant | A5 | The code does not exist. `write` takes a single `HidraWorkspace` today — pinned by `a5_nxstress_roundtrip.py`. |
+| ~~04b's N-workspace write/read, discriminator resolution, scan-point-family split, the `≥1 PeakCollection when N>1` invariant~~ | A5 | **Closed 2026-09-30 by the 04b PR.** Listed here so the first round's gap is not lost from the record. |
 | 04c's conflict classification, Case-A/B dispatch, `entry_number` targeting | A5 | Unimplemented. The *mechanism* beneath it **is** covered (`a4_h5py_nexusformat_append.py`); the dispatch is not. |
 | 08's fit-spectrum reconstruction, `beam_intensity_profile`, `DENEXDetectorGeometry` repairs | A5 | Net-new PyRS code. 08's claims about the **current** broken state are A3 and were checked. |
 | ~~`uncertainties` propagation; Mantid diagonal fit errors~~ | A4 | **Closed in round two** — see 08's Follow-up 2. Listed here only so the first round's gap is not lost from the record. |
@@ -232,7 +245,7 @@ follow `CLAUDE.md`.
 
 | # | Invariant | Owner PR | Possible from | Tier |
 |---|---|---|---|---|
-| 1 | `_peaks.py`'s splitter enforces contiguity and monotonic `scan_point` and **nothing more** — with the rule reproduced locally, so it fails when `_peaks.py` changes rather than tracking it | 04b | now | unit |
+| 1 | `_peaks.py`'s splitter enforces contiguity and monotonic `scan_point` and **nothing more** — with the rule reproduced locally, so it fails when `_peaks.py` changes rather than tracking it | 04b | **WRITTEN** (04b PR, 2026-09-30) | unit |
 | 2 | Tail-append grows each dataset by exactly N, leaves existing rows unchanged, and a pre-resize abort is byte-neutral | 04c | 04c | integration |
 | 3 | `neutrons_standard.config` is never imported before `init("pyrs")` — a source scan, since the failure is at import time | follow-up to 01 | now | unit |
 | 4 | `setEnabled(False)` leaves a `QAction` visible — a **third-party API-surface pin**, a net-new shape for this repo | 10 | 02 | gui + integration |

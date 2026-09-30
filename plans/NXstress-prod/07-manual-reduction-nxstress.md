@@ -269,3 +269,21 @@ stripped" describes.
 - Action (for the implementing PR), unchanged from F1.3 and now evidenced: state
   the two rules separately rather than as one, and change the Verification case
   to a double-extension name.
+
+---
+
+## Follow-up 3 — 2026-09-30 (04b implementation pass)
+
+**F3.1** (A2) — **`write([hidra_ws], [])` becomes `write([hidra_ws], [[]])`.**
+This spec cites 04b's signature in three places — the Overview bullet, the
+code block, and the Follow-up 1 F1.1 writeup that established the dependency —
+each spelling the no-peaks call `NXstress(path, "w").write([hidra_ws], [])`.
+That was right for the shape 04b left "TBD in implementation"; 04b resolved it
+to one `PeakCollection` list **per workspace** (Decisions row 28), so the
+second argument is a list of one empty list, not an empty list.
+- The dependency itself is unchanged and now satisfied: `write` takes a list of
+  workspaces as of the 04b PR, which is what Decisions row 20 recorded this
+  spec as waiting on.
+- Nothing else in this spec is affected — it writes exactly one workspace and
+  configures no discriminator field, so it never engages the discriminator
+  mechanism at all.

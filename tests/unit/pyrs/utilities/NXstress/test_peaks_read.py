@@ -9,6 +9,8 @@ import pytest
 from pathlib import Path
 import tempfile
 
+from pyrs.dataobjects.sample_logs import SubRuns
+from pyrs.utilities.NXstress import _peaks as _peaks_module
 from pyrs.utilities.NXstress._peaks import _Peaks
 from pyrs.utilities.NXstress._fit import _PeakParameters, _BackgroundParameters
 from pyrs.utilities.NXstress.NXstress import NXstress
@@ -57,7 +59,7 @@ class TestPeakCollectionRanges:
         )
 
         # Write to NXreflections group
-        peaks_group = _Peaks.init_group([peak1, peak2, peak3], ws._sample_logs)
+        peaks_group = _Peaks.init_group(_Peaks.indexed([peak1, peak2, peak3], ws._sample_logs), ws._sample_logs)
 
         # Read ranges
         ranges = _Peaks.peakCollectionRanges(peaks_group)
@@ -66,12 +68,12 @@ class TestPeakCollectionRanges:
         assert len(ranges) == 3
 
         # Verify each range spans N_subrun entries
-        for (phase_name, h, k, l, mask), start, end in ranges:
+        for _discriminators, (phase_name, h, k, l, mask), start, end in ranges:
             assert end - start == N_subrun
 
         # Verify ranges are contiguous
         expected_start = 0
-        for (phase_name, h, k, l, mask), start, end in ranges:
+        for _discriminators, (phase_name, h, k, l, mask), start, end in ranges:
             assert start == expected_start
             expected_start = end
 
@@ -188,7 +190,7 @@ class TestValidateNoDuplicatePeaks:
         )
 
         # Should not raise any error
-        _Peaks.validateNoDuplicatePeaks([peak1, peak2, peak3])
+        _Peaks.validateNoDuplicatePeaks(_Peaks.indexed([peak1, peak2, peak3]))
 
     def test_validateNoDuplicatePeaks_with_duplicates(self, createPeakCollection):
         """2 PeakCollections with same key → ValueError with 'Duplicate PeakCollection detected'"""
@@ -215,7 +217,7 @@ class TestValidateNoDuplicatePeaks:
 
         # Should raise ValueError
         with pytest.raises(ValueError, match="Duplicate PeakCollection detected"):
-            _Peaks.validateNoDuplicatePeaks([peak1, peak2])
+            _Peaks.validateNoDuplicatePeaks(_Peaks.indexed([peak1, peak2]))
 
 
 class TestPeakParametersForRange:
@@ -355,7 +357,7 @@ class TestPeakCollectionsFromNexus:
             file_path = Path(tmpdir) / "test_roundtrip.nxs"
 
             with NXstress(file_path, mode="w") as nxs:
-                nxs.write(ws, original_peaks)
+                nxs.write([ws], [original_peaks])
 
             # Read back
             with NXstress(file_path, mode="r") as nxs:
@@ -374,7 +376,9 @@ class TestPeakCollectionsFromNexus:
 
         # Match by sub-index key (not by list position)
         original_by_key = {_Peaks.PeakIndex.sort_key(p): p for p in original_peaks}
-        reconstructed_by_key = {_Peaks.PeakIndex.sort_key(p): p for p in reconstructed_peaks}
+        reconstructed_by_key = {
+            _Peaks.PeakIndex.sort_key(item.collection): item.collection for item in reconstructed_peaks
+        }
 
         assert set(original_by_key.keys()) == set(reconstructed_by_key.keys())
 
@@ -440,7 +444,7 @@ class TestPeakCollectionsFromNexus:
             file_path = Path(tmpdir) / "test_multidigit.nxs"
 
             with NXstress(file_path, mode="w") as nxs:
-                nxs.write(ws, original_peaks)
+                nxs.write([ws], [original_peaks])
 
             with NXstress(file_path, mode="r") as nxs:
                 entry = nxs._root["entry"]
@@ -451,10 +455,10 @@ class TestPeakCollectionsFromNexus:
 
         # Verify peak_tag matches
         assert len(reconstructed_peaks) == 1
-        assert reconstructed_peaks[0].peak_tag == "Fe120100"
+        assert reconstructed_peaks[0].collection.peak_tag == "Fe120100"
 
         # Verify parsing produces correct Miller indices
-        phase, (h, k, l) = _Peaks._parse_peak_tag(reconstructed_peaks[0].peak_tag)
+        phase, (h, k, l) = _Peaks._parse_peak_tag(reconstructed_peaks[0].collection.peak_tag)
         assert phase == "Fe"
         assert h == 12
         assert k == 1
@@ -501,4 +505,113 @@ class TestValidateNoDuplicatePeaksIntegration:
             # The validation happens before any writes, so the error is raised early
             with pytest.raises(ValueError, match="Duplicate PeakCollection detected"):
                 with NXstress(file_path, mode="w") as nxs:
-                    nxs.write(ws, duplicate_peaks)
+                    nxs.write([ws], [duplicate_peaks])
+
+
+class TestSplitterEnforcesOnlyContiguityAndMonotonicity:
+    """What `peakCollectionRanges` requires of row order -- and what it does not.
+
+    Two subspecs rest their design on this: 04b puts discriminators first in the
+    sort key so each workspace forms one contiguous super-block, and 04c makes
+    append a plain tail-append, on the shared premise that the reader never
+    required *global* order. Promoted here from
+    `plans/NXstress-prod/probes/a5_peakcollection_ranges.py` so the premise is
+    re-checked on every commit rather than once per audit.
+
+    The block rule is reproduced locally in `expected_block_count` rather than
+    imported from `_peaks.py`. A test that asked `_peaks.py` for its own rule
+    would agree with any rule it later adopted, and so would pass vacuously --
+    the point is to fail if the splitter's contract changes.
+    """
+
+    @staticmethod
+    def peaks_group(phase, h, k, l_, mask, scan_point):
+        """A minimal stand-in for the NXreflections group the reader indexes into.
+
+        Real `NXfield`s, not bare arrays: the reader reaches through `.nxdata`.
+        """
+        group = {}
+        group["phase_name"] = NXfield(np.array(phase))
+        group["h"] = NXfield(np.array(h, dtype=np.int32))
+        group["k"] = NXfield(np.array(k, dtype=np.int32))
+        group["l"] = NXfield(np.array(l_, dtype=np.int32))
+        group["mask"] = NXfield(np.array(mask))
+        group["scan_point"] = NXfield(np.array(scan_point, dtype=np.int32))
+        return group
+
+    @staticmethod
+    def expected_block_count(phase, h, k, l_, mask) -> int:
+        """The rule, restated independently: a block boundary is any key change."""
+        keys = list(zip(phase, h, k, l_, mask))
+        return 1 + sum(1 for i in range(1, len(keys)) if keys[i] != keys[i - 1])
+
+    def test_globally_unsorted_but_locally_contiguous_is_accepted(self):
+        """ "Locally sorted, globally segmented" -- what an appended file looks like."""
+        # Arrange: Ni before Fe, so the index is not in lexicographic order.
+        phase, h, k, l_, mask = (
+            ["Ni"] * 3 + ["Fe"] * 3,
+            [2] * 3 + [1] * 3,
+            [2] * 3 + [1] * 3,
+            [2] * 3 + [1] * 3,
+            ["m"] * 6,
+        )
+        group = self.peaks_group(phase, h, k, l_, mask, [1, 2, 3, 1, 2, 3])
+
+        # Act
+        ranges = _Peaks.peakCollectionRanges(group)
+
+        # Assert
+        assert len(ranges) == self.expected_block_count(phase, h, k, l_, mask) == 2
+        assert [(start, end) for _disc, _key, start, end in ranges] == [(0, 3), (3, 6)]
+
+    def test_key_split_into_two_runs_raises(self):
+        """Contiguity IS enforced: the same key may not reappear after another."""
+        group = self.peaks_group(["Fe", "Ni", "Fe"], [1, 2, 1], [1, 2, 1], [1, 2, 1], ["m"] * 3, [1, 1, 2])
+
+        with pytest.raises(RuntimeError, match="Interleaved blocks detected"):
+            _Peaks.peakCollectionRanges(group)
+
+    def test_descending_scan_point_within_a_run_raises(self):
+        """Monotonicity IS enforced, within a run."""
+        group = self.peaks_group(["Fe"] * 3, [1] * 3, [1] * 3, [1] * 3, ["m"] * 3, [3, 2, 1])
+
+        with pytest.raises(RuntimeError, match="not strictly increasing"):
+            _Peaks.peakCollectionRanges(group)
+
+    def test_scan_points_need_not_be_ordered_across_runs(self):
+        """And nothing more than those two: run B may start below where run A ended."""
+        phase, h, k, l_, mask = (
+            ["Fe"] * 3 + ["Ni"] * 3,
+            [1] * 3 + [2] * 3,
+            [1] * 3 + [2] * 3,
+            [1] * 3 + [2] * 3,
+            ["m"] * 6,
+        )
+        group = self.peaks_group(phase, h, k, l_, mask, [10, 11, 12, 1, 2, 3])
+
+        ranges = _Peaks.peakCollectionRanges(group)
+
+        assert len(ranges) == self.expected_block_count(phase, h, k, l_, mask) == 2
+
+    def test_no_global_ordering_machinery_in_the_module(self):
+        """There is no search over the index, which is why global order is free.
+
+        A source scan rather than a behavioural check, because the claim is
+        about absence: a binary search introduced later would not fail any of
+        the cases above until a file happened to be globally unsorted.
+        """
+        source = Path(_peaks_module.__file__).read_text()
+
+        found = {name: source.count(name) for name in ("searchsorted", "argsort", "bisect", "np.sort")}
+
+        assert found == {"searchsorted": 0, "argsort": 0, "bisect": 0, "np.sort": 0}
+
+    def test_monotonic_scan_points_are_guaranteed_upstream(self):
+        """The invariant the reader enforces is one PyRS cannot violate anyway.
+
+        `SubRuns.set` rejects a non-increasing array, so every
+        `PeakCollection.sub_runs` is strictly increasing by construction --
+        independently of anything NXstress sorts.
+        """
+        with pytest.raises(RuntimeError, match="not sorted in increasing order"):
+            SubRuns(np.array([3, 1, 2]))

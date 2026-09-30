@@ -86,8 +86,90 @@ class _Instrument:
         return names[0], names[1]
 
     @classmethod
+    def _entry_wide_geometry(cls, wss: list[HidraWorkspace]) -> tuple:
+        """Geometry, detector shift and calibration state, which all inputs must share.
+
+        Unlike wavelength, these are single entry-wide values: `NXinstrument`
+        holds one detector with one transformation chain. A mixed-instrument or
+        mixed-calibration merge is not supported by this pass, and is rejected
+        rather than silently resolved to the first input's geometry.
+        """
+        geometries = [ws.get_instrument_setup() for ws in wss]
+        shifts = [ws.get_detector_shift() for ws in wss]
+
+        # Compared field by field, not by `str()`: neither class defines
+        # `__eq__`, and `DENEXDetectorGeometry` has no `__str__` either, so the
+        # default repr embeds the object id and two identical geometries would
+        # always read as different. The keys below are exactly the values this
+        # writer goes on to write, which is what has to agree.
+        for label, values, key in (
+            ("instrument geometry", geometries, cls._geometry_key),
+            ("detector shift", shifts, cls._shift_key),
+        ):
+            keys = [key(v) for v in values]
+            if any(k != keys[0] for k in keys):
+                raise RuntimeError(
+                    f"NXstress._instrument: input workspaces disagree on {label}:\n"
+                    + "".join(f"    [{n}] {k}\n" for n, k in enumerate(keys))
+                    + "  A single NXentry describes one instrument configuration;\n"
+                    "  mixed-instrument and mixed-calibration merges are not supported."
+                )
+        return geometries[0], shifts[0]
+
+    @staticmethod
+    def _geometry_key(geometry: DENEXDetectorGeometry | None) -> tuple | None:
+        if geometry is None:
+            return None
+        return (geometry.arm_length, geometry.detector_size, geometry.pixel_dimension)
+
+    @staticmethod
+    def _shift_key(shift: DENEXDetectorShift | None) -> tuple | None:
+        if shift is None:
+            return None
+        return (
+            shift.center_shift_x,
+            shift.center_shift_y,
+            shift.center_shift_z,
+            shift.rotation_x,
+            shift.rotation_y,
+            shift.rotation_z,
+            shift.two_theta_0,
+        )
+
+    @classmethod
+    def _concatenated_wavelength(cls, wss: list[HidraWorkspace], is_calibrated: bool) -> list:
+        """Wavelength for every input, concatenated in workspace order.
+
+        Wavelength is stored per scan point and can already vary *within* one
+        workspace under existing PyRS semantics (`get_wavelength` may return a
+        per-subrun dict), so it belongs to the scan-point family's
+        concatenation pattern -- not to the cross-workspace equality check
+        `_entry_wide_geometry` applies. See the plan's Decisions Log item 18.
+        """
+        combined: list = []
+        for ws in wss:
+            n_scan_point = len(ws.get_sub_runs())
+            wavelength = ws.get_wavelength(is_calibrated, False)
+            if isinstance(wavelength, dict):
+                # `dict` order should be the same as the sorted subruns order
+                wavelength = [l_ for l_ in wavelength.values()]
+            elif isinstance(wavelength, float):
+                wavelength = list((wavelength,) * n_scan_point)
+            elif wavelength is None:
+                wavelength = list((np.nan,) * n_scan_point)
+            else:
+                raise RuntimeError(f"unable to parse wavelength from `HidraWorkspace.get_wavelength`: {wavelength}")
+            if len(wavelength) != n_scan_point:
+                raise ValueError(
+                    "Workspace must have either a single wavelength value,\n"
+                    f"  or one wavelength value for each of {n_scan_point} subruns."
+                )
+            combined.extend(wavelength)
+        return combined
+
+    @classmethod
     @validate_call_
-    def init_group(cls, ws: HidraWorkspace) -> NXinstrument:
+    def init_group(cls, wss: list[HidraWorkspace]) -> NXinstrument:
         """
         Create a new NXinstrument group subtree.
         Conventions:
@@ -96,32 +178,21 @@ class _Instrument:
           - DENEXDetectorGeometry.detectorsize -> (rows, cols)
           - DENEXDetectorGeometry.pixeldimension -> (px, py) (meters)
           - If present, setup._geometryshift is DENEXDetectorShift.
+
+        Accepts the full set of input workspaces. Geometry, shift and
+        calibration state are validated for agreement across them; wavelength
+        is concatenated per scan point.
         """
         inst = cls._init(*cls._instrument_names())
 
-        N_scan_point = len(ws.get_sub_runs())
-
         # Detector base geometry and transformations
-        geom: DENEXDetectorGeometry = ws.get_instrument_setup()
-        shift: DENEXDetectorShift | None = ws.get_detector_shift()
+        geom: DENEXDetectorGeometry
+        shift: DENEXDetectorShift | None
+        geom, shift = cls._entry_wide_geometry(wss)
         is_calibrated = shift is not None
 
         # Wavelength (`get_wavelength` returns either a single `float` or a `dict` keyed by subrun)
-        wavelength = ws.get_wavelength(is_calibrated, False)
-        if isinstance(wavelength, dict):
-            # `dict` order should be the same as the sorted subruns order
-            wavelength = [l_ for l_ in wavelength.values()]
-        elif isinstance(wavelength, float):
-            wavelength = list((wavelength,) * N_scan_point)
-        elif wavelength is None:
-            wavelength = list((np.nan,) * N_scan_point)
-        else:
-            raise RuntimeError(f"unable to parse wavelength from `HidraWorkspace.get_wavelength`: {wavelength}")
-        if len(wavelength) != N_scan_point:
-            raise ValueError(
-                "Workspace must have either a single wavelength value,\n"
-                "  or one wavelength value for each of {N_scan_point} subruns."
-            )
+        wavelength = cls._concatenated_wavelength(wss, is_calibrated)
 
         # Construct required NeXus subgroups:
         #   NXsource, NXmonochromator, NXdetector, NXtransformations.
@@ -261,19 +332,39 @@ class _Instrument:
         # Add an optional 'masks' subgroup, to contain any detector or solid-angle masks.
         # For the moment, we only write detector masks -- the `HidraWorkspace` doesn't
         # yet seem to provide a way to distinguish between a detector and a solid-angle mask.
-        inst[GROUP_NAME.MASKS] = _Masks.init_group(ws)
+        #
+        # Masks are name-keyed and entry-wide, like the geometry above: the FIT
+        # group writes one DIFFRACTOGRAM per mask spanning every scan point, so
+        # the inputs have to agree on which masks exist before that is meaningful.
+        cls._validate_masks_agree(wss)
+        inst[GROUP_NAME.MASKS] = _Masks.init_group(wss[0])
 
         return inst
 
     @classmethod
+    def _validate_masks_agree(cls, wss: list[HidraWorkspace]) -> None:
+        """Every input must define the same mask names."""
+        key_sets = [set(_Masks.mask_keys(ws)) for ws in wss]
+        if any(keys != key_sets[0] for keys in key_sets):
+            raise RuntimeError(
+                "NXstress._instrument: input workspaces define different masks:\n"
+                + "".join(f"    [{n}] {sorted(keys)}\n" for n, keys in enumerate(key_sets))
+                + "  Every input must define the same mask names."
+            )
+
+    @classmethod
     @validate_call_
-    def instrumentFromNexus(cls, instrument):
+    def instrumentFromNexus(cls, instrument, rows=None):
         """Read instrument geometry, detector shift, and wavelength from NXinstrument group.
 
         Parameters
         ----------
         instrument : NXinstrument
             The NXinstrument group from the HDF5 file
+        rows : np.ndarray, optional
+            Boolean mask selecting one input workspace's rows of the
+            concatenated wavelength array. Geometry and detector shift are
+            entry-wide and are returned whole regardless.
 
         Returns
         -------
@@ -325,6 +416,10 @@ class _Instrument:
             mono = instrument[GROUP_NAME.MONOCHROMATOR]
             if "wavelength" in mono:
                 wavelength = mono["wavelength"].nxdata
+                # A multi-workspace entry concatenates every input's wavelength
+                # into one per-scan-point array; `rows` selects this workspace's.
+                if rows is not None:
+                    wavelength = wavelength[rows]
 
         return geometry, shift, wavelength
 

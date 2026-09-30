@@ -74,7 +74,7 @@ class TestPeaks:
             N_subrun=N_subrun,
         )
 
-        peaks = _Peaks.init_group([peak0], ws._sample_logs)
+        peaks = _Peaks.init_group(_Peaks.indexed([peak0], ws._sample_logs), ws._sample_logs)
 
         assert isinstance(peaks, NXreflections)
 
@@ -135,7 +135,7 @@ class TestPeaks:
             N_subrun=N_subrun,
         )
 
-        peaks = _Peaks.init_group([peak0, peak1], ws._sample_logs)
+        peaks = _Peaks.init_group(_Peaks.indexed([peak0, peak1], ws._sample_logs), ws._sample_logs)
 
         # Should have 2 * N_subrun rows
         assert peaks["h"].shape[0] == 2 * N_subrun
@@ -227,7 +227,7 @@ class TestPeaks:
             N_subrun=N_subrun,
         )
 
-        peaks = _Peaks.init_group([peak0], ws._sample_logs)
+        peaks = _Peaks.init_group(_Peaks.indexed([peak0], ws._sample_logs), ws._sample_logs)
 
         # qx, qy, qz exist but remain empty (implementation doesn't populate them)
         assert "qx" in peaks
@@ -265,7 +265,7 @@ class TestPeaks:
         )
 
         # Act
-        peaks = _Peaks.init_group([peak0], ws._sample_logs)
+        peaks = _Peaks.init_group(_Peaks.indexed([peak0], ws._sample_logs), ws._sample_logs)
 
         # Assert: values are the sample coordinates, not NaN
         for peak_axis, coord_axis in zip(("sx", "sy", "sz"), ("vx", "vy", "vz")):
@@ -301,7 +301,7 @@ class TestPeaks:
         )
 
         # Act
-        peaks = _Peaks.init_group([peak0], ws._sample_logs)
+        peaks = _Peaks.init_group(_Peaks.indexed([peak0], ws._sample_logs), ws._sample_logs)
 
         # Assert: length and values follow the collection, not the workspace
         assert peaks["sx"].shape[0] == N_subset
@@ -330,7 +330,7 @@ class TestPeaks:
         )
 
         # Act
-        peaks = _Peaks.init_group([peak0], ws._sample_logs)
+        peaks = _Peaks.init_group(_Peaks.indexed([peak0], ws._sample_logs), ws._sample_logs)
 
         # Assert
         for peak_axis in ("sx", "sy", "sz"):

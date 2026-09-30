@@ -23,7 +23,7 @@ class TestSample:
         """Verify scan_point matches subruns and vx,vy,vz have correct shape/dtype"""
         ws = minimal_HidraWorkspace(with_instrument=False)
 
-        sample = _Sample.init_group(ws._sample_logs)
+        sample = _Sample.init_group([ws._sample_logs])
 
         assert isinstance(sample, NXsample)
         assert "scan_point" in sample
@@ -54,7 +54,7 @@ class TestSample:
         N_scan = len(subruns)
         ws._sample_logs[HidraConstants.CHEMICAL_FORMULA] = ["Fe3O4"] * N_scan
 
-        sample = _Sample.init_group(ws._sample_logs)
+        sample = _Sample.init_group([ws._sample_logs])
 
         assert "chemical_formula" in sample
         # _Sample takes the first value from the log
@@ -71,7 +71,7 @@ class TestSample:
         if HidraConstants.CHEMICAL_FORMULA in ws._sample_logs:
             del ws._sample_logs[HidraConstants.CHEMICAL_FORMULA]
 
-        sample = _Sample.init_group(ws._sample_logs)
+        sample = _Sample.init_group([ws._sample_logs])
 
         assert "chemical_formula" in sample
         assert sample["chemical_formula"] == "unknown"
@@ -88,7 +88,7 @@ class TestSample:
         # Use tuple (key, units) to set value with units
         ws._sample_logs[(HidraConstants.TEMPERATURE, "K")] = temp_values
 
-        sample = _Sample.init_group(ws._sample_logs)
+        sample = _Sample.init_group([ws._sample_logs])
 
         assert "temperature" in sample
         assert sample["temperature"].shape == (N_scan,)
@@ -106,7 +106,7 @@ class TestSample:
         if HidraConstants.TEMPERATURE in ws._sample_logs:
             del ws._sample_logs[HidraConstants.TEMPERATURE]
 
-        sample = _Sample.init_group(ws._sample_logs)
+        sample = _Sample.init_group([ws._sample_logs])
 
         assert "temperature" not in sample
 
@@ -128,7 +128,7 @@ class TestSample:
         # Direction is stored as array with same value for each subrun
         ws._sample_logs[HidraConstants.STRESS_FIELD_DIRECTION] = np.array(["z"] * N_scan)
 
-        sample = _Sample.init_group(ws._sample_logs)
+        sample = _Sample.init_group([ws._sample_logs])
 
         assert "stress_field" in sample
         assert sample["stress_field"].shape[0] == N_scan
@@ -155,7 +155,7 @@ class TestSample:
         ws._sample_logs._data[HidraConstants.STRESS_FIELD] = wrong_shape_stress
 
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
-            _Sample.init_group(ws._sample_logs)
+            _Sample.init_group([ws._sample_logs])
 
     def test_Sample_coordinate_shape_mismatch(
         self,
@@ -175,7 +175,7 @@ class TestSample:
         ws._sample_logs._data["vz"] = np.zeros(N_scan + 5)
 
         with pytest.raises(RuntimeError, match=r".*unexpected shape.*"):
-            _Sample.init_group(ws._sample_logs)
+            _Sample.init_group([ws._sample_logs])
 
     def test_Sample_extra_logs(
         self,
@@ -191,7 +191,7 @@ class TestSample:
         custom_log_value = np.full(N_scan, 42.0)
         ws._sample_logs[(custom_log_name, "mm")] = custom_log_value
 
-        sample = _Sample.init_group(ws._sample_logs)
+        sample = _Sample.init_group([ws._sample_logs])
 
         assert "logs" in sample
         assert isinstance(sample["logs"], NXcollection)

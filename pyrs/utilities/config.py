@@ -28,23 +28,52 @@ from neutrons_standard.config import Config  # noqa: E402  (import must follow i
 
 
 def validate_config() -> None:
-    """Raise RuntimeError unless both format-enable flags are actual booleans, then
+    """Raise RuntimeError unless every typed key holds the type it declares, then
     raise ValueError unless at least one output format is enabled.
 
     `neutrons_standard.Config` performs no schema validation of its own -- a
     malformed override (e.g. `enable: "false"`, a YAML string rather than a real
     boolean) would otherwise be silently truthy and pass the check below undetected.
+    The same applies to `nxstress.discriminator_fields`: a bare
+    `discriminator_fields: direction` is a string, and a string is iterable, so an
+    unchecked value would be read one character at a time as five field names.
 
     Raises:
-        RuntimeError: If `nxstress.enable` or `legacy_io.enable` is not a bool.
+        RuntimeError: If `nxstress.enable`, `legacy_io.enable` or
+            `nxstress.merge_workspaces` is not a bool; if
+            `nxstress.discriminator_fields` is not a list of non-blank strings; or
+            if it names the same field twice.
         ValueError: If both `nxstress.enable` and `legacy_io.enable` are false --
             PyRS must be able to write at least one output format.
     """
     nxstress_enable = Config["nxstress.enable"]
     legacy_io_enable = Config["legacy_io.enable"]
-    for key, value in (("nxstress.enable", nxstress_enable), ("legacy_io.enable", legacy_io_enable)):
+    for key, value in (
+        ("nxstress.enable", nxstress_enable),
+        ("legacy_io.enable", legacy_io_enable),
+        ("nxstress.merge_workspaces", Config["nxstress.merge_workspaces"]),
+    ):
         if not isinstance(value, bool):
             raise RuntimeError('Config["{}"] must be a bool, got {} ({})'.format(key, value, type(value).__name__))
+
+    fields = Config["nxstress.discriminator_fields"]
+    if not isinstance(fields, list):
+        raise RuntimeError(
+            'Config["nxstress.discriminator_fields"] must be a list of field names, got {} ({})'.format(
+                fields, type(fields).__name__
+            )
+        )
+    for field in fields:
+        if not isinstance(field, str) or not field.strip():
+            raise RuntimeError(
+                'Config["nxstress.discriminator_fields"] entries must be non-blank strings, got {!r} in {}'.format(
+                    field, fields
+                )
+            )
+    if len(set(fields)) != len(fields):
+        raise RuntimeError(
+            'Config["nxstress.discriminator_fields"] names the same field more than once: {}'.format(fields)
+        )
 
     if not (nxstress_enable or legacy_io_enable):
         raise ValueError("At least one of nxstress.enable or legacy_io.enable must be true")

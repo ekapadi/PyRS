@@ -35,7 +35,7 @@ class CombineRunsModel(QObject):
             # _Peaks.init_group([], ...) / _Fit.init_group(ws, [], ...) both produce
             # a valid, empty PEAKS/FIT group rather than raising.
             with NXstress(Path(fileout), "w") as nx:
-                nx.write(self._hidra_ws, [])
+                nx.write([self._hidra_ws], [[]])
             return
 
         export_project = HidraProjectFile(fileout, "w")

@@ -109,3 +109,77 @@ def test_validate_legacy_io_enable_not_bool(default_config: "_Config", tmp_path:
     # Act / Assert
     with pytest.raises(RuntimeError, match='Config\\["legacy_io.enable"\\] must be a bool'):
         config_module.validate_config()
+
+
+class TestDiscriminatorConfigKeys:
+    """`nxstress.discriminator_fields` and `nxstress.merge_workspaces`.
+
+    Both are typed, and neither type is one YAML gets right by accident:
+    `discriminator_fields: direction` (no list) parses as a string, and a
+    string is iterable, so an unchecked value would be read one character at a
+    time as five one-letter field names.
+    """
+
+    def test_shipped_defaults(self, default_config: "_Config") -> None:
+        assert default_config["nxstress.discriminator_fields"] == []
+        assert default_config["nxstress.merge_workspaces"] is False
+
+    def test_validate_config_rejects_a_bare_string(self, default_config: "_Config", tmp_path: Path) -> None:
+        import pytest
+
+        import pyrs.utilities.config as config_module
+
+        override_file = tmp_path / "override.yml"
+        override_file.write_text("nxstress:\n  discriminator_fields: direction\n")
+        default_config.loadEnv(str(override_file))
+
+        with pytest.raises(RuntimeError, match="must be a list of field names"):
+            config_module.validate_config()
+
+    def test_validate_config_rejects_a_blank_entry(self, default_config: "_Config", tmp_path: Path) -> None:
+        import pytest
+
+        import pyrs.utilities.config as config_module
+
+        override_file = tmp_path / "override.yml"
+        override_file.write_text("nxstress:\n  discriminator_fields: ['direction', '  ']\n")
+        default_config.loadEnv(str(override_file))
+
+        with pytest.raises(RuntimeError, match="non-blank strings"):
+            config_module.validate_config()
+
+    def test_validate_config_rejects_a_repeated_field(self, default_config: "_Config", tmp_path: Path) -> None:
+        import pytest
+
+        import pyrs.utilities.config as config_module
+
+        override_file = tmp_path / "override.yml"
+        override_file.write_text("nxstress:\n  discriminator_fields: ['direction', 'direction']\n")
+        default_config.loadEnv(str(override_file))
+
+        with pytest.raises(RuntimeError, match="more than once"):
+            config_module.validate_config()
+
+    def test_validate_config_rejects_non_bool_merge_workspaces(
+        self, default_config: "_Config", tmp_path: Path
+    ) -> None:
+        import pytest
+
+        import pyrs.utilities.config as config_module
+
+        override_file = tmp_path / "override.yml"
+        override_file.write_text('nxstress:\n  merge_workspaces: "true"\n')
+        default_config.loadEnv(str(override_file))
+
+        with pytest.raises(RuntimeError, match="must be a bool"):
+            config_module.validate_config()
+
+    def test_validate_config_accepts_a_well_formed_field_list(self, default_config: "_Config", tmp_path: Path) -> None:
+
+        import pyrs.utilities.config as config_module
+
+        override_file = tmp_path / "override.yml"
+        override_file.write_text("nxstress:\n  discriminator_fields: ['direction']\n  merge_workspaces: true\n")
+        default_config.loadEnv(str(override_file))
+
+        config_module.validate_config()  # must not raise

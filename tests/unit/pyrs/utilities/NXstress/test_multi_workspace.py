@@ -1,0 +1,334 @@
+"""Multi-workspace NXstress I/O: N workspaces in, N workspaces out.
+
+One `NXentry` may hold more than one `HidraWorkspace`. Their rows are
+concatenated in workspace order throughout, and the boundary between them is
+recovered on read from discriminator columns on the peak index. These tests
+cover the round trip, the policies that gate it, and the two shapes that are
+easy to get wrong -- interleaved scan-point *values*, and configuration drift
+between write and read.
+"""
+
+from collections.abc import Callable
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from pyrs.core.workspaces import HidraWorkspace
+from pyrs.peaks.peak_collection import PeakCollection
+from pyrs.utilities.NXstress._definitions import GROUP_NAME
+from pyrs.utilities.NXstress.NXstress import NXstress
+
+
+def configure(default_config, tmp_path: Path, yaml: str) -> None:
+    """Apply an `nxstress` config override, the way `test_config.py` does."""
+    override = tmp_path / "override.yml"
+    override.write_text(yaml)
+    default_config.loadEnv(str(override))
+
+
+def with_direction(ws: HidraWorkspace, direction: str, sub_runs: np.ndarray) -> HidraWorkspace:
+    ws.set_sample_log("direction", sub_runs, np.array([direction] * len(sub_runs)))
+    return ws
+
+
+def two_workspaces(
+    minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    minimal_PeakCollection: Callable[..., PeakCollection],
+    *,
+    sub_runs_a=(1, 2, 3),
+    sub_runs_b=(4, 5, 6),
+    directions=("11", "22"),
+    peak_tags=("Fe110", "Fe110"),
+):
+    """Two workspaces with disjoint scan points and distinct discriminator values."""
+    workspaces, peakss = [], []
+    for direction, sub_runs, peak_tag in zip(directions, (np.array(sub_runs_a), np.array(sub_runs_b)), peak_tags):
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True, sub_runs=sub_runs)
+        with_direction(ws, direction, sub_runs)
+        workspaces.append(ws)
+        peakss.append([minimal_PeakCollection(N_subrun=len(sub_runs), peak_tag=peak_tag, sub_runs=sub_runs)])
+    return workspaces, peakss
+
+
+class TestDiscriminatorRoundtrip:
+    def test_two_workspaces_recovered_with_their_own_scan_points(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
+
+        path = tmp_path / "two.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+        with NXstress(path, "r") as nx:
+            read_wss, read_peakss = nx.read()
+
+        assert len(read_wss) == 2
+        by_direction = {ws.get_sample_log_value("direction"): ws for ws in read_wss}
+        assert sorted(by_direction) == ["11", "22"]
+        np.testing.assert_array_equal(by_direction["11"].get_sub_runs().raw_copy(), [1, 2, 3])
+        np.testing.assert_array_equal(by_direction["22"].get_sub_runs().raw_copy(), [4, 5, 6])
+        assert [len(p) for p in read_peakss] == [1, 1]
+
+    def test_discriminator_column_is_written_to_the_peaks_group(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
+
+        path = tmp_path / "column.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+
+        with NXstress(path, "r") as nx:
+            peaks = nx._root["entry"][GROUP_NAME.PEAKS]
+            assert "direction" in peaks
+            assert peaks["direction"].attrs["local_name"] == "direction"
+            values = [v.decode() if isinstance(v, bytes) else str(v) for v in peaks["direction"].nxdata]
+
+        # Discriminators are the most slowly varying coordinate, so each
+        # workspace's rows form one contiguous super-block.
+        assert values == ["11"] * 3 + ["22"] * 3
+
+    def test_single_workspace_also_carries_the_column(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """`N == 1` is not a special case: the column is written whenever a field is configured."""
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        sub_runs = np.array([1, 2, 3])
+        ws = with_direction(
+            minimal_HidraWorkspace(with_instrument=True, with_masks=True, sub_runs=sub_runs), "33", sub_runs
+        )
+        peaks = [minimal_PeakCollection(N_subrun=3, peak_tag="Fe110", sub_runs=sub_runs)]
+
+        path = tmp_path / "one.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [peaks])
+        with NXstress(path, "r") as nx:
+            read_wss, _ = nx.read()
+
+        assert len(read_wss) == 1
+        assert read_wss[0].get_sample_log_value("direction") == "33"
+
+
+class TestBackCompat:
+    def test_length_one_list_round_trips_without_any_discriminator(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Regression guard for specs 02/03, which write a single workspace."""
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+        n_subrun = len(ws.get_sub_runs())
+        peaks = [minimal_PeakCollection(N_subrun=n_subrun, peak_tag="Fe110")]
+
+        path = tmp_path / "back-compat.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [peaks])
+        with NXstress(path, "r") as nx:
+            read_wss, read_peakss = nx.read()
+
+        assert len(read_wss) == 1 and len(read_peakss) == 1
+        np.testing.assert_array_equal(read_wss[0].get_sub_runs().raw_copy(), ws.get_sub_runs().raw_copy())
+        assert read_peakss[0][0].peak_tag == "Fe110"
+
+    def test_file_without_columns_reads_as_one_workspace_under_configured_fields(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """A pre-04b file stays readable once a deployment configures a field."""
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+        peaks = [minimal_PeakCollection(N_subrun=len(ws.get_sub_runs()), peak_tag="Fe110")]
+
+        path = tmp_path / "legacy.nxs"
+        with NXstress(path, "w") as nx:  # written with no field configured
+            nx.write([ws], [peaks])
+
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        with NXstress(path, "r") as nx:
+            read_wss, _ = nx.read()
+
+        assert len(read_wss) == 1
+
+    def test_file_with_a_different_field_set_raises(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Configuration is the authority, and a disagreement is loud, not silent."""
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
+        path = tmp_path / "drifted.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['run_number']\n")
+        with NXstress(path, "r") as nx:
+            with pytest.raises(RuntimeError, match="do not match the configured fields"):
+                nx.read()
+
+
+class TestEmptyConfigPolicy:
+    def test_multiple_workspaces_without_a_discriminator_raises(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
+
+        path = tmp_path / "no-field.nxs"
+        with NXstress(path, "w") as nx:
+            with pytest.raises(ValueError, match="names no field"):
+                nx.write(workspaces, peakss)
+
+    def test_merge_workspaces_merges_into_one(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        configure(default_config, tmp_path, "nxstress:\n  merge_workspaces: true\n")
+        workspaces, peakss = two_workspaces(
+            minimal_HidraWorkspace, minimal_PeakCollection, peak_tags=("Fe110", "Ni200")
+        )
+
+        path = tmp_path / "merged.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+        with NXstress(path, "r") as nx:
+            read_wss, read_peakss = nx.read()
+
+        assert len(read_wss) == 1
+        np.testing.assert_array_equal(read_wss[0].get_sub_runs().raw_copy(), [1, 2, 3, 4, 5, 6])
+        assert len(read_peakss[0]) == 2
+
+    def test_merging_inputs_that_share_a_compound_key_raises(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Merging discards the only thing that could have told the two apart.
+
+        With no discriminator, two collections that share
+        `(phase, h, k, l, mask)` become two blocks of the *same* index key --
+        which the reader rejects as interleaved. Caught at write time by the
+        existing duplicate check rather than written and found unreadable
+        later. See this spec's Follow-up 2, F2.11: `merge_workspaces` merges
+        the scan-point family, not the peak index.
+        """
+        configure(default_config, tmp_path, "nxstress:\n  merge_workspaces: true\n")
+        workspaces, peakss = two_workspaces(
+            minimal_HidraWorkspace, minimal_PeakCollection, peak_tags=("Fe110", "Fe110")
+        )
+
+        path = tmp_path / "merge-collision.nxs"
+        with NXstress(path, "w") as nx:
+            with pytest.raises(ValueError, match="Duplicate PeakCollection detected"):
+                nx.write(workspaces, peakss)
+
+
+class TestWriteTimeInvariants:
+    def test_mismatched_list_lengths_raise(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
+
+        path = tmp_path / "mismatched.nxs"
+        with NXstress(path, "w") as nx:
+            with pytest.raises(ValueError, match="one list of `PeakCollection` per workspace"):
+                nx.write(workspaces, peakss[:1])
+
+    def test_workspace_with_no_peak_collections_raises(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Its discriminator value would exist nowhere on disk, so it could not be recovered."""
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
+        peakss[1] = []
+
+        path = tmp_path / "no-peaks.nxs"
+        with NXstress(path, "w") as nx:
+            with pytest.raises(ValueError, match="contribute no `PeakCollection`"):
+                nx.write(workspaces, peakss)
+
+    def test_single_workspace_with_no_peak_collections_is_allowed(
+        self, default_config, minimal_HidraWorkspace, tmp_path
+    ):
+        """Spec 03's case: `N == 1`, so nothing has to be told apart."""
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+
+        path = tmp_path / "no-peaks-one-ws.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [[]])
+        with NXstress(path, "r") as nx:
+            read_wss, read_peakss = nx.read()
+
+        assert len(read_wss) == 1
+        assert read_peakss == [[]]
+
+    def test_overlapping_scan_points_raise(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """The reader attributes rows by scan-point value, so an overlap is unsplittable."""
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(
+            minimal_HidraWorkspace, minimal_PeakCollection, sub_runs_a=(1, 2, 3), sub_runs_b=(3, 4, 5)
+        )
+
+        path = tmp_path / "overlap.nxs"
+        with NXstress(path, "w") as nx:
+            with pytest.raises(ValueError, match="cover disjoint scan points"):
+                nx.write(workspaces, peakss)
+
+
+class TestConfigDrift:
+    def test_reordering_the_fields_between_write_and_read_is_harmless(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Values are attributed by name, never by position in the configured list."""
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['a_field', 'b_field']\n")
+
+        workspaces, peakss = [], []
+        for n, (a, b, sub_runs) in enumerate(
+            (("alpha", "beta", np.array([1, 2, 3])), ("gamma", "delta", np.array([4, 5, 6])))
+        ):
+            ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True, sub_runs=sub_runs)
+            ws.set_sample_log("a_field", sub_runs, np.array([a] * 3))
+            ws.set_sample_log("b_field", sub_runs, np.array([b] * 3))
+            workspaces.append(ws)
+            peakss.append([minimal_PeakCollection(N_subrun=3, peak_tag="Fe110", sub_runs=sub_runs)])
+
+        path = tmp_path / "reordered.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['b_field', 'a_field']\n")
+        with NXstress(path, "r") as nx:
+            read_wss, _ = nx.read()
+
+        recovered = {(ws.get_sample_log_value("a_field"), ws.get_sample_log_value("b_field")) for ws in read_wss}
+        assert recovered == {("alpha", "beta"), ("gamma", "delta")}
+
+
+class TestScanPointFamilySplit:
+    def test_interleaved_scan_point_values_split_by_value_not_position(
+        self, default_config, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Workspace A holds [1,3,5] and B holds [2,4,6].
+
+        Their rows stay positionally contiguous -- the write side never
+        interleaves positions -- but their *values* interleave, so the
+        concatenated axis [1,3,5,2,4,6] is not monotonic. Recovering each
+        workspace therefore has to go by value-set membership, and has to do so
+        before any `SubRuns` is built: `SubRuns` rejects a non-monotonic array
+        outright. See `plans/NXstress-prod/probes/a5_subruns_nonmonotonic.py`.
+        """
+        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(
+            minimal_HidraWorkspace, minimal_PeakCollection, sub_runs_a=(1, 3, 5), sub_runs_b=(2, 4, 6)
+        )
+
+        path = tmp_path / "interleaved.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+        with NXstress(path, "r") as nx:
+            read_wss, _ = nx.read()
+
+        by_direction = {ws.get_sample_log_value("direction"): ws for ws in read_wss}
+        np.testing.assert_array_equal(by_direction["11"].get_sub_runs().raw_copy(), [1, 3, 5])
+        np.testing.assert_array_equal(by_direction["22"].get_sub_runs().raw_copy(), [2, 4, 6])
+
+        # The reduced data must follow the same split, not just the scan points.
+        for direction, ws_original in zip(("11", "22"), workspaces):
+            np.testing.assert_allclose(by_direction[direction]._diff_data_set[None], ws_original._diff_data_set[None])

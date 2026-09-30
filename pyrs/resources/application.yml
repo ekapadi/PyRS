@@ -19,6 +19,16 @@ nxstress:
   # code change.
   instrument_name: "HB2B"
   instrument_short_name: "HB2B"
+  # Names of the fields that tell input workspaces apart when more than one
+  # `HidraWorkspace` is written into a single `NXentry`. Each becomes one column on
+  # the combined peak index. A value is taken from a matching `HidraWorkspace`
+  # `@property` if one exists, otherwise from the sample log of that name -- which
+  # must be constant across the workspace's scan points.
+  discriminator_fields: []
+  # Only consulted when `discriminator_fields` is empty. False rejects a
+  # multi-workspace write outright; true merges the workspaces indistinguishably,
+  # and `read()` then returns the single merged workspace rather than N.
+  merge_workspaces: false
 
 legacy_io:
   # Whether legacy HidraProject (.h5) output is written.

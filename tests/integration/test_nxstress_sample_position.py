@@ -38,7 +38,7 @@ def nxstress_from_real_data(tmp_path_factory):
 
     nxs_path = tmp_path_factory.mktemp("nxstress") / "HB2B_1327_with_instrument.nxs"
     with NXstress(nxs_path, mode="w") as nxs:
-        nxs.write(workspace, peak_collections)
+        nxs.write([workspace], [peak_collections])
 
     import h5py
 

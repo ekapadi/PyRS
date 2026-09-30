@@ -50,7 +50,9 @@ class TextureFittingModel(QObject):
                 # (Phase-1 scope: model/NXstress round trip only, not full
                 # interactive re-use of a loaded .nxs file).
                 with NXstress(Path(filename), "r") as nx:
-                    self.ws, peaks = nx.read()
+                    # A viewer holds one workspace; an entry written by this viewer holds one.
+                    wss, peakss = nx.read()
+                self.ws, peaks = wss[0], peakss[0]
                 self.fit_result = FitResult(peakcollections=peaks, fitted=None, difference=None) if peaks else None
             else:
                 source_project = HidraProjectFile(filename, mode=HidraProjectFileMode.READONLY)
@@ -193,7 +195,7 @@ class TextureFittingModel(QObject):
             # from the in-memory workspace + fit result.
             assert self.ws is not None, "save_fit_result called before a workspace was set"
             with NXstress(Path(out_file_name), "w") as nx:
-                nx.write(self.ws, fit_result.peakcollections)
+                nx.write([self.ws], [fit_result.peakcollections])
             return
 
         # NOTE: this branch previously referenced `self.parent._curr_file_name`,

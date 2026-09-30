@@ -91,7 +91,9 @@ def report(claim: str, result: str) -> None:
 def attempt(label: str, peaks: FakePeaks) -> str:
     try:
         ranges = _Peaks.peakCollectionRanges(peaks)
-        return f"{label}: ACCEPTED -> {len(ranges)} block(s) {[(r[1], r[2]) for r in ranges]}"
+        # Since 04b a range is (discriminators, key, start, end); this probe's
+        # cases configure no discriminator, so the first slot is always ().
+        return f"{label}: ACCEPTED -> {len(ranges)} block(s) {[(start, end) for _d, _k, start, end in ranges]}"
     except Exception as exc:  # noqa: BLE001 - what it raises is the result
         return f"{label}: RAISED {type(exc).__name__}: {exc}"
 
