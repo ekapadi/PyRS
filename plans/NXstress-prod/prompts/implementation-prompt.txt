@@ -1,17 +1,17 @@
 <!-- ===== UPDATE BEFORE EACH NEW SUBSPEC: edit these four fields ===== -->
 
-    SUBSPEC              04b
+    SUBSPEC              04c
                          The subspec to implement this session. Its document is
-                         plans/NXstress-prod/04b-multi-workspace-nxstress.md
+                         plans/NXstress-prod/04c-nxstress-append.md
 
-    LANDED THROUGH       04
+    LANDED THROUGH       04b
                          Everything at or below this number has shipped. If
                          SUBSPEC depends on something above this, stop and say so
                          -- see README.md's "## Sub-specifications" table, whose
                          `Depends on` column was corrected by this audit.
-                         (04b depends on 01 and 04; both have landed.)
+                         (04c depends on 04b, which has landed.)
 
-    AUDIT BASE           eb5457b16dab
+    AUDIT BASE           d69e1834e73
                          The `git.base_commit` currently in
                          plans/NXstress-prod/audit.toml. Used as
                          `base_commit..HEAD`, which should span **exactly the
@@ -20,26 +20,57 @@
                          commit. Advanced each time a subspec lands (step 9).
                          Paired with `base_subject` and checked at load, so
                          update BOTH or every tool exits 2.
-                         This value is the first application of step 9: it is the
-                         commit immediately before subspec 04's first commit, so
-                         the range spans exactly 04's one commit ("subspec 04",
-                         27 files). The previous value was this branch's point of
-                         divergence, set wide on purpose so the first audit pass
-                         could see 01-03 at once; that is now discharged.
+                         This value is the commit immediately before subspec
+                         04b's first commit, so the range spans exactly 04b's one
+                         commit ("subspec 04b"). It reports 185 citations into 11
+                         changed files -- a much larger signal than 04's, because
+                         04b changed every module in the package.
 
     LAST AUDIT PASS      2026-09-25 / 2026-09-26 (first seven-axis pass)
                          Claims verified before this date may have gone stale.
-                         **04b was NOT re-audited when 04 landed on 2026-09-29.**
-                         That pass changed `_peaks.py`, `_definitions.py`,
-                         `_fit.py`, `_instrument.py` and `test_definitions.py` --
-                         all of which 04b and its open-questions cite. Expect
-                         `landing_trigger.py` in step 2 to flag them; it already
-                         does, and those hits are yours to resolve, not the
-                         accepted residue. Known-stale before you start:
-                         `test_definitions.py:100-105` (that test was rewritten
-                         wholesale) and the `_peaks.py` line ranges in
-                         `open-questions/04b-*.md` (a helper method and new
-                         imports were added above them).
+                         **04c was NOT re-audited when 04 or 04b landed.**
+                         04b (2026-09-30) changed `NXstress.py`, `_peaks.py`,
+                         `_fit.py`, `_input_data.py`, `_sample.py` and
+                         `_instrument.py` -- every module 04c cites. Expect
+                         `landing_trigger.py` in step 2 to flag ~20 hits into
+                         04c's own two documents; those are yours to resolve, not
+                         the accepted residue.
+
+                         **Read this part carefully: 04c's problem is not line
+                         numbers.** 04b changed the shape of the things 04c plans
+                         to tail-append to, and the spec was written against the
+                         pre-04b shape:
+
+                         - `NXstress.write` now takes `list[HidraWorkspace]` and
+                           `list[list[PeakCollection]]` (Decisions row 28), and
+                           every `init_group` in the scan-point family takes a
+                           LIST of workspaces (row 31). 04c's append signatures
+                           inherit that question.
+                         - The peak index now carries **discriminator columns**
+                           when `nxstress.discriminator_fields` is non-empty
+                           (rows 29-30). A tail-append must extend those columns
+                           too, and 04c's `_append_peak` reuse plan predates
+                           them entirely.
+                         - `peakCollectionRanges` now takes `discriminator_names`
+                           and returns 4-tuples
+                           `(discriminators, key, start, end)`, not 3-tuples.
+                         - `_peaks.py`'s module docstring no longer claims a
+                           global lexicographic sort. 04b's open-questions Q6
+                           flagged that wording for correction and the 04b PR
+                           made it. 04c's Q5 and `04c:41` both cite the OLD
+                           docstring as the assumption they relax, so check
+                           whether they now argue against wording that is gone.
+
+                         Known-stale citations before you start, with current
+                         values (verify, do not trust this list):
+                         `_peaks.py:246-338` -> 419-529 (peakCollectionRanges);
+                         `_peaks.py:190-244` -> 309-381 (`_append_peak`);
+                         `_peaks.py:180-181` -> 289-306 (`init_group`);
+                         `_peaks.py:44-45` -> 51-58 (the sort-order docstring);
+                         `_peaks.py:306`/`:313`/`:326`/`:332` -> 499/505/519/524;
+                         `_fit.py:87` -> 98;
+                         `NXstress.py:151-152` -> 163-164 (the overwrite guard);
+                         `_input_data.py:44-46,63-72` -> 32-74 / 78-103.
 
 <!-- ===== end UPDATE ===== -->
 
