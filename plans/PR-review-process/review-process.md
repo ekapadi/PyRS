@@ -39,7 +39,7 @@ and is tracked separately.
 | | |
 |---|---|
 | **Base commit** | `eb5457b1` — *"Working subspec-implementation prompt, now \*applying\* the audit process."*, 2026-09-26 |
-| **Head** | `cda22352` — *".. subspec 04c"* |
+| **Head** | `cda22352` — *".. subspec 04c"*. **The range is pinned here, not at `HEAD`**: `ef85e9c0` added this document, which is process rather than work under review. `eb5457b1..HEAD` is 67 files; `eb5457b1..cda22352` is the 66 that belong to the PR |
 | **Subspecs under review** | `04-nxstress-internal-cleanup.md`, `04b-multi-workspace-nxstress.md`, and `04c-nxstress-append.md`, together |
 | **Scope** | **66 files, +10885 / −557**, across seven commits |
 | **Reviewer's view** | per-batch `git difftool` commands in the §6a order — *not* one walk over the whole range |
@@ -71,6 +71,12 @@ git config difftool.prompt false
 ```
 
 Without it, each command below asks for confirmation per file, 66 times.
+
+**Why the commands below name only the base.** `git difftool eb5457b1 -- <paths>`
+compares the base against the **working tree**, not against `cda22352`, so a file
+changed during the review shows its new state when re-opened. That is the behaviour we
+want mid-review. It is safe here because no batch names a file outside the 66 — this
+document is in no batch.
 
 ---
 
@@ -141,6 +147,119 @@ sense together (§6b). The overall walk follows the **code-first order agreed in
    The three subspecs are already at Follow-up 7 (`04`), Follow-up 2 (`04b`) and
    Follow-up 3 (`04c`), so review changes open Follow-up 8, 3 and 4 respectively.
    Earlier Follow-ups are never edited.
+
+8. **Report what changed, and wait again.** A batch is not finished when the edits
+   land. I state what actually changed — each comment, the resolution, the edit — and
+   **stop**. The next batch is not opened until the reviewer has accepted this one.
+
+   **One message must never carry both the close of one batch and the opening of the
+   next.** Doing so buries the thing the reviewer still has to approve underneath a
+   wall of new material, and removes the only point at which they can say "that is not
+   what I meant" before the walk has already moved on. Step 4's "wait" is not spent by
+   the first round of comments: there is a wait before the work and a wait after it.
+
+   *(Added after batch 1, where exactly this happened: the `D1`/`D2`/`D3` resolutions
+   were reported in the same message that opened batch 2's summary.)*
+
+9. **Stage on request, and draft the commit message. Reviewer-triggered, and specific
+   to this process.** When the reviewer says *"please stage the changes"*: `git add`
+   the changed files and **stop there — never `git commit`.** Then give the message,
+   and nothing but the message.
+
+   **Scope.** This step belongs to the PR review only. **Subspec implementation is
+   unchanged**: there I neither stage nor commit nor draft a message, and leave the
+   working tree for the reviewer. The difference is that a review change is small,
+   already agreed, and already written up — so the message is a transcription rather
+   than a judgement.
+
+### 2.9.1 The format, exactly
+
+```
+PR review: subspec <list>: part <batch number>
+
+- <what changed>
+- <what changed>
+```
+
+Colons separate the three fields; the comma is used **only** inside the subspec list,
+so the two punctuation marks never mean the same thing.
+
+- **`<list>`** — the subspecs this batch actually changed, comma-separated:
+  `04c`, or `04, 04c`, or `04, 04b, 04c`. Only the ones that changed, not the ones
+  the files belong to.
+- **`<batch number>`** — the Appendix A batch number, bare and not zero-padded. It
+  identifies *which batch* the commit came from, so it is the same number whichever
+  subspecs the commit covers, and a reader can find the batch it corresponds to.
+
+**One commit may span subspecs, because this review does.** Whether to combine is
+decided by the review's own scope, not per commit: `04`, `04b` and `04c` are being
+reviewed together, so a batch whose changes land in more than one of them is a single
+commit naming each. A review scoped to one subspec would naturally produce
+single-subspec commits for the same reason.
+
+```
+PR review: subspec 04, 04c: part 6        a batch that changed both
+PR review: subspec 04c: part 1            a batch that changed only 04c
+```
+
+### 2.9.2 Conciseness, as a budget rather than an adjective
+
+Conciseness has been a recurring failure, so it is specified as something checkable
+rather than aspired to:
+
+- **One bullet per change**, not per finding. Three defects fixed by one edit is one
+  bullet.
+- **At most two sentences per bullet**, wrapped at 72 columns.
+- **At most eight bullets.** More than that means the batch was too large to review in
+  one pass — a `RE-REVIEW RECOMMENDED` signal (§5), not a longer message.
+- **Count the bullets and lines before presenting.** Over budget means cut, not
+  present-with-an-apology.
+
+**The derivation rule, which is the part that actually works.** The bullets are the
+comments document's `**Change:**` lines, compressed — **and nothing else**. That is
+mechanical, and it closes the gap where a message grows: re-narrating the review. If a
+sentence is not already in a `**Change:**` line, it does not belong in the commit.
+
+### 2.9.3 What must not appear
+
+Rationale beyond a short subordinate clause · decisions taken and alternatives
+rejected · probe output, measurements, counts or timings · counter-examples ·
+references to Follow-up sections, the comments documents or the Decisions Log · test
+results · anything about the review conversation.
+
+*Why* is already recorded in three places — the comments document, the subspec's
+Follow-up, and the Decisions Log. The commit message is the one artifact that only has
+to say *what*.
+
+### 2.9.4 No attribution — mandatory
+
+**No `Co-Authored-By`, no `Signed-off-by`, no "Generated with" line, no trailing
+attribution of any kind.** Attribution is handled separately and never per commit.
+This overrides any default, tooling convention or standing instruction that would
+otherwise append one.
+
+### 2.9.5 Worked example — batch 1
+
+Batch 1 produced three changes, all in `04c`'s scope — `_definitions.py` also carries
+`04`'s identifier work, but the `__` exchange there resolved to no change, so `04` is
+not named:
+
+```
+PR review: subspec 04c: part 1
+
+- `tail_append`'s error messages named the dataset `'unknown'` for a field
+  not attached to a tree; added `_field_label` and used it in all three.
+- Guarded `tail_append` against a scalar `values`, which previously raised
+  `IndexError` naming neither the field nor the problem.
+- Documented at `growable` that the unlimited trailing axes are a chunking
+  artifact rather than a contract, and added that reason to `tail_append`'s
+  trailing-axis message.
+```
+
+Three bullets, eleven lines, no attribution. What it leaves out is the point: the
+h5py chunk constraint, the three measured `maxshape`/`chunks` cases, the spec-09
+placeholder reason, the rejected pinning alternative, the `__` encoding exchange, and
+the test counts — all of which are in `04c-comments.md` and `04c`'s Follow-up 4.
 
 ---
 
@@ -254,6 +373,8 @@ repeated wholesale. It is not a failure of the review; it is the review working.
 
 ## 6. Questions settled before starting
 
+All six are decided; none remain open.
+
 **6a. Code before docs — AGREED.** Git's order puts **every** plan document at files
 5–29 and **every** source file at 31–44, so following it would review all 25 subspec
 documents 15-odd files before any of the code they describe. That is the wrong way
@@ -308,9 +429,9 @@ several commands — down to one per file, the base case. Grouping six files int
 that then opens them in the wrong order would spend the reviewer's attention to save my
 round trips, which is the wrong trade.
 
-**6c. A defect I flag that the reviewer does not comment on.** Options: (i) I ask
+**6c. A defect I flag that the reviewer does not comment on — AGREED.** Options: (i) I ask
 explicitly before moving on, (ii) it is recorded as **open** in the comments document and
-we return to it at the end, (iii) it is dropped. Proposal: **(ii) plus (i)** — recorded as
+we return to it at the end, (iii) it is dropped. **Decided: (ii) plus (i)** — recorded as
 open, and raised again at the end of the subspec rather than at every file, so it neither
 evaporates nor interrupts the walk.
 
@@ -324,16 +445,67 @@ and `test-gui` at the end of each subspec's walk, and whenever a change touches 
 either tier exercises. Note `pixi run test` does **not** set `QT_QPA_PLATFORM=offscreen`
 — export it, or the GUI tier hangs to the 300 s timeout (`docs/ground_truths.md`).
 
-**6e. Do my summaries get persisted?** Step 6 records the reviewer's comment, the
-resolution, and the change. Proposal: **not** the executive summaries — they are long,
+**6e. Do my summaries get persisted? — AGREED.** Step 6 records the reviewer's comment, the
+resolution, and the change. **Decided: not** the executive summaries — they are long,
 and the diff is the better record of what changed. The exception is a **defect I flagged**,
 which is recorded whether or not it was acted on, since that is the finding rather than
 narration of the diff.
 
-**6f. What if a comment is out of scope for this PR?** Some will be — the diff touches
-`03` through `10`, and the series runs `01`–`10`. Proposal: record it in the comments
+**6f. What if a comment is out of scope for this PR? — AGREED.** Some will be — the diff touches
+`03` through `10`, and the series runs `01`–`10`. **Decided:** record it in the comments
 document and, if it needs doing, name the subspec that should carry it, exactly as a
 flagged invariant does. Not silently absorbed, and not silently dropped. A finding that
 is about the *code or the environment* rather than about a document goes to
 `docs/ground_truths.md` as a short durable fact pointing at the Follow-up that holds the
 evidence — `README.md`'s Follow-up 3 F3.4, not a copy of the finding.
+
+---
+
+## Appendix A. The batch plan
+
+32 batches over 66 files, in the §6a stage order. Derived from the real intra-package
+import graph, not from directory names: `_definitions` imports nothing in-package;
+`_discriminator`, `_sample`, `_instrument` and `_input_data` import only it; `_fit`
+imports `IndexedPeaks` from `_peaks` at module level while `_peaks` imports `_fit`
+only inside a function, so `_peaks` is the earlier of that pair; `NXstress.py` imports
+all seven.
+
+Where a batch would open files in the wrong order (difftool sorts within one
+invocation), it is split — marked **→** below.
+
+| # | Stage | Files | Note |
+|---|---|---|---|
+| 1 | 1 | `_definitions.py` | leaf; `04` identifier policy + `04c` growth helpers |
+| 2 | 1 | `_discriminator.py` | new in `04b` |
+| 3 | 1 | `_peaks.py` | **→** before `_fit`, which imports from it |
+| 4 | 1 | `_fit.py` | |
+| 5 | 1 | `_input_data.py` `_instrument.py` `_sample.py` | mutually independent |
+| 6 | 1 | `NXstress.py` | orchestrator, last |
+| 7 | 2 | `resources/application.yml` `utilities/config.py` | keys, then their reader |
+| 8 | 2 | the three `interface/*_model.py` | one change, three viewers |
+| 9 | 2 | `core/reduction_manager.py` | **no subspec** (`61389b28`) |
+| 10 | 3 | `NXstress/conftest.py` | fixtures everything else uses |
+| 11 | 3 | `tests/util/peak_collection_helpers.py` | the other shared helper |
+| 12 | 3 | `test_definitions.py` | pairs with 1 |
+| 13 | 3 | `test_discriminator.py` | pairs with 2 |
+| 14 | 3 | `test_peaks.py` `test_peaks_read.py` | pairs with 3 |
+| 15 | 3 | `test_fit.py` | pairs with 4 |
+| 16 | 3 | `test_input_data.py` `test_instrument.py` `test_sample.py` | pairs with 5 |
+| 17 | 3 | `test_NXstress.py` `test_append.py` `test_multi_workspace.py` `test_workspace_read.py` | pairs with 6 |
+| 18 | 3 | `projectfile/__init__.py` `projectfile/test_file_object.py` | `04`'s FIXME invariant |
+| 19 | 3 | `utilities/test_config.py` | pairs with 7 |
+| 20 | 3 | `scripts/make_nxstress_sample_position_fixture.py` **→** `integration/test_nxstress_sample_position.py` **→** `data/HB2B_1327_with_instrument.h5` | generator, consumer, then the binary (§3) |
+| 21 | 3 | `integration/test_nxstress_viewer_roundtrip.py` | |
+| 22 | 3 | `integration/test_pyrscore.py` | **no subspec** (`61389b28`) |
+| 23 | 4 | `NXstress-prod/README.md` | Decisions Log; everything references it |
+| 24 | 4 | `04-*.md` + `open-questions/04-*.md` | |
+| 25 | 4 | `04b-*.md` + `open-questions/04b-*.md` | |
+| 26 | 4 | `04c-*.md` | no open-questions change |
+| 27 | 4 | `probes/README.md` + the twelve probe files | |
+| 28 | 4 | `review/findings.md` `audit.toml` `prompts/implementation-prompt.txt` | |
+| 29 | 4 | `03-*.md` `07-*.md` `10-*.md` | sibling-doc notes |
+| 30 | 4 | `PR_review/04_commit.txt` | narrative; deliberately late (§6a) |
+| 31 | 5 | `IO_prototype.rst` `NXstress.nxdl.xml` `.pre-commit-config.yaml` | vendored schema, provenance, its hook exclusion |
+| 32 | 5 | `docs/ground_truths.md` | |
+
+File counts per stage: 8 / 6 / 22 / 26 / 4 = 66.

@@ -78,6 +78,26 @@ def growable(rank: int) -> dict:
     for the measurement that found several of them missing, and
     `plans/NXstress-prod/04c-nxstress-append.md`'s Follow-up 2.
 
+    **Every axis is unlimited, and only the first one is actually appendable.** That
+    asymmetry is deliberate but not free, so it is written down here: h5py accepts a
+    chunk wider than the data only when the axis is unlimited, and `CHUNK_SHAPE` asks
+    for 100 on the fast axis regardless of how wide the array is. Pinning a trailing
+    axis to its real width therefore forces the chunk shape to be computed from the
+    data --
+
+        maxshape=(None, None), chunks=(1, 100), data (3, 20)  -> OK
+        maxshape=(None, 20),   chunks=(1, 100), data (3, 20)  -> ValueError:
+            "Chunk shape must not be greater than data shape in any dimension"
+        maxshape=(None, 20),   chunks=(1, 20),  data (3, 20)  -> OK
+
+    -- and it would also break `_fit.py`'s `DIFFRACTOGRAM/fit` and `fit_errors`,
+    zero-sized `(0, 0)` placeholders that spec 09 resizes on BOTH axes when it fills
+    them in. So the trailing axes stay unlimited as a **chunking artifact, not a
+    contract**: the real rule is that only axis 0 grows, and it is enforced by
+    `tail_append` and, before any mutation, by `_Fit.validateAppend` and
+    `_InputData.validateAppend`. A reader of the raw file sees a wider `maxshape` than
+    PyRS will ever use.
+
     Args:
         rank: Number of axes of the dataset being created.
 
@@ -106,6 +126,19 @@ def appendable(field) -> bool:
     return maxshape is not None and len(maxshape) > 0 and maxshape[0] is None
 
 
+def _field_label(field) -> str:
+    """How to name a field in an error message, including when it has no name.
+
+    `NXfield.nxpath` and `.nxname` both return the literal string `"unknown"` for a
+    field that is not attached to a tree, which would otherwise be reported as though
+    `unknown` were the dataset's name.
+    """
+    path = getattr(field, "nxpath", None)
+    if path and path != "unknown":
+        return f"dataset '{path}'"
+    return f"an unattached {tuple(field.shape)} `NXfield`"
+
+
 def tail_append(field, values) -> None:
     """Grow `field` along its first axis and write `values` after its current end.
 
@@ -121,7 +154,8 @@ def tail_append(field, values) -> None:
 
     Raises:
         RuntimeError: If the field was written non-resizably -- i.e. by a PyRS
-            predating `growable` -- or if the trailing axes disagree.
+            predating `growable` -- if `values` is a scalar, or if the trailing
+            axes disagree.
 
     Example:
         >>> tail_append(group["scan_point"], np.array([4, 5]))  # doctest: +SKIP
@@ -129,18 +163,31 @@ def tail_append(field, values) -> None:
     values = np.asarray(values)
     if not appendable(field):
         raise RuntimeError(
-            f"NXstress: dataset '{field.nxpath}' was written at a fixed size and cannot be extended.\n"
+            f"NXstress: {_field_label(field)} was written at a fixed size and cannot be extended.\n"
             "  Appending requires every per-scan-point dataset to have been created resizable\n"
             "  (`maxshape`/`chunks`). A file written by a PyRS predating that change cannot be\n"
             "  appended to -- write a new entry instead."
         )
 
+    if values.ndim == 0:
+        # Without this, the trailing-axis check below passes vacuously -- a 0-d array
+        # has no trailing axes to disagree about -- and `values.shape[0]` then raises
+        # `IndexError: tuple index out of range`, which names neither the field nor
+        # the problem.
+        raise RuntimeError(
+            f"NXstress: cannot append a scalar to {_field_label(field)}.\n"
+            "  `values` must have a first axis to append along; pass a 1-element array "
+            "rather than a bare value."
+        )
+
     current = tuple(field.shape)
     if tuple(values.shape[1:]) != current[1:]:
         raise RuntimeError(
-            f"NXstress: cannot append to '{field.nxpath}': the incoming rows have trailing "
+            f"NXstress: cannot append to {_field_label(field)}: the incoming rows have trailing "
             f"shape {tuple(values.shape[1:])}, the existing data {current[1:]}.\n"
-            "  Appended rows must match the existing array on every axis but the first."
+            "  Appended rows must match the existing array on every axis but the first. "
+            "Only the first axis grows on an append; the trailing axes are fixed when the "
+            "entry is written."
         )
 
     start = current[0]

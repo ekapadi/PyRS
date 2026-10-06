@@ -981,3 +981,57 @@ caught it was neither auditing nor testing but an adversarial read by someone
 who had not written it, and the cheap generalisation is the rule in F3.1: a
 refusal is only verified where it is reachable from the public API, with the
 file compared byte-for-byte.
+
+---
+
+## Follow-up 4 — 2026-10-06 (PR review)
+
+Changes made during the human review of `eb5457b1..cda22352`, per
+[`plans/PR-review-process/review-process.md`](../PR-review-process/review-process.md).
+The review conversation is in [`plans/PR_review/04c-comments.md`](../PR_review/04c-comments.md);
+only the changes are recorded here.
+
+**F4.1** — `tail_append`'s three error messages named the dataset `'unknown'` whenever
+the field was not attached to a tree. `NXfield.nxpath` and `.nxname` both return that
+literal string, so a message whose entire purpose is to name the offending dataset
+instead reported a non-existent name. A new `_field_label(field)` returns
+`dataset '<nxpath>'` or ``an unattached (3,) `NXfield` ``, and all three messages use
+it. Unreachable from the append path, which is always file-backed; reachable from a
+unit test or a future in-memory caller.
+
+**F4.2** — `tail_append(field, <scalar>)` raised `IndexError: tuple index out of
+range`. A 0-d array has no trailing axes, so it passes the trailing-axis check
+vacuously, and `values.shape[0]` then fails naming neither the field nor the problem.
+Guarded with an explicit `RuntimeError`, placed *before* the trailing-axis check with
+a comment recording why that order matters.
+
+**F4.3** — **`growable`'s unlimited trailing axes are a chunking artifact, not a
+contract, and this is now written down.** Every dataset it creates goes to disk with
+`maxshape` unlimited on *every* axis, so `diffractogram` tells a NeXus reader its
+two-theta axis can grow — which `tail_append` and `_Fit.validateAppend` both refuse.
+Pinning the trailing axes was considered and measured:
+
+```console
+  maxshape=(None, None)  chunks=(1, 100)  data (3, 20):  OK
+  maxshape=(None, 20)    chunks=(1, 100)  data (3, 20):  ValueError:
+        Chunk shape must not be greater than data shape in any dimension
+  maxshape=(None, 20)    chunks=(1, 20)   data (3, 20):  OK
+```
+
+Pinning **works and HDF5 enforces it** — an axis-1 resize is then refused by the
+library rather than only by our code. But h5py accepts a chunk wider than the data
+only while that axis is unlimited, and `CHUNK_SHAPE` asks for 100 on the fast axis
+unconditionally, so pinning requires a shape-aware `CHUNK_SHAPE`. It would also break
+`DIFFRACTOGRAM/fit` and `fit_errors`, the `(0, 0)` placeholders **spec 09** resizes on
+*both* axes.
+
+**Decided: keep `(None, None)`** rather than change the on-disk layout a second time
+in one PR. The `growable` docstring now carries the asymmetry, the h5py constraint,
+the measurement above, and the spec-09 reason, and names the three places that enforce
+the real rule. `tail_append`'s trailing-axis message gained the *why*: "Only the first
+axis grows on an append; the trailing axes are fixed when the entry is written."
+
+**A note for spec 09.** When it fills in `fit`/`fit_errors` it resizes them on both
+axes. That is the one legitimate both-axis resize in the package, and it is why
+pinning was rejected here — if 09 instead writes those fields at their final size, the
+objection disappears and pinning becomes cheap.
