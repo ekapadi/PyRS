@@ -35,7 +35,7 @@ exist at the first pass · **~** partial (scope stated below) · **✗** not run
 | `03-combine-runs-nxstress.md` | ✗ | ✗ | ~ | ✗ | ✗ | n/a | ✓ |
 | `04-nxstress-internal-cleanup.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-09-29) |
 | `04b-multi-workspace-nxstress.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-09-30) |
-| `04c-nxstress-append.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
+| `04c-nxstress-append.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-10-01) |
 | `05-strain-stress-viewer.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
 | `06-manual-reduction-prereqs.md` | ✓ | ✓ | ✓ | ex | ex | n/a | ✓ |
 | `07-manual-reduction-nxstress.md` | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | ✓ |
@@ -85,6 +85,20 @@ exist at the first pass · **~** partial (scope stated below) · **✗** not run
   before implementing; two of those falsified instructions in the spec body
   that would have produced code that could not work. **The same lesson as 04:
   both axes were covered, and both were incomplete.**
+- **04c — A4/A5 raised to ✓✓, and A7 re-dated (2026-10-01).** A5 was `~` for the
+  stated reason that the code did not exist; the 04c PR wrote it, and the cluster
+  §3 listed is now covered by `a5_append_preconditions.py` and by
+  `test_append.py`. A4 was `✓`, scoped to `a4_h5py_nexusformat_append.py`'s
+  verdict that the tail-append mechanism works on reopened `NXfield`s — **true,
+  and narrower than it was recorded.** That probe built every fixture *with*
+  `maxshape`, so it established the mechanism on a resizable dataset, not that
+  the writer emits resizable datasets. Most of the scan-point family did not:
+  `a5_scan_point_family_resizable.py` found 54 of 86 datasets contiguous, which
+  forced Decisions row 32 and a write-path change across five modules. A second
+  A4 axis nothing had asked about — whether a fixed-width `|S` string column
+  survives an append — turned out to **truncate silently**. **The third
+  consecutive subspec where both axes were covered and both were incomplete;
+  at this point it is the expected result of implementing, not a surprise.**
 - **A4/A5 "ex" on 06.** 06 asserts nothing third-party and nothing cross-module.
   Genuinely exempt — written down because afterwards "no probe was needed" and
   "no probe was written" look identical.
@@ -150,11 +164,13 @@ rows 19–22.
 | F1.2 | 10 | A3 | The `filesSelected` citation points at the slots, not the handler. | Fixed in place |
 | F1.3 | 10 | A1 | `## Tests` names no test file, for the one spec adding new UI. | **Decision 21** scope |
 | F2.1-11 | 04b | A1/A2/A3/A4/A5 | **Eleven from the implementation pass.** The two config keys spec 01 was said to deliver were never shipped; `append_hidra_project` is unusable as the merge and the merged scan-point axis cannot be a `SubRuns` at all; the vendored schema answers Q1; a Python-string sample log cannot be written, and even the writable form returns `bytes`; `merge_workspaces` cannot merge two inputs sharing a compound key. | **Decisions 28-31** |
+| F2.1-10 | 04c | A1/A2/A3/A4/A5 | **Ten from the implementation pass.** The scan-point family was written non-resizable, so the central mechanism was unavailable for half the groups in scope; a fixed-width `|S` log column truncates an appended value silently; `write()` was asked to mean both "add an entry" and "grow an entry"; the conflict policy enumerates three outcomes and needs seven, and two of the new checks were initially placed where they broke the no-op guarantee; `entry/start_time`/`end_time` are scan-point-family members the spec's table omits; `if name in group.NXdata` is dead code. | **Decisions 32-34** |
+| F3.1-5 | 04c | A1/A3/A4/A5 | **Five from an adversarial review round, after the PR was otherwise finished.** `tail_append`'s own two refusals were never pre-flighted, so a two-theta-width mismatch left a half-grown entry that read back without error — the no-op property Follow-up 2 reported as closed; `_Sample._append_group` validated after mutating, under a comment naming that exact hazard; an appended workspace's detector masks were silently discarded; `data: NXdata = None` raises under `@validate_call_` when passed explicitly. | **Decision 35** |
 | F1.1 | 01 | A4 | Two undocumented `neutrons_standard` behaviours: a write to `~/.pyrs/` on every load; and under a test env the resources root resolves **outside the repository**. | Flagged for a follow-up PR |
 | F1.1 | 02 | A3 | Heading named `texture_fitting/model.py`, which does not exist. Landed with it intact. | Fixed in place |
 | F1.1 | 03 | A7 | `combine_runs_model.py:17` → the cited call is at `:21`. Caught by the landing trigger. | Fixed in place |
 
-**Not reported as consistent.** Six documents still carry an A5 gap — all of
+**Not reported as consistent.** Five documents still carry an A5 gap — all of
 them blocked on code that has not been written. Every A4 gap is now closed. See
 §3.
 
@@ -188,6 +204,12 @@ the recorded-not-fixed material in F1.6, F1.8 and F1.9, plus the boilerplate
 
 **Updated 2026-09-30 (04b PR):** `check_citations.py` resolves 388 citations, still with the same three `open-questions/06` findings; `check_ownership.py` goes from 9 findings to 10, the new row being `_discriminator.py`, which 04b's own heading never path-qualified because Q5 left the module's location open. Recorded in 04b's Follow-up 2. Test tiers re-measured after the PR: `test-unit` 360 passed / 148 deselected · `test-integration` 102 passed / 28 skipped / 2 xfailed · `test-gui` 16 passed.
 
+**Updated 2026-10-01 (04c PR):** `check_ownership.py` holds at 10 findings — 04c's
+row gained `_definitions.py` and `_instrument.py` in the same pass that added them
+to the code, so no new row appeared. Test tiers re-measured after the PR:
+`test-unit` **412 passed** / 150 deselected · `test-integration` 104 passed /
+28 skipped / 2 xfailed · `test-gui` 16 passed.
+
 **Test tiers re-measured at `68639d3b`** under `QT_QPA_PLATFORM=offscreen`,
 rather than carried forward from the `8634088a` figures — identical:
 `test-unit` 298 passed / 140 deselected · `test-integration` 94 passed /
@@ -202,7 +224,7 @@ Stated so gaps are not mistaken for coverage.
 | Claim cluster | Axis | Why |
 |---|---|---|
 | ~~04b's N-workspace write/read, discriminator resolution, scan-point-family split, the `≥1 PeakCollection when N>1` invariant~~ | A5 | **Closed 2026-09-30 by the 04b PR.** Listed here so the first round's gap is not lost from the record. |
-| 04c's conflict classification, Case-A/B dispatch, `entry_number` targeting | A5 | Unimplemented. The *mechanism* beneath it **is** covered (`a4_h5py_nexusformat_append.py`); the dispatch is not. |
+| ~~04c's conflict classification, Case-A/B dispatch, `entry_number` targeting~~ | A5 | **Closed 2026-10-01 by the 04c PR.** Listed here so the first round's gap is not lost from the record. The note that "the *mechanism* beneath it **is** covered" is the part that proved misleading — it was covered for the peak-index family only. |
 | 08's fit-spectrum reconstruction, `beam_intensity_profile`, `DENEXDetectorGeometry` repairs | A5 | Net-new PyRS code. 08's claims about the **current** broken state are A3 and were checked. |
 | ~~`uncertainties` propagation; Mantid diagonal fit errors~~ | A4 | **Closed in round two** — see 08's Follow-up 2. Listed here only so the first round's gap is not lost from the record. |
 | `STRESS_FIELD` shape (`_sample.py:107`) | A4/A5 | Externally blocked — no file in the repository carries the log. Genuinely exempt. |
@@ -246,7 +268,7 @@ follow `CLAUDE.md`.
 | # | Invariant | Owner PR | Possible from | Tier |
 |---|---|---|---|---|
 | 1 | `_peaks.py`'s splitter enforces contiguity and monotonic `scan_point` and **nothing more** — with the rule reproduced locally, so it fails when `_peaks.py` changes rather than tracking it | 04b | **WRITTEN** (04b PR, 2026-09-30) | unit |
-| 2 | Tail-append grows each dataset by exactly N, leaves existing rows unchanged, and a pre-resize abort is byte-neutral | 04c | 04c | integration |
+| 2 | Tail-append grows each dataset by exactly N, leaves existing rows unchanged, and a pre-resize abort is byte-neutral | 04c | **WRITTEN** (04c PR, 2026-10-01) | unit — *not* the integration tier recorded here; see Decisions row 34 |
 | 3 | `neutrons_standard.config` is never imported before `init("pyrs")` — a source scan, since the failure is at import time | follow-up to 01 | now | unit |
 | 4 | `setEnabled(False)` leaves a `QAction` visible — a **third-party API-surface pin**, a net-new shape for this repo | 10 | 02 | gui + integration |
 | 5 | No viewer uses `setVisible` for a format-gated action — a **convention scan**, also net-new here | 10 | 02 | unit |
@@ -257,6 +279,21 @@ follow `CLAUDE.md`.
 
 | 10 | Every transformation written is reachable by following `depends_on` from the detector | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
 | 11 | Default and named masks round-trip, and `DEFAULT_TAG` never leaks into the workspace as a mask name | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
+
+| 13 | Every refusal an append can make is reachable from `NXstress.write` and leaves the file byte-for-byte unchanged — asserted by `digest()`, not by `pytest.raises` | 04c | **WRITTEN** (04c PR, 2026-10-01) | unit |
+| 12 | Every per-scan-point dataset the writer emits is resizable — a **sweep** of the written entry, not a list of field names | 04c | **WRITTEN** (04c PR, 2026-10-01) | unit |
+
+Item 13 is the one that matters most and the one nothing asked for. Its absence
+is why F3.1 shipped: the two-theta refusal *was* tested, at the `tail_append`
+level and at the `_Diffractogram` level, and neither test went through
+`NXstress.write`, so neither could see the 27 datasets that had already grown.
+`pytest.raises` passed throughout.
+
+Item 12 was not on the flagged list, and is the one this audit most wishes had
+been: F2.1 is exactly the defect it catches, and nothing in the series was
+looking for it. Its companion test adds a fixed-size field *locally* rather than
+through the writer, per `process.md` §5.3, so the detector is checked against
+something other than the code under test.
 
 Items 10 and 11 were not on the flagged list: 10 came out of probing the chain
 during implementation (Decisions row 26), and 11 is the test spec 04's `_fit.py`

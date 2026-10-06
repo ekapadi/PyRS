@@ -3,8 +3,10 @@ Tests for pyrs/utilities/NXstress/_sample.py
 """
 
 from collections.abc import Callable
+from pathlib import Path
+
 import numpy as np
-from nexusformat.nexus import NXsample, NXcollection
+from nexusformat.nexus import NXcollection, NXentry, NXsample, nxopen
 import pytest
 
 from pyrs.core.workspaces import HidraWorkspace
@@ -206,3 +208,83 @@ class TestSample:
         # Verify attributes: local_name still recovers the original PV name
         assert sample["logs"][expected_field_name].attrs["local_name"] == custom_log_name
         assert sample["logs"][expected_field_name].attrs["units"] == "mm"
+
+
+class TestSampleTailAppend:
+    """`init_group(logss, data=...)` grows an existing SAMPLE_DESCRIPTION group.
+
+    Per-family coverage, independent of the end-to-end round trip in
+    `test_append.py`.
+    """
+
+    def test_append_grows_every_per_scan_point_field_by_the_same_count(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    ):
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        second = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5]))
+        sd = _Sample.init_group([first._sample_logs])
+        before = np.asarray(sd["vx"].nxdata).copy()
+
+        # Act
+        returned = _Sample.init_group([second._sample_logs], data=sd)
+
+        # Assert
+        assert returned is sd
+        assert sd["scan_point"].nxdata.tolist() == [1, 2, 3, 4, 5]
+        for axis in ("vx", "vy", "vz"):
+            assert sd[axis].shape[0] == 5, axis
+        for name in sd["logs"]:
+            assert sd["logs"][name].shape[0] == 5, name
+        assert np.array_equal(np.asarray(sd["vx"].nxdata)[:3], before)
+
+    def test_append_with_a_different_retained_log_set_raises(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    ):
+        """Existing rows would have no value for a log the appended batch introduces."""
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        second = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5]))
+        second.set_sample_log("an_extra_log", np.array([4, 5]), np.zeros(2))
+        sd = _Sample.init_group([first._sample_logs])
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"retained sample logs do not match"):
+            _Sample.init_group([second._sample_logs], data=sd)
+
+    def test_append_of_a_longer_string_log_is_not_truncated(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        tmp_path: Path,
+    ):
+        """A fixed-width `|S` column would silently truncate; `_writable` prevents it.
+
+        `Filename` is a bytes log, and a fixed-width HDF5 string column is sized by
+        the longest value present when it is created. Appending a longer one raises
+        nothing and lands a prefix -- which is why `_writable` coerces `|S` to the
+        variable-length dtype. Round-tripped through a real file, because the
+        truncation only happens on the h5py write path.
+        """
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]), name="s")
+        longer = "a_considerably_longer_filename"
+        second = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5]), name=longer)
+        sd = _Sample.init_group([first._sample_logs])
+        _Sample.init_group([second._sample_logs], data=sd)
+
+        path = tmp_path / "logs.nxs"
+        with nxopen(path, "w") as root:
+            root["entry"] = NXentry()
+            root["entry"]["sample"] = sd
+
+        # Act
+        with nxopen(path, "r") as root:
+            values = [
+                v.decode("utf-8") if isinstance(v, bytes) else str(v)
+                for v in root["entry"]["sample"]["logs"]["Filename"].nxdata
+            ]
+
+        # Assert
+        assert values[-1] == f"{longer}.h5"

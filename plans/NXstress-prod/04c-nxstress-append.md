@@ -35,7 +35,7 @@ action) without a corresponding menu action anywhere in the GUI today.
 ### Relaxed sortedness: "locally sorted, globally segmented," not globally sorted
 
 04b established that the reader (`_Peaks.peakCollectionRanges`,
-`_peaks.py:246-338`) only ever required two invariants — each compound key
+`_peaks.py:425-535`) only ever required two invariants — each compound key
 occupies one contiguous run (R1), and `scan_point` increases within a run
 (R2, already guaranteed upstream by `SubRuns.set`,
 `sample_logs.py:167-168`) — never global lexicographic order. Sortedness
@@ -95,7 +95,7 @@ case that actually needs to work — "append a new workspace's worth of
 data" — reduces to code that already exists (see
 `_Peaks._append_peak`, `_fit.py`'s `_PeakParameters._append_peak`, both
 already written as `cur = shape[0]; resize(cur+N); arr[cur:] = …`, per the
-`# TODO` at `_peaks.py:180-181`). No new insertion-position machinery is
+`# TODO` that stood at `_peaks.py` lines 180-181, now resolved -- see Follow-up 2 F2.11). No new insertion-position machinery is
 needed for the case this spec actually delivers.
 
 The **new** data being appended is still supplied the normal way —
@@ -151,11 +151,14 @@ conflicts also classifies each incoming compound key, at no extra cost:
      established** — i.e., its `PEAKS` group already carries discriminator
      column(s) from an earlier 04b-mechanism write. Appending a
      genuinely new, distinguishable workspace to an entry that was
-     originally written as a bare `N == 1`/no-discriminator write isn't
-     possible without adding a new on-disk column, which this spec's
-     tail-append design does not do (no schema restructuring, only
-     resize-and-append into existing datasets). Raise `RuntimeError` if
-     the target entry has no discriminator columns at all.
+     originally written as a bare `N == 1`/no-discriminator write would
+     require adding a new on-disk column. That is mechanically possible —
+     see [`probes/a4_h5py_nexusformat_append.py`](probes/a4_h5py_nexusformat_append.py)
+     — but it is schema restructuring, which this spec deliberately
+     excludes; a later spec could lift the restriction cheaply. Raise
+     `RuntimeError` if the target entry has no discriminator columns at
+     all. *(Reworded per Follow-up 1 F1.3 and Decisions Log row 22; the
+     original wording, which implied a format limit, is quoted in F1.3.)*
 - **Key already present on disk, new scan point(s) under it (Case B):**
   **rejected**, distinctly from a true duplicate — raise
   `NotImplementedError` (not `RuntimeError`; see below), since this isn't
@@ -194,16 +197,16 @@ other, Case-A-only, append calls in the same session.
 
 **In scope:**
 - Peak-index family: implement the **tail-append** path for `_peaks.py`'s
-  compound index (the `# TODO` at `_peaks.py:180-181` already describes
-  code written in a form that allows this) and, in lockstep, for
+  compound index (the `# TODO` that stood at `_peaks.py` lines 180-181 already
+  described code written in a form that allows this; see Follow-up 2 F2.11) and, in lockstep, for
   `_fit.py::_PeakParameters.init_group` / `_BackgroundParameters.init_group` —
   all three grow by the same new-row count, appended after their current end.
 - Scan-point family: implement the tail-append path for
-  `_input_data.py:44-46,63-72` (`detector_counts`, on both write and read),
+  `_input_data.py:60-79` (`detector_counts`, on both write and read),
   `_sample.py`'s per-scan-point logs, and `_fit.py::_Diffractogram.init_group`
   — all three grow by the same new-row count, appended after their current
   end.
-- `NXstress.py`: remove the guard at `NXstress.py:151-152` for the append
+- `NXstress.py`: remove the guard at `NXstress.py:232` for the append
   case; add entry targeting (`entry_number`, defaulting to the last entry);
   dispatch `write()` to the tail-append path when opened with mode `"a"`.
 - Conflict/classification: compare new scan points / index rows against the
@@ -249,7 +252,8 @@ on-disk NXstress structures and the new data's `HidraWorkspace`/
 ### `pyrs/utilities/NXstress/_peaks.py`
 
 - `init_group` — implement the tail-append path described in the `# TODO`
-  at `_peaks.py:180-181`, reusing the existing `_append_peak` (`_peaks.py:190-244`)
+  that stood at `_peaks.py` lines 180-181, reusing the existing `_append_peak`
+  (`_peaks.py:315-390`)
   against an existing on-disk `PeakIndex` group instead of a freshly
   `_init`-ed one: read the existing on-disk `PeakIndex` arrays (via
   `.nxdata`, using 04b's name-keyed discriminator resolution to reconstruct
@@ -489,3 +493,491 @@ an accidental name collision" — is confirmed against the landed library
 Case-A/Case-B dispatch and `entry_number` targeting **cannot be probed** —
 none of it exists yet. A5-**uncovered**, not A5-verified. The *mechanism* they
 rest on is covered by F1.1–F1.3; the dispatch logic is not.
+
+---
+
+## Follow-up 2 — 2026-10-01 (implementation pass)
+
+Ten findings. Two of them change the design, one of those decisively: the
+mechanism this spec is built on was available for **half** the groups it covers
+and for the other half was not available at all.
+
+**F2.1** (A5) — **"Tail-append reduces to code that already exists" is true of
+the peak-index family and false of the scan-point family.** Follow-up 1 F1.1
+recorded this spec's central mechanism as "confirmed", on
+[`probes/a4_h5py_nexusformat_append.py`](probes/a4_h5py_nexusformat_append.py).
+That probe is sound and its verdict is correctly stated — but it built **its
+own** fixtures, and gave every one of them `maxshape=(None,)` + `chunks`. It
+therefore established that `resize(cur+N); arr[cur:] = …` works *on a resizable
+dataset*, which is a different claim from "the datasets the NXstress writer
+emits are resizable". An HDF5 dataset created without `maxshape` is contiguous
+and cannot be extended by any mechanism.
+- Referent: the writer's real output, built and traversed by
+  [`probes/a5_scan_point_family_resizable.py`](probes/a5_scan_point_family_resizable.py).
+  A grep over the source would have shown the same thing, but only if one
+  already knew to look for an absent kwarg; building the artifact and walking it
+  reports the state rather than the intent.
+- Verdict against the writer as 04b left it: **86 datasets, 32 extendable, 54
+  fixed-size.** The peak-index family was 22 of 24 extendable (the two
+  exceptions, `peak_parameters/title` and `peaks/center_type`, are per-entry
+  scalars and correct as they are). The scan-point family was almost entirely
+  fixed:
+
+  ```console
+    CLAIM   claims 2-4: is every named scan-point-family dataset tail-appendable?
+    RESULT  /entry/start_time: shape=(3,) maxshape=(3,) chunks=None -> FIXED
+            /entry/end_time: shape=(3,) maxshape=(3,) chunks=None -> FIXED
+            /entry/input_data/detector_counts: maxshape=(None, None) -> extendable
+            /entry/input_data/scan_point: shape=(3,) maxshape=(3,) chunks=None -> FIXED
+            /entry/instrument/monochromator/wavelength: maxshape=(3,) -> FIXED
+            /entry/SAMPLE_DESCRIPTION/scan_point: maxshape=(None,) -> extendable
+            /entry/SAMPLE_DESCRIPTION/vx: maxshape=(3,) chunks=None -> FIXED
+            /entry/SAMPLE_DESCRIPTION/vy: maxshape=(3,) chunks=None -> FIXED
+            /entry/SAMPLE_DESCRIPTION/vz: maxshape=(3,) chunks=None -> FIXED
+
+    CLAIM   claim 4: _Diffractogram's datasets
+    RESULT  /entry/FIT/DIFFRACTOGRAM/XAXIS: maxshape=(3, 20) -> FIXED
+            /entry/FIT/DIFFRACTOGRAM/diffractogram: maxshape=(3, 20) -> FIXED
+            /entry/FIT/DIFFRACTOGRAM/diffractogram_errors: maxshape=(3, 20) -> FIXED
+            /entry/FIT/DIFFRACTOGRAM/scan_point: maxshape=(3,) -> FIXED
+            /entry/FIT/DIFFRACTOGRAM/fit, fit_errors: maxshape=(None, None) -> extendable
+
+    CLAIM   claim 3: _sample.py's retained per-scan-point logs
+    RESULT  4 log field(s); all FIXED
+  ```
+- What this falsifies: the Architecture section's "reduces to code that already
+  exists … No new insertion-position machinery is needed", the Scope bullet
+  claiming a tail-append path for `_input_data.py` / `_sample.py` /
+  `_fit.py::_Diffractogram`, and the NXstress Changes bullets for
+  `_Diffractogram.init_group` and `_sample.py`'s `init_group`. All of them read
+  as though those groups need only a new entry point. They needed a writer
+  change first.
+- Correction, and **why it is not read-merge-rewrite**: a new helper
+  [`growable(rank)`](../../pyrs/utilities/NXstress/_definitions.py#L70) returns
+  the `maxshape`/`chunks` kwargs, and is applied at every per-scan-point
+  `NXfield(...)` — `NXstress.py:801-802`, `_instrument.py:226`,
+  `_input_data.py:74`, `_sample.py:131`/`:145`/`:167`/`:186`,
+  `_fit.py:485`/`:490`/`:494`/`:498`. A matching
+  [`tail_append(field, values)`](../../pyrs/utilities/NXstress/_definitions.py#L109)
+  carries the growth rule, and
+  [`appendable(field)`](../../pyrs/utilities/NXstress/_definitions.py#L90) the
+  pre-flight predicate. The alternative — read the fixed-size array back,
+  concatenate, delete, rewrite — was rejected: it round-trips existing data
+  through memory, which is exactly what the Architecture section's decision (2)
+  excluded, and it interleaves deletes with writes, which would cost the
+  byte-neutrality the Conflict-policy section depends on.
+- **Consequence, recorded because it is a compatibility break:** a `.nxs` file
+  written by a PyRS predating this change has contiguous per-scan-point datasets
+  and **cannot be appended to**. `tail_append` refuses it by name rather than
+  failing part-way. Nothing depends on this in practice — no viewer writes
+  NXstress through an append path, and the GUI hookup is phases 4-6 — but a file
+  already on disk is affected. Decisions Log row 32.
+- Note the rank: `stress_field` is `(n_scan, 3)`, not 1-D, so `_sample.py` takes
+  the rank from the data rather than assuming it. The existing
+  `test_Sample_stress_field_present` caught the assumption immediately.
+
+**F2.2** (A4) — **A fixed-width `|S` string column silently truncates on
+append.** Found while checking F2.1's fix was safe for the string fields, which
+`a4_string_log_dtypes.py` had already shown to be the delicate ones.
+`_Sample._writable` converted NumPy `<U` to the variable-length UTF-8 dtype and
+**passed `|S` bytes arrays through untouched** — correct, since they are
+writable as they stand. But a fixed-width HDF5 string column is sized by the
+longest value present *when it is created*, and an append is by definition later
+than that.
+- Referent: [`probes/a4_growable_string_fields.py`](probes/a4_growable_string_fields.py),
+  claim 5.
+- Verdict: **the value is truncated and nothing raises.**
+
+  ```console
+    CLAIM   claim 5 -- appending a LONGER value to a fixed-width |S column
+    RESULT  column dtype is |S8 (sized by the longest value at WRITE time)
+            appended b'a_considerably_longer_filename.h5' (33 bytes)
+            read back: [b'short.h5', b'a_consid']
+            round-tripped intact: False  <-- SILENTLY TRUNCATED, no exception raised
+  ```
+
+  `Filename`, `start_time` and `end_time` are all bytes logs, so this was reachable
+  by appending a workspace whose project file has a longer name than the first's.
+- Action taken: `_writable` now coerces `|S` as well as `<U` to the
+  variable-length dtype ([`_sample.py:312`](../../pyrs/utilities/NXstress/_sample.py#L312)).
+  The read-back property is unchanged — both dtypes return `bytes` — so no reader
+  is affected. The same probe confirms all three forms the writer produces
+  (`list[str]`, `|S`, vlen UTF-8) write, reopen and tail-append correctly with
+  `maxshape`/`chunks`; bare `<U` still fails at write, which is what `_writable`
+  exists to prevent.
+
+**F2.3** (A1) — **The scan-point family has two members this spec's table omits**,
+and they are the two that do not live in a subgroup: `entry/start_time` and
+`entry/end_time`, written per scan point by `NXstress._init`. The "Scope: all
+position-aligned groups" table lists only the five subgroups. An append that
+grew those five would have left both arrays short, with no error.
+- Action: `_init`'s time computation is extracted to `_entryTimes`, shared with
+  [`_appendEntryTimes`](../../pyrs/utilities/NXstress/NXstress.py#L483), so the
+  two paths cannot diverge. Pinned by
+  `test_append.py::TestRoundTrip::test_every_position_aligned_group_grows_by_the_same_count`,
+  which asserts a single length across all fourteen.
+
+**F2.4** (A1) — **`write()` cannot mean both "add an entry" and "grow an entry",
+and this spec asks it to mean both.** The Overview states, correctly and with
+probe evidence, that `write` already accumulates entries and that mode `"a"`
+adds a new one. The NXstress Changes section then says to "dispatch `write()` to
+the tail-append path when opened with mode `"a"`" — which would leave "add
+another `NXentry` to an existing file", documented in `NXstress.py`'s usage
+comment (at lines 152-156 before this pass), with no spelling at all.
+- Resolution (stakeholder decision, 2026-10-01): **dispatch on whether the
+  resolved entry exists, not on the mode.** `entry_number` omitted, or naming an
+  existing entry, appends; naming no existing entry writes a fresh one. Mode
+  governs file access, `entry_number` governs targeting. Decisions Log row 33;
+  implemented in
+  [`_resolveTarget`](../../pyrs/utilities/NXstress/NXstress.py#L237).
+- **Overwriting** an existing entry's contents is a third operation, neither
+  append nor create, and stays unimplemented. Note what that means under this
+  dispatch: no input selects it, so the former collision guard is **unreachable
+  by construction** rather than, as this finding first said, "the backstop". It
+  is kept at `NXstress.py:232` regardless — the cost of that reasoning being
+  wrong is an entry silently replaced instead of grown. Caught by
+  `check_citations.py` on the re-run, which flagged the stale pointer that led
+  back to it.
+- A gap is **rejected**: `entry_number` beyond `max + 1` raises `ValueError`
+  naming the next free number. A number past the end is far likelier a typo than
+  an intent, and its silent outcome — a stray entry instead of the append that
+  was meant — is not one a caller would notice.
+- **`entry_number` had to become a `write()` argument as well as a constructor
+  one**, which neither the spec nor the decision anticipated. Under the rule
+  above a bare second `write()` in one session appends to the entry the first
+  one created, so a constructor-only kwarg would have made "write two entries in
+  one session" unexpressible — a capability `test_NXentry_multiple` already
+  covered and the old usage comment advertised. That test now passes
+  `entry_number=2` explicitly.
+
+**F2.5** (A1/A5) — **The Conflict-policy section enumerates three outcomes and
+needs seven.** Case A / Case B / duplicate classify the *peak index*. They say
+nothing about the other ways an incoming workspace can disagree with the entry
+it is joining, each of which produces a readable and wrong file rather than an
+error. Added to the pre-flight pass, each raising `RuntimeError`:
+  1. **Scan points disjoint from the whole entry.** A genuinely new compound key
+     (Case A) may still reuse a scan-point *value*, and the reader attributes
+     rows by value — `_workspaceSelections` raises on read. Caught at write now.
+  2. **Reduced-diffraction mask set matches.** A mask the entry has no
+     `DIFFRACTOGRAM` for would need a new group with no rows for the scan points
+     already on disk.
+  3. **Retained sample-log set matches** (`_Sample.validateAppend`,
+     [`_sample.py:210`](../../pyrs/utilities/NXstress/_sample.py#L210)), compared
+     by encoded column name rather than raw PV key, since that is what the file
+     indexes by.
+  4. **Optional sample fields match** — `temperature`, `stress_field`: an entry
+     has one for all its scan points or for none.
+  5. **Raw counts loaded on both sides or neither** (`_InputData.validateAppend`,
+     [`_input_data.py:83`](../../pyrs/utilities/NXstress/_input_data.py#L83)).
+  6. **Instrument geometry, detector shift and calibration agree**
+     (`_Instrument.validateAppend`,
+     [`_instrument.py:377`](../../pyrs/utilities/NXstress/_instrument.py#L377)) —
+     one `NXentry` describes one instrument configuration.
+  7. **Peak profile and background function match** the entry's `title` scalars.
+     `_append_peak` already raises on a mismatch, but only after earlier groups
+     have grown.
+- **Two of these were initially written at their point of use and were wrong
+  there**, which is the finding worth keeping. Both raised the right exception
+  and both left a changed file, because `_appendEntryTimes` had already run. The
+  spec says the check must run "before any resize/append call is made"; that
+  sentence is load-bearing exactly as Follow-up 1 F1.2 warned, and only a
+  byte-level comparison detects its violation. They are now in
+  [`_classifyAppend`](../../pyrs/utilities/NXstress/NXstress.py#L325), with the
+  point-of-use raise retained as a backstop.
+
+**F2.6** (A5) — all of the above is now probeable, and probed.
+[`probes/a5_append_preconditions.py`](probes/a5_append_preconditions.py) builds a
+real entry through `NXstress.write` and drives every rejection path, comparing
+the file's sha256 before and after each — the measurement
+`a4_h5py_nexusformat_append.py` explicitly declined to make ("It does **not**
+establish atomicity across a *partial* append"). All confirmed:
+
+```console
+  CLAIM   claim 2: Case B -- more scan points under a key the entry already holds
+  RESULT  NotImplementedError: ... which this entry already holds, is not supported.
+          file byte-for-byte unchanged: True
+
+  CLAIM   claim 3: exact duplicate -- same key, overlapping scan point
+  RESULT  RuntimeError: ... scan point(s) [2, 3] are already present in this entry ...
+          file byte-for-byte unchanged: True
+
+  CLAIM   claim 4a: Case A precondition 1 -- the new workspace contributes no PeakCollection
+  RESULT  RuntimeError: ... input workspace(s) [0] contribute no `PeakCollection`.
+          file byte-for-byte unchanged: True
+
+  CLAIM   claim 4b: Case A precondition 2 -- the target entry has no discriminator column
+  RESULT  RuntimeError: ... the target entry carries no discriminator columns ...
+          file byte-for-byte unchanged: True
+
+  CLAIM   claims 2-3: Case B leaves the instance usable; a duplicate does not
+  RESULT  after NotImplementedError: the later Case-A append SUCCEEDED -- instance stayed usable
+          after RuntimeError:       the later append raised RuntimeError: ... no longer usable.
+```
+
+This closes the A5 gap Follow-up 1 recorded ("This spec's conflict
+classification, Case-A/Case-B dispatch and `entry_number` targeting **cannot be
+probed** — none of it exists yet"). The coverage matrix moves 04c's A5 from `~`
+to `✓✓`.
+
+**F2.7** (A3) — **`if dgram_name in fit.NXdata` can never be true**, so the
+pre-existing guard against a duplicate `DIFFRACTOGRAM` group in `_Fit.init_group`
+is dead code. `NXgroup.NXdata` returns a **list of `NXdata` objects**, not a
+mapping of names, so a `str` is never a member of it:
+
+```console
+  children:   ['DESCRIPTION', 'DIFFRACTOGRAM', 'background_parameters', ...]
+  NXdata attr: [NXdata('DIFFRACTOGRAM')]
+```
+
+Harmless as it stood — `mask_keys` is a `set`, so the duplicate it guards against
+cannot arise on a fresh write — but the append path's equivalent check needed to
+work, and inherited the bug before a smoke test caught it. Both now use
+`in fit`. Found by implementation, claimed by no document.
+
+**F2.8** (A1/A2) — **`_instrument.py` and `_definitions.py` are not in this
+spec's ownership row.** `README.md` §5 lists 04c as touching
+`pyrs/utilities/NXstress/{NXstress,_input_data,_sample,_fit,_peaks}.py`, and the
+"Scope: all position-aligned groups" table places `_instrument.py` under
+"Name-keyed, no insertion needed" on the strength of `_Masks`. That is right
+about `_Masks` and wrong about the module: `monochromator/wavelength` is written
+per scan point and is sliced by `rows` on read, so it is a scan-point-family
+member and must grow. `_definitions.py` gains the three helpers. Both added to
+§5; `check_ownership.py` would otherwise report them.
+
+**F2.9** (A1) — Follow-up 1 F1.3's reword, which Decisions Log row 22 adopted,
+**had not been applied**: the Conflict-policy section still read "isn't possible
+without adding a new on-disk column, which this spec's tail-append design does
+not do". F1.3 assigned the reword to the implementing PR, and it is applied now.
+Noting the tension this sits in: the convention is that a subspec body is left as
+the record of what was believed and Follow-ups carry the corrections, but F1.3's
+`Action` is explicit and specific. The body is edited, the Follow-up records that
+it was, and the original wording is quoted in F1.3 where it remains readable.
+
+**F2.10** (A1) — **The test tier is unit, not integration.** This spec's Tests
+section, `README.md` §5's inventory and `probes/README.md`'s Disposition column
+all specify `tests/integration/test_nxstress_append.py`. All three predate 04b,
+whose structurally identical round trip landed as
+`tests/unit/pyrs/utilities/NXstress/test_multi_workspace.py` — unmarked, built on
+`minimal_HidraWorkspace`, writing to `tmp_path`, touching no real data. `CLAUDE.md`
+agrees: "a synthetic in-memory round trip through `tmp_path` that stays inside one
+component's own public API … is unit". Three documents against one precedent and
+the tier rule; the precedent and the rule win, and the three documents are
+corrected. Shipped as
+[`tests/unit/pyrs/utilities/NXstress/test_append.py`](../../tests/unit/pyrs/utilities/NXstress/test_append.py).
+Decisions Log row 34.
+
+### Invariants written by this PR
+
+`review/findings.md` §5 item 2 — "tail-append grows each dataset by exactly N,
+leaves existing rows unchanged, and a pre-resize abort is byte-neutral" — is
+written, at unit rather than the integration tier recorded there (F2.10):
+`test_append.py::TestTailAppendHelper` for the growth rule and the
+fixed-size refusal, and the `digest(...)` assertion on every rejection test for
+byte-neutrality. `probes/README.md` assigns the same promotion to
+`a4_h5py_nexusformat_append.py`; it is satisfied by the same tests.
+
+**One invariant not on anyone's list, and the most valuable one here.**
+`test_append.py::TestWriterEmitsResizableDatasets` writes an entry, reopens it,
+and **sweeps** every dataset whose first axis is the scan-point axis, asserting
+each is extendable. It iterates rather than naming fields — the
+[`test_definitions.py`](../../tests/unit/pyrs/utilities/NXstress/test_definitions.py)
+idiom — so a per-scan-point field added later without `growable` fails this test
+rather than failing a user's append months afterwards. F2.1 is precisely the
+defect it would have caught, and nothing in the series was looking for it. Its
+companion `test_the_sweep_notices_a_field_that_loses_growable` adds a fixed-size
+field *locally*, not through the writer, so the detector is checked against
+something other than the code under test.
+
+### Verification, as run
+
+- `pixi run test-unit` — **412 passed**, 150 deselected (was 360 after 04b). *(403 when Follow-up 2 was written; the nine added in the Follow-up 3 round.)*
+- `pixi run test-integration` — **104 passed**, 28 skipped, 2 xfailed.
+- `pixi run test-gui` — **16 passed**.
+- "Confirm by inspection that no GUI file calls `NXstress(..., "a")`" —
+  confirmed: every call in `pyrs/interface/` is `"w"` or `"r"`
+  (`combine_runs_model.py:37`, `peak_fitting_model.py:97`/`:234`,
+  `texture_fitting_model.py:52`/`:197`).
+- "Manual check … confirm each group is locally sorted, globally segmented" —
+  run as the last claim of `a5_append_preconditions.py` and pinned by
+  `test_append.py::TestRoundTrip::test_file_is_locally_sorted_globally_segmented`,
+  which appends a discriminator value sorting *before* the one on disk, so a
+  re-sorting append would be detected rather than merely assumed absent.
+
+**F2.11** (A3) — **The `# TODO` three of this spec's claims point at no longer
+exists**, because this PR is what resolved it. `_Peaks.init_group` carried
+"these code sections are implemented in a form that allows new scan-point data
+to be appended / However, at present, appending data is not yet supported",
+and the Architecture, Scope and NXstress Changes sections each cite it as
+evidence that the mechanism is already half-built. It was, and the comment is
+now replaced by the `data=None` branch it predicted. The three body citations
+are repointed at `init_group` itself (`_peaks.py:289-312`) and reworded to the
+past tense, since a pointer to a deleted comment resolves to whatever happens to
+occupy those lines. Mentioned because this is the ordinary end-state of a `TODO`
+cited as evidence: the citation outlives its referent by exactly one PR.
+
+Other pointers corrected in place this pass, all pure drift with the claims
+around them unchanged: `_peaks.py:246-338` → `:425-535` (`peakCollectionRanges`),
+`_peaks.py:190-244` → `:315-390` (`_append_peak`), `_input_data.py:44-46,63-72`
+→ `:60-79`, and `NXstress.py:151-152` → `:232` (the overwrite guard, which this
+PR moved rather than removed — see F2.4). Follow-up 1's "Checked and accurate"
+list still quotes the superseded values and is left as written; it records what
+was true when it was written, which is the point of an append-only section.
+
+---
+
+## Follow-up 3 — 2026-10-01 (sub-agent review round)
+
+Follow-up 2 was written against code that passed 403 tests, three clean tiers
+and the whole toolkit. Two review sub-agents — one on design, one on tests —
+then independently found the **same defect**, and one of them demonstrated it
+corrupting a file through the public API. That is the finding worth keeping:
+the property Follow-up 2 reported as closed was closed for every path the
+tests covered and open on the one they did not.
+
+**F3.1** (A5) — **"A rejected append leaves the entry byte-for-byte unchanged"
+was false.** F2.5 moved six checks into the pre-flight pass and recorded that
+two of them had initially sat at their point of use. It missed that
+`tail_append` itself makes two refusals — a non-resizable dataset, and a
+trailing-axis disagreement — and that **neither was pre-flighted**. They
+therefore fired during mutation, after earlier groups had grown.
+- The giveaway, in hindsight: `_definitions.appendable` was written precisely
+  so the pre-flight could ask "can this grow?", and **it had no production
+  caller at all**. A predicate nothing asks is a design that did not land.
+- Reproduced through `NXstress.write`, with the entry written at 20 two-theta
+  bins and the appended batch reduced onto 25 — not a contrived input but the
+  ordinary difference between two reduction passes:
+
+  ```console
+    before: start_time (3,)  SAMPLE/scan_point [1, 2, 3]  XAXIS (3, 20)
+    RAISED: RuntimeError NXstress: cannot append to '/entry/FIT/DIFFRACTOGRAM/XAXIS':
+            the incoming rows have trailing shape (25,), the existing data (20,)
+    file unchanged? False
+    after:  start_time (6,)  SAMPLE/scan_point [1, 2, 3, 4, 5, 6]  XAXIS (3, 20)
+    read back OK: [[1, 2, 3, 4, 5, 6]]
+  ```
+
+  27 datasets at six rows, three at three, **and it reads back without error**
+  as one workspace of six scan points, three of which have no diffraction data
+  and no peaks. Silent corruption, which is worse than the crash it replaced.
+- Why the tests did not catch it, which is the structural lesson: the refusal
+  *was* tested, twice — at the `tail_append` level and at the
+  `_Diffractogram.init_group` level. Neither went through `NXstress.write`, so
+  neither could observe the 27 datasets that had already grown. **Every refusal
+  reachable during an append needs one end-to-end test with a `digest()`
+  assertion**, not a unit test of the function that raises. `pytest.raises`
+  passed throughout; only the digest fails.
+- Corrections, all in the pre-flight:
+  - [`_validateAppendableShapes`](../../pyrs/utilities/NXstress/NXstress.py#L644)
+    sweeps every per-scan-point dataset in the target entry and refuses the
+    append as a whole if any cannot grow — the production counterpart of
+    `TestWriterEmitsResizableDatasets`, reimplemented rather than shared with it
+    so the test can fail independently of the code it guards.
+  - [`_Fit.validateAppend`](../../pyrs/utilities/NXstress/_fit.py#L706) and
+    [`_Diffractogram.validateAppend`](../../pyrs/utilities/NXstress/_fit.py#L519)
+    check the two-theta bin count per mask.
+  - [`_InputData.validateAppend`](../../pyrs/utilities/NXstress/_input_data.py#L83)
+    gains the detector pixel count; it checked only *whether* counts existed.
+  - The mutation phase is wrapped so that **any** escape sets `self._invalid`
+    ([`NXstress.py:395`](../../pyrs/utilities/NXstress/NXstress.py#L395)). The
+    policy was exactly inverted before: a pre-flight rejection, where the file
+    is untouched, invalidated the instance; a mutation failure, the only case
+    where the file is damaged, left the caller free to append onto the wreckage.
+- Re-measured after the fix, through the same input:
+
+  ```console
+    RAISED: RuntimeError NXstress._fit: cannot append -- the incoming reduced
+            diffraction for mask '_DEFAULT_' has 25 two-theta bin(s), the target entry 20.
+    file unchanged? True
+    after:  start_time (3,)  SAMPLE/scan_point [1, 2, 3]  XAXIS (3, 20)
+  ```
+
+  `probes/a5_append_preconditions.py` gains both cases (claim 6), and
+  `test_append.py::TestPreconditions` gains seven end-to-end refusal tests, each
+  with its `digest` assertion.
+
+**F3.2** (A1) — **`_Sample._append_group` validated after mutating**, and its own
+comment said so: "a mismatch found mid-append would already have grown
+something" sat *below* a `tail_append` of `scan_point` and the three coordinate
+axes. Same class as F2.5's two, missed in the same pass. The call is now the
+first statement ([`_sample.py:287`](../../pyrs/utilities/NXstress/_sample.py#L287)),
+and the coordinate arrays are built and shape-checked before anything is
+resized rather than appended as they are computed.
+
+**F3.3** (A3) — **An appended workspace's detector masks were silently
+discarded.** `_Instrument.init_group`'s append branch grows `wavelength` and
+returns; the mask arrays are entry-wide and were written fixed-size, so they
+*cannot* grow. `_classifyAppend`'s mask check compares `ws._diff_data_set`
+keys, which is a different set from `_Masks.mask_keys(ws)` — a workspace could
+pass it carrying masks the entry has no record of, and `masksFromNexus` would
+hand it the first write's masks on read. Now refused in
+[`_Instrument.validateAppend`](../../pyrs/utilities/NXstress/_instrument.py#L377),
+reusing the existing `_validate_masks_agree`.
+
+**F3.4** (A4) — **`data: NXdata = None` is a trap under `@validate_call_`.**
+Pydantic does not validate defaults, so omitting the argument works, but
+passing it explicitly does not: `_InputData.init_group(wss)` succeeds where
+`_InputData.init_group(wss, data=None)` raises `ValidationError: Input should be
+an instance of NXdata`. The first caller to write `data=maybe_group` would hit
+it. All seven `data` parameters are now `X | None = None`, and
+`_Fit.init_group`'s had no annotation at all. **mypy cannot catch this**:
+`nexusformat` is untyped and `ignore_missing_imports` makes `NXdata` resolve to
+`Any`.
+
+**F3.5** (A1) — smaller corrections from the same round:
+- `if dgram_name in fit.NXdata` (F2.7) had a sibling: `_resolveTarget` re-derived
+  entry-name parsing with `rsplit` instead of using `suffix_from_group_name`,
+  the declared inverse of `group_naming_scheme`, and its `range(1, len(...)+1)`
+  term reduced to `[1]` after its own existence filter — a comment reading
+  "derived from the names present rather than from a count", immediately above
+  code using a count.
+- Appending to an entry written with `write([ws], [[]])` was refused for
+  "disagreeing with the target entry's `_undefined_`" — the writer's own
+  sentinel. Now refused for the real reason: such an entry records no fit model
+  and no discriminator values, so nothing appended to it could be told apart.
+- `_classifyAppend` reached 158 lines doing seven jobs, which is the wrong shape
+  for the one method a reader must follow in full to believe the no-op property.
+  Split into six named checks called in sequence.
+- `_Sample.OPTIONAL_SCAN_POINT_FIELDS` is a parallel definition: the fresh-write
+  path still spells each field out, because each carries its own attribute rule.
+  Cross-referenced both ways rather than unified, with the failure mode named —
+  a field added to one and not the other is written and silently never grown.
+- `TestWriterEmitsResizableDatasets` kept a 17-name `ENTRY_WIDE` denylist of
+  which **two names did not exist in any entry this writer produces** and 14
+  were already excluded by the scalar check. Removed: the scalar filter does the
+  work. Its `n_scan` moved from 3 to 7, because the sweep matches by length and
+  the writer emits fixed-size arrays of length 1, 2 and 16 — a collision would
+  have been a false failure, and nothing recorded the constraint.
+- The lockstep test enumerated 15 dataset paths by hand, in the class whose
+  docstring argues against exactly that. It now *discovers* the family from the
+  pre-append file, so a field added later is covered without editing it.
+- `createPeakCollection` gained a `mask` parameter, replacing a `collection._mask`
+  poke in the new mask test.
+
+### Invariants added in this round
+
+Seven end-to-end refusal tests in `TestPreconditions`, each asserting the file's
+sha256 is unchanged: two-theta width, detector pixel count, detector shift,
+background function, detector mask set, a legacy fixed-size entry, and a
+mutation-phase failure invalidating the instance. The last is reached by
+monkeypatching `_sample.tail_append`, since every *known* cause is now
+pre-flighted — the guarantee under test is the invalidation, not the trigger.
+
+Plus `test_the_sweep_reaches_input_data` (the raw-counts datasets were outside
+the resizability guarantee, because the shared fixture carries no counts and a
+length-matched sweep drops zero-length arrays), and
+`test_a_workspace_lacking_a_mask_is_nan_filled_on_append`.
+
+### What this round says about the process
+
+`process.md` §5.6 budgets a document-correction pass per PR. This was a
+*code*-correction pass, found after the PR had passed its own `## Verification`,
+all three tiers and the full toolkit — none of which could see it, because the
+defect was in a path no test took and no probe built. The audit's own
+anti-pattern list already names the mechanism twice: "a probe that reimplements
+its counterparty is testing the reimplementation" (F2.1, the `maxshape` fixtures)
+and "reading source tells you what is written, not what it means". **F3.1 is the
+third instance and the first that reached shipped code.** The practice that
+caught it was neither auditing nor testing but an adversarial read by someone
+who had not written it, and the cheap generalisation is the rule in F3.1: a
+refusal is only verified where it is reachable from the public API, with the
+file compared byte-for-byte.

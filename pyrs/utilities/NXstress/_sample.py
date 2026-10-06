@@ -12,7 +12,7 @@ from pyrs.dataobjects.constants import HidraConstants
 from pyrs.dataobjects.sample_logs import SampleLogs, SubRuns
 from pyrs.utilities.pydantic_transition import validate_call_
 
-from ._definitions import allowed_identifier, CHUNK_SHAPE, FIELD_DTYPE
+from ._definitions import allowed_identifier, CHUNK_SHAPE, FIELD_DTYPE, growable, tail_append
 
 
 """
@@ -85,7 +85,7 @@ class _Sample:
         return tuple(np.concatenate(axis) for axis in per_axis)
 
     @classmethod
-    def init_group(cls, logss: list[SampleLogs]) -> NXsample:
+    def init_group(cls, logss: list[SampleLogs], data: NXsample | None = None) -> NXsample:
         """
         Create SAMPLE_DESCRIPTION (NXsample) group following NXstress schema:
           - subrun[nP]: link to the scanpoint axis
@@ -99,6 +99,9 @@ class _Sample:
         concatenation: the merged scan-point axis is not required to be
         monotonic, so it is never routed through a `SampleLogs` or `SubRuns`.
         """
+        if data is not None:
+            return cls._append_group(logss, data)
+
         # Create SAMPLE_DESCRIPTION as an NXsample
         sd = NXsample()
 
@@ -125,7 +128,7 @@ class _Sample:
                     f"NXstress required log '{axis_name}' has unexpected shape.\n"
                     f"  First axis should be <scan point> (== {N_scan}), not {vs.shape[0]}"
                 )
-            f = NXfield(vs, name=axis_name, units="mm")
+            f = NXfield(vs, name=axis_name, units="mm", **growable(vs.ndim))
             sd[axis_name] = f
 
         # Optionally, add other NXstress SAMPLE_DESCRIPTION fields if available in logs:
@@ -136,10 +139,13 @@ class _Sample:
         sd["chemical_formula"] = NXfield(cls._scalar(logss, HidraConstants.CHEMICAL_FORMULA, "unknown"))
 
         # Example of temperature if present (stored as numeric array and units carried separately)
+        # `OPTIONAL_SCAN_POINT_FIELDS` names this field and `stress_field` below; the
+        # append path iterates that constant, so a field added to one must be added
+        # to the other or it will be written and never grown.
         if cls._present_in_all(logss, HidraConstants.TEMPERATURE):
             tkey = HidraConstants.TEMPERATURE
             tvals = np.concatenate([np.asarray(logs[tkey], dtype=FIELD_DTYPE.FLOAT_DATA.value) for logs in logss])
-            tf = NXfield(tvals, name="temperature")
+            tf = NXfield(tvals, name="temperature", **growable(tvals.ndim))
             tf.attrs["units"] = logss[0].units(tkey) or "K"
             sd["temperature"] = tf
 
@@ -159,7 +165,9 @@ class _Sample:
                     f"NXstress required log '{HidraConstants.STRESS_FIELD}' has unexpected shape.\n"
                     f"  First axis should be <scan point> (== {N_scan}), not {sf.shape[0]}"
                 )
-            sff = NXfield(sf, name="stress_field")
+            # Rank comes from the data, not an assumption: `stress_field` is
+            # (<scan point>, ...) and the trailing axes are unknown -- see the TODO above.
+            sff = NXfield(sf, name="stress_field", **growable(sf.ndim))
             # If a direction log exists, attach it; otherwise default to 'x'
             direction_key = HidraConstants.STRESS_FIELD_DIRECTION
             direction = sampleLogs[direction_key] if direction_key in sampleLogs else "x"
@@ -171,12 +179,147 @@ class _Sample:
         for key in cls._retained_log_keys(logss):
             # convert ':' to '_':
             name = allowed_identifier(key)
+            values = cls._writable(np.concatenate([np.asarray(logs[key]) for logs in logss]))
             sd["logs"][name] = NXfield(
-                cls._writable(np.concatenate([np.asarray(logs[key]) for logs in logss])),
+                values,
                 # source PV-log name as attribute
                 local_name=key,
                 # 'units' as attribute
                 units=logss[0].units(key),
+                **growable(values.ndim),
+            )
+
+        return sd
+
+    # Per-scan-point fields written only when every input carries the log, as
+    # `(log key, on-disk field name, dtype)`. An entry either has one for all its
+    # scan points or for none of them. The fresh-write path in `init_group` still
+    # spells each one out, because each carries its own attribute rule (`units`
+    # for temperature, `direction` for stress_field) that does not fit this
+    # tuple; **a field added there must be added here too**, or append will write
+    # it on a fresh write and silently never grow it. Pinned by
+    # `test_append.py::TestWriterEmitsResizableDatasets`, which would not catch
+    # the omission -- only a round trip carrying the log would.
+    OPTIONAL_SCAN_POINT_FIELDS = (
+        (HidraConstants.TEMPERATURE, "temperature", FIELD_DTYPE.FLOAT_DATA.value),
+        (HidraConstants.STRESS_FIELD, "stress_field", FIELD_DTYPE.FLOAT_DATA.value),
+    )
+
+    @classmethod
+    def _retained_log_columns(cls, logss: list[SampleLogs]) -> dict:
+        """On-disk column name -> source log key, for the logs this batch would write.
+
+        Keyed by the encoded name rather than the raw PV key, because that is what
+        the file indexes by and what a comparison against an existing group has to
+        match.
+        """
+        return {allowed_identifier(key): key for key in cls._retained_log_keys(logss)}
+
+    @classmethod
+    def validateAppend(cls, logss: list[SampleLogs], sd: NXsample) -> None:
+        """Check a batch of sample logs against an existing group, without mutating it.
+
+        Every scan point in an entry carries the same set of logs and the same
+        optional fields; appending a different set would leave the rows already on
+        disk with no value for a new one, and no error to signal it. Separate from
+        `_append_group` so that `NXstress._classifyAppend` can run it before
+        anything anywhere has been resized.
+
+        Args:
+            logss: Sample logs of the workspaces being appended.
+            sd: The target entry's existing `NXsample` group.
+
+        Raises:
+            RuntimeError: If the optional-field or retained-log sets differ.
+        """
+        for key, field_name, _ in cls.OPTIONAL_SCAN_POINT_FIELDS:
+            present_on_disk = field_name in sd
+            present_in_input = cls._present_in_all(logss, key)
+            if present_on_disk != present_in_input:
+                raise RuntimeError(
+                    f"NXstress: cannot append -- the target entry "
+                    f"{'has' if present_on_disk else 'does not have'} a '{field_name}' field, "
+                    f"while the incoming workspaces "
+                    f"{'do' if present_in_input else 'do not'} supply '{key}'.\n"
+                    "  Appended data must carry the same optional sample fields as the entry it joins."
+                )
+
+        incoming = set(cls._retained_log_columns(logss))
+        on_disk = set(sd["logs"]) if "logs" in sd else set()
+        if incoming != on_disk:
+            raise RuntimeError(
+                f"NXstress: cannot append -- the incoming workspaces' retained sample logs do not "
+                f"match the target entry's.\n"
+                f"  On disk:   {sorted(on_disk)}\n"
+                f"  Incoming:  {sorted(incoming)}\n"
+                "  Every scan point in an entry must carry the same set of logs; appending a "
+                "different set would leave the existing rows with no value for a new log."
+            )
+
+    @classmethod
+    def _append_group(cls, logss: list[SampleLogs], sd: NXsample) -> NXsample:
+        """Tail-append one batch of sample logs to an existing SAMPLE_DESCRIPTION group.
+
+        Every per-scan-point field grows by the same row count, in lockstep, so the
+        group is never left with one field longer than another. The scalars (`name`,
+        `chemical_formula`) describe the entry and are left as the first write set
+        them.
+
+        Args:
+            logss: Sample logs of the workspaces being appended, in workspace order.
+            sd: The existing on-disk `NXsample` group.
+
+        Returns:
+            The same group, grown.
+
+        Raises:
+            RuntimeError: If the retained-log or optional-field set differs from
+                the incoming one, if a per-scan-point array has the wrong first
+                axis, or if any field was written non-resizably.
+            nexusformat.nexus.NeXusError: If a field the append expects is absent
+                from the existing group -- a group this writer did not produce.
+        """
+        # FIRST, before anything is resized. Re-checked here as well as in
+        # `NXstress._classifyAppend` because this method is reachable on its own --
+        # and a mismatch found after the first `tail_append` would already have
+        # grown part of the group, which is the defect this ordering exists to
+        # prevent, not merely a tidier place to put the call.
+        cls.validateAppend(logss, sd)
+
+        per_workspace = [logs.subruns.raw_copy() for logs in logss]
+        counts = [len(points) for points in per_workspace]
+        scan_points = np.concatenate(per_workspace) if per_workspace else np.empty((0,), dtype=int)
+        N_scan = len(scan_points)
+
+        vv = cls._concatenated_pointlist(logss, counts)
+        coordinates = []
+        for axis_name, axis_values in zip(HidraConstants.SAMPLE_COORDINATE_NAMES, vv):
+            vs = np.asarray(axis_values, dtype=FIELD_DTYPE.FLOAT_DATA.value)
+            if vs.shape[0] != N_scan:
+                raise RuntimeError(
+                    f"NXstress required log '{axis_name}' has unexpected shape.\n"
+                    f"  First axis should be <scan point> (== {N_scan}), not {vs.shape[0]}"
+                )
+            coordinates.append((axis_name, vs))
+
+        tail_append(sd["scan_point"], scan_points.astype(FIELD_DTYPE.INT_DATA.value))
+        for axis_name, vs in coordinates:
+            tail_append(sd[axis_name], vs)
+
+        for key, field_name, dtype in cls.OPTIONAL_SCAN_POINT_FIELDS:
+            if cls._present_in_all(logss, key):
+                values = np.concatenate([np.asarray(logs[key], dtype=dtype) for logs in logss])
+                if values.shape[0] != N_scan:
+                    raise RuntimeError(
+                        f"NXstress required log '{key}' has unexpected shape.\n"
+                        f"  First axis should be <scan point> (== {N_scan}), not {values.shape[0]}"
+                    )
+                tail_append(sd[field_name], values)
+
+        for name, key in cls._retained_log_columns(logss).items():
+            tail_append(
+                sd["logs"][name],
+                cls._writable(np.concatenate([np.asarray(logs[key]) for logs in logss])),
             )
 
         return sd
@@ -185,17 +328,26 @@ class _Sample:
     def _writable(cls, values: np.ndarray) -> np.ndarray:
         """Coerce a log array to something HDF5 can actually store.
 
+        Fixed-width *bytes* (`|S`) is coerced for a second, independent reason:
+        such a column is sized by the longest value present at write time, and a
+        later tail-append of a longer value is **silently truncated** -- h5py
+        raises nothing, and `b"a_considerably_longer_filename.h5"` lands as
+        `b"a_consid"`. Since append (spec 04c) grows these columns after the
+        width is fixed, every string log must be variable-length. Evidence:
+        `plans/NXstress-prod/probes/a4_growable_string_fields.py`, claim 5.
+
         NumPy's fixed-width unicode dtype (`<U`) has no h5py conversion path --
         writing one raises `TypeError: No conversion path for dtype`, which is an
         h5py limitation rather than a NeXus rule. The variable-length UTF-8 dtype
         already used for `phase_name` and `mask` holds the same values, so a
         unicode log is converted rather than rejected.
 
-        Bytes logs (`start_time`, `end_time`, `Filename`) are already writable and
-        are left exactly as they are. Evidence:
+        Bytes logs (`start_time`, `end_time`, `Filename`) are writable as they
+        stand, so the coercion is about width rather than storability for them;
+        either way the values read back as `bytes`, which is unchanged. Evidence:
         `plans/NXstress-prod/probes/a4_string_log_dtypes.py`.
         """
-        return values.astype(FIELD_DTYPE.STRING.value) if values.dtype.kind == "U" else values
+        return values.astype(FIELD_DTYPE.STRING.value) if values.dtype.kind in ("U", "S") else values
 
     @classmethod
     def _present_in_all(cls, logss: list[SampleLogs], key: str) -> bool:

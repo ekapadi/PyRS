@@ -4,6 +4,7 @@ import numpy as np
 from pyrs.core.peak_profile_utility import get_parameter_dtype
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks import FitEngineFactory as PeakFitEngineFactory  # type: ignore
+from pyrs.dataobjects.constants import HidraConstants
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
 
@@ -34,6 +35,7 @@ def createPeakCollection() -> Generator[Callable[..., PeakCollection]]:
         runnumber: int,
         N_subrun: int,
         sub_runs=None,
+        mask: str = HidraConstants.DEFAULT_MASK,
         exclude_list=None,
         N_counts=1000,  # range for random counts
         N_span=10000.0,  # domain for random axes
@@ -54,6 +56,7 @@ def createPeakCollection() -> Generator[Callable[..., PeakCollection]]:
             wavelength=wavelength,
             projectfilename=projectfilename,
             runnumber=runnumber,
+            mask=mask,
         )
 
         """

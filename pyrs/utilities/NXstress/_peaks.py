@@ -291,14 +291,20 @@ class _Peaks:
         indexed: list[IndexedPeaks],
         logs: SampleLogs,
         discriminator_names: tuple[str, ...] = (),
+        data: NXreflections | None = None,
     ) -> NXreflections:
         # Initialize the PEAKS group:
         #   according to the NXstress schema, this group contains the canonical reduction data,
         #   in a form usable for stress / strain calculations.
-
-        # TODO: these code sections are implemented in a form that allows new scan-point data to be appended
-        #   However, at present, appending data is not yet supported.
-        peaks = cls._init(logs, cls.discriminator_dtypes(indexed, discriminator_names))
+        #
+        #   `data` is an existing on-disk PEAKS group to tail-append to (spec 04c). The
+        #   incoming batch is sorted among itself and added after the current end; nothing
+        #   already on disk is read back, reordered or rewritten. That is sound because the
+        #   reader requires only that each compound key occupies one contiguous run and that
+        #   `scan_point` increases within it -- never a global sort. The discriminator
+        #   columns are NOT re-derived here: on append they already exist, with the dtypes
+        #   the first write inferred, and `_init` is skipped entirely.
+        peaks = data if data is not None else cls._init(logs, cls.discriminator_dtypes(indexed, discriminator_names))
 
         for item in sorted(indexed, key=IndexedPeaks.sort_key):
             cls._append_peak(peaks, item, logs, discriminator_names)

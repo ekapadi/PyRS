@@ -10,7 +10,7 @@ import pytest
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.utilities.NXstress._fit import _BackgroundParameters, _Diffractogram, _Fit, _PeakParameters
-from pyrs.utilities.NXstress._definitions import DEFAULT_TAG
+from pyrs.utilities.NXstress._definitions import DEFAULT_TAG, GROUP_NAME
 from pyrs.utilities.NXstress._peaks import _Peaks
 
 
@@ -578,3 +578,127 @@ class TestFit:
             rtol=1e-6,
             err_msg="Gaussian σ_Height round-trip failed",
         )
+
+
+class TestFitTailAppend:
+    """`init_group(..., data=...)` grows an existing group instead of building one.
+
+    Per-family coverage, independent of the end-to-end round trip in
+    `test_append.py`.
+    """
+
+    @staticmethod
+    def _collection(createPeakCollection, tag, points, profile="Gaussian"):
+        return createPeakCollection(
+            peak_tag=tag,
+            peak_profile=profile,
+            background_type="Linear",
+            wavelength=1.486,
+            projectfilename="x.h5",
+            runnumber=1,
+            N_subrun=len(points),
+            sub_runs=np.array(points),
+        )
+
+    def test_PeakParameters_append_grows_by_exactly_the_new_row_count(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
+    ):
+        # Arrange
+        logs = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3, 4, 5]))._sample_logs
+        first = self._collection(createPeakCollection, "Fe110", [1, 2, 3])
+        pp = _PeakParameters.init_group(_Peaks.indexed([first], logs))
+        before = np.asarray(pp["center"].nxdata).copy()
+        second = self._collection(createPeakCollection, "Si111", [4, 5])
+
+        # Act
+        returned = _PeakParameters.init_group(_Peaks.indexed([second], logs), data=pp)
+
+        # Assert
+        assert returned is pp
+        assert pp["center"].shape[0] == 5
+        assert np.array_equal(np.asarray(pp["center"].nxdata)[:3], before)
+
+    def test_BackgroundParameters_append_grows_by_exactly_the_new_row_count(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
+    ):
+        # Arrange
+        logs = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3, 4, 5]))._sample_logs
+        first = self._collection(createPeakCollection, "Fe110", [1, 2, 3])
+        bp = _BackgroundParameters.init_group(_Peaks.indexed([first], logs))
+        before = np.asarray(bp["A0"].nxdata).copy()
+        second = self._collection(createPeakCollection, "Si111", [4, 5])
+
+        # Act
+        _BackgroundParameters.init_group(_Peaks.indexed([second], logs), data=bp)
+
+        # Assert
+        assert bp["A0"].shape[0] == 5
+        assert np.array_equal(np.asarray(bp["A0"].nxdata)[:3], before)
+
+    def test_the_three_position_aligned_groups_stay_the_same_length(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
+    ):
+        """Their alignment is the only reason row `n` of each describes the same peak."""
+        # Arrange
+        logs = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3, 4, 5]))._sample_logs
+        first = _Peaks.indexed([self._collection(createPeakCollection, "Fe110", [1, 2, 3])], logs)
+        peaks = _Peaks.init_group(first, logs)
+        pp = _PeakParameters.init_group(first)
+        bp = _BackgroundParameters.init_group(first)
+        second = _Peaks.indexed([self._collection(createPeakCollection, "Si111", [4, 5])], logs)
+
+        # Act
+        _Peaks.init_group(second, logs, data=peaks)
+        _PeakParameters.init_group(second, data=pp)
+        _BackgroundParameters.init_group(second, data=bp)
+
+        # Assert
+        assert peaks["scan_point"].shape[0] == pp["center"].shape[0] == bp["A0"].shape[0] == 5
+
+    def test_Diffractogram_append_grows_every_scan_point_dataset(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
+    ):
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        second = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5]))
+        indexed = _Peaks.indexed([self._collection(createPeakCollection, "Fe110", [1, 2, 3])], first._sample_logs)
+        dg = _Diffractogram.init_group([first], DEFAULT_TAG, indexed)
+        before = np.asarray(dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM].nxdata).copy()
+
+        # Act
+        returned = _Diffractogram.init_group([second], DEFAULT_TAG, indexed, data=dg)
+
+        # Assert
+        assert returned is dg
+        assert dg["scan_point"].nxdata.tolist() == [1, 2, 3, 4, 5]
+        for name in (
+            GROUP_NAME.DGRAM_TWO_THETA_NAME,
+            GROUP_NAME.DGRAM_DIFFRACTOGRAM,
+            GROUP_NAME.DGRAM_DIFFRACTOGRAM_ERRORS,
+        ):
+            assert dg[name].shape[0] == 5, name
+        assert np.array_equal(np.asarray(dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM].nxdata)[:3], before)
+
+    def test_Diffractogram_append_at_a_different_two_theta_width_raises(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        createPeakCollection: Callable[..., PeakCollection],
+    ):
+        """A silently misaligned spectrum is worse than a refused append."""
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]), n_two_theta=20)
+        wider = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5]), n_two_theta=25)
+        indexed = _Peaks.indexed([self._collection(createPeakCollection, "Fe110", [1, 2, 3])], first._sample_logs)
+        dg = _Diffractogram.init_group([first], DEFAULT_TAG, indexed)
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"trailing shape"):
+            _Diffractogram.init_group([wider], DEFAULT_TAG, indexed, data=dg)

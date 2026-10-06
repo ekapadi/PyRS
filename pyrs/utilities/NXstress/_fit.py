@@ -24,6 +24,8 @@ from ._definitions import (
     CHUNK_SHAPE,
     GROUP_NAME,
     group_naming_scheme,
+    growable,
+    tail_append,
     nxstress_mask_names,
     UNDEFINED_PEAK_TAG,
     workspace_mask_key,
@@ -87,13 +89,17 @@ class _PeakParameters:
         return pp
 
     @classmethod
-    def init_group(cls, indexed: list[IndexedPeaks]) -> NXparameters:
+    def init_group(cls, indexed: list[IndexedPeaks], data: NXparameters | None = None) -> NXparameters:
         # required 'peak_parameters' subgroup
         #
         # Sorted with the same key as the PEAKS group and `_BackgroundParameters`:
         # these three are position-aligned, and that alignment is the only thing
         # making row `n` of each describe the same peak.
-        pp = cls._init([item.collection for item in indexed])
+        #
+        # `data` is an existing on-disk group to tail-append to (spec 04c). All three
+        # position-aligned groups grow by the same row count in the same sorted order,
+        # which is what preserves the alignment across an append.
+        pp = data if data is not None else cls._init([item.collection for item in indexed])
 
         for item in sorted(indexed, key=IndexedPeaks.sort_key):
             cls._append_peak(pp, item.collection)
@@ -290,10 +296,10 @@ class _BackgroundParameters:
         return bp
 
     @classmethod
-    def init_group(cls, indexed: list[IndexedPeaks]) -> NXparameters:
+    def init_group(cls, indexed: list[IndexedPeaks], data: NXparameters | None = None) -> NXparameters:
         # required 'background_parameters' subgroup
         #   -- position-aligned with PEAKS and `_PeakParameters`; see that class's `init_group`.
-        bp = cls._init([item.collection for item in indexed])
+        bp = data if data is not None else cls._init([item.collection for item in indexed])
 
         for item in sorted(indexed, key=IndexedPeaks.sort_key):
             cls._append_peak(bp, item.collection)
@@ -451,8 +457,21 @@ class _Diffractogram:
 
     @classmethod
     @validate_call_
-    def init_group(cls, wss: list[HidraWorkspace], maskName: str, indexed: list[IndexedPeaks]) -> NXdata:
+    def init_group(
+        cls, wss: list[HidraWorkspace], maskName: str, indexed: list[IndexedPeaks], data: NXdata | None = None
+    ) -> NXdata:
         # required DIFFRACTOGRAM (NXdata) subgroup:
+
+        if data is not None:
+            # Append: grow the four scan-point-aligned datasets in lockstep. The
+            # attributes and the `fit`/`fit_errors` placeholders are entry-wide and
+            # already correct, so they are left alone.
+            two_theta, values, errors = cls._concatenated_diffraction(wss, maskName)
+            tail_append(data["scan_point"], np.concatenate([ws.get_sub_runs().raw_copy() for ws in wss]))
+            tail_append(data[GROUP_NAME.DGRAM_TWO_THETA_NAME], two_theta)
+            tail_append(data[GROUP_NAME.DGRAM_DIFFRACTOGRAM], values)
+            tail_append(data[GROUP_NAME.DGRAM_DIFFRACTOGRAM_ERRORS], errors)
+            return data
 
         dg = cls._init(wss)
         dg.attrs["signal"] = GROUP_NAME.DGRAM_DIFFRACTOGRAM
@@ -463,19 +482,21 @@ class _Diffractogram:
         ]
         dg.attrs["axes"] = ["scan_point", "."]  # do _not_ specify a 2-D theta in 'axes'
         dg.attrs["two_theta_indices"] = [0, 1]  # two-theta has shape (<N scan points>, <N 2-theta, per scan-point>)
-        dg["scan_point"] = NXfield(np.concatenate([ws.get_sub_runs().raw_copy() for ws in wss]))
+        dg["scan_point"] = NXfield(np.concatenate([ws.get_sub_runs().raw_copy() for ws in wss]), **growable(1))
         dg["scan_point"].attrs["units"] = ""
 
         two_theta, data, errors = cls._concatenated_diffraction(wss, maskName)
         dg[GROUP_NAME.DGRAM_TWO_THETA_NAME] = NXfield(  # *** DEBUG *** validator bug
-            two_theta, units="degree"
+            two_theta, units="degree", **growable(2)
         )
 
         dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM] = NXfield(
-            data, dtype=FIELD_DTYPE.FLOAT_DATA.value, interpretation="spectrum", units="counts"
+            data, dtype=FIELD_DTYPE.FLOAT_DATA.value, interpretation="spectrum", units="counts", **growable(2)
         )
 
-        dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM_ERRORS] = NXfield(errors, dtype=FIELD_DTYPE.FLOAT_DATA.value, units="counts")
+        dg[GROUP_NAME.DGRAM_DIFFRACTOGRAM_ERRORS] = NXfield(
+            errors, dtype=FIELD_DTYPE.FLOAT_DATA.value, units="counts", **growable(2)
+        )
 
         ##
         ## ENTRY/FIT/DIFFRACTOGRAM/fit, fit_errors: required datasets under `NXstress`:
@@ -493,6 +514,37 @@ class _Diffractogram:
         dg[GROUP_NAME.DGRAM_FIT_ERRORS].attrs["units"] = "counts"
 
         return dg
+
+    @classmethod
+    def validateAppend(cls, wss: list[HidraWorkspace], maskName: str, data) -> None:
+        """Check incoming diffraction against an existing group, without mutating it.
+
+        `diffractogram` and its two-theta axis are two-dimensional: scan point by
+        two-theta bin. Only the first axis grows. A batch reduced onto a
+        different two-theta grid -- a routine difference between two reduction
+        passes -- cannot be appended at all, and must be refused **before** any
+        other group has grown, because a refusal discovered during mutation
+        leaves the entry with 27 datasets at the new length and these three at
+        the old one. That entry reads back without error.
+
+        Args:
+            wss: Workspaces being appended.
+            maskName: Which `DIFFRACTOGRAM` group this is.
+            data: The target entry's existing group for that mask.
+
+        Raises:
+            RuntimeError: If the two-theta bin count differs.
+        """
+        two_theta, _, _ = cls._concatenated_diffraction(wss, maskName)
+        incoming = int(np.asarray(two_theta).shape[1])
+        existing = int(data[GROUP_NAME.DGRAM_DIFFRACTOGRAM].shape[1])
+        if incoming != existing:
+            raise RuntimeError(
+                f"NXstress._fit: cannot append -- the incoming reduced diffraction for mask "
+                f"'{maskName}' has {incoming} two-theta bin(s), the target entry {existing}.\n"
+                "  Only the scan-point axis grows on an append; the two-theta axis is fixed when "
+                "the entry is written. Re-reduce onto the entry's binning, or write a new entry."
+            )
 
     @classmethod
     @validate_call_
@@ -591,19 +643,27 @@ class _Fit:
         logss: list[SampleLogs],
         processing_description: str = "",
         processing_time: str | None = None,
+        data: NXprocess | None = None,
     ):
         # Initialize a new 'FIT' (NXprocess) group:
         #   (see `_definitions.group_naming_scheme`).
 
         ## Under `NXstress`: `FIT` (NXprocess) groups contain peak and background-fit results, including any
         ##    information relevant to the fitting process used.
-        fit = cls._init(
-            logss,
-            processing_description=processing_description,
-            processing_time=processing_time if bool(processing_time) else datetime.now().astimezone().isoformat(),
-        )
-        fit[GROUP_NAME.PEAK_PARAMETERS] = _PeakParameters.init_group(indexed)
-        fit[GROUP_NAME.BACKGROUND_PARAMETERS] = _BackgroundParameters.init_group(indexed)
+        if data is not None:
+            # The NXnote description and the process timestamp record the FIRST write;
+            # an append grows the data, it does not restate when the entry was made.
+            fit = data
+            _PeakParameters.init_group(indexed, data=fit[GROUP_NAME.PEAK_PARAMETERS])
+            _BackgroundParameters.init_group(indexed, data=fit[GROUP_NAME.BACKGROUND_PARAMETERS])
+        else:
+            fit = cls._init(
+                logss,
+                processing_description=processing_description,
+                processing_time=processing_time if bool(processing_time) else datetime.now().astimezone().isoformat(),
+            )
+            fit[GROUP_NAME.PEAK_PARAMETERS] = _PeakParameters.init_group(indexed)
+            fit[GROUP_NAME.BACKGROUND_PARAMETERS] = _BackgroundParameters.init_group(indexed)
 
         # Add one DIFFRACTOGRAM group for each reduced diffraction dataset present in the workspaces.
         # `nxstress_mask_names` is the single definition of the default-mask
@@ -618,13 +678,51 @@ class _Fit:
             mask_keys |= set(nxstress_mask_names(ws._diff_data_set.keys()))
         for mask in sorted(mask_keys):
             dgram_name = group_naming_scheme(GROUP_NAME.DIFFRACTOGRAM, mask)
-            if dgram_name in fit.NXdata:
+            if data is not None:
+                # An append must find the group already there: a mask the target entry
+                # has no DIFFRACTOGRAM for would need a new group with no history for
+                # the scan points already on disk, which is schema restructuring rather
+                # than a tail-append. `NXstress._classifyAppend` rejects that case
+                # before anything here is reached; this is the backstop.
+                if dgram_name not in fit:
+                    raise RuntimeError(
+                        f"NXstress: cannot append mask '{mask}': the target entry has no "
+                        f"DIFFRACTOGRAM group '{dgram_name}'."
+                    )
+                _Diffractogram.init_group(wss, mask, indexed, data=fit[dgram_name])
+                continue
+            # `in fit`, not `in fit.NXdata`: the latter is a LIST of NXdata objects, so a
+            # string is never a member of it and this guard could not fire. Found while
+            # implementing 04c; see that spec's Follow-up 2.
+            if dgram_name in fit:
                 raise RuntimeError(
                     f"Usage error: DIFFRACTOGRAM (NXdata) group '{dgram_name}' already exists in the current (NXprocess) group."
                 )
             fit[dgram_name] = _Diffractogram.init_group(wss, mask, indexed)
 
         return fit
+
+    @classmethod
+    def validateAppend(cls, wss: list[HidraWorkspace], fit) -> None:
+        """Check incoming diffraction against every existing DIFFRACTOGRAM group.
+
+        The mask *set* is checked by `NXstress._classifyAppend`; this checks the
+        shape of what would go into each group that is already there.
+
+        Args:
+            wss: Workspaces being appended.
+            fit: The target entry's existing `FIT` group.
+
+        Raises:
+            RuntimeError: If any mask's two-theta bin count differs.
+        """
+        mask_keys = set()
+        for ws in wss:
+            mask_keys |= set(nxstress_mask_names(ws._diff_data_set.keys()))
+        for mask in sorted(mask_keys):
+            dgram_name = group_naming_scheme(GROUP_NAME.DIFFRACTOGRAM, mask)
+            if dgram_name in fit:
+                _Diffractogram.validateAppend(wss, mask, fit[dgram_name])
 
     @classmethod
     def validateWorkspaceAndPeaksData(cls, ws: HidraWorkspace, peakss: list[PeakCollection]):

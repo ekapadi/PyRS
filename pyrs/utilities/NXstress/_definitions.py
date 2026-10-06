@@ -67,6 +67,87 @@ def CHUNK_SHAPE(rank: int) -> Tuple[int, ...]:
     return (1,) * (rank - 1) + (100,)
 
 
+def growable(rank: int) -> dict:
+    """`NXfield` keyword arguments making a dataset extendable after it is written.
+
+    An HDF5 dataset created without `maxshape` is contiguous and cannot be
+    resized by any mechanism -- so a field written without these kwargs can
+    never be tail-appended, however the append is implemented. Every
+    per-scan-point and per-peak-row field therefore has to carry them at
+    creation; see `plans/NXstress-prod/probes/a5_scan_point_family_resizable.py`
+    for the measurement that found several of them missing, and
+    `plans/NXstress-prod/04c-nxstress-append.md`'s Follow-up 2.
+
+    Args:
+        rank: Number of axes of the dataset being created.
+
+    Returns:
+        `maxshape` and `chunks` kwargs for `NXfield`, unlimited along every axis.
+    """
+    return {"maxshape": (None,) * rank, "chunks": CHUNK_SHAPE(rank)}
+
+
+def appendable(field) -> bool:
+    """Whether `field` can be extended along its first axis.
+
+    An HDF5 dataset written without `maxshape` is contiguous, and no mechanism
+    can grow it -- `NXfield.resize` raises `NeXusError: Shape incompatible with
+    current NXfield` and leaves the file byte-identical. Append therefore has to
+    ask this *before* mutating anything, so a file it cannot grow is refused as
+    a whole rather than part-way through.
+
+    Args:
+        field: An `NXfield`, in memory or backed by an open file.
+
+    Returns:
+        True when the first axis is unlimited.
+    """
+    maxshape = getattr(field, "maxshape", None)
+    return maxshape is not None and len(maxshape) > 0 and maxshape[0] is None
+
+
+def tail_append(field, values) -> None:
+    """Grow `field` along its first axis and write `values` after its current end.
+
+    The `cur = shape[0]; resize(cur + N); arr[cur:] = ...` shape that
+    `_Peaks._append_peak` and `_fit.py`'s `_append_peak` methods already use,
+    extracted so that every group outside the peak-index family grows the same
+    way and the refusal below lives in exactly one place.
+
+    Args:
+        field: The `NXfield` to extend.
+        values: Rows to write after the current end. Its trailing axes must
+            match the field's.
+
+    Raises:
+        RuntimeError: If the field was written non-resizably -- i.e. by a PyRS
+            predating `growable` -- or if the trailing axes disagree.
+
+    Example:
+        >>> tail_append(group["scan_point"], np.array([4, 5]))  # doctest: +SKIP
+    """
+    values = np.asarray(values)
+    if not appendable(field):
+        raise RuntimeError(
+            f"NXstress: dataset '{field.nxpath}' was written at a fixed size and cannot be extended.\n"
+            "  Appending requires every per-scan-point dataset to have been created resizable\n"
+            "  (`maxshape`/`chunks`). A file written by a PyRS predating that change cannot be\n"
+            "  appended to -- write a new entry instead."
+        )
+
+    current = tuple(field.shape)
+    if tuple(values.shape[1:]) != current[1:]:
+        raise RuntimeError(
+            f"NXstress: cannot append to '{field.nxpath}': the incoming rows have trailing "
+            f"shape {tuple(values.shape[1:])}, the existing data {current[1:]}.\n"
+            "  Appended rows must match the existing array on every axis but the first."
+        )
+
+    start = current[0]
+    field.resize((start + values.shape[0],) + current[1:])
+    field[start:] = values
+
+
 class REQUIRED_NAME(StrEnum):
     # These are *required* group or dataset names, as specified in the `NXstress` schema.
 

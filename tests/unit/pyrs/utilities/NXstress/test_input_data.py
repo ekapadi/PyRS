@@ -15,18 +15,39 @@ from pyrs.utilities.NXstress._input_data import _InputData
 class TestInputData:
     """Test suite for _input_data.py"""
 
-    def test_InputData_init_group_raises_on_existing_data(
+    def test_init_group_appends_to_an_existing_group(
         self,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
     ):
-        """Verify RuntimeError when trying to append detector_counts data"""
-        ws = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True)
+        """Passing `data` tail-appends rather than raising (spec 04c)."""
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True, sub_runs=np.array([1, 2, 3]))
+        second = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True, sub_runs=np.array([4, 5]))
+        data = _InputData.init_group([first])
+        before = np.asarray(data["detector_counts"].nxdata).copy()
 
-        # Create an existing NXdata group
-        existing_data = NXdata()
+        # Act
+        _InputData.init_group([second], data=data)
 
-        with pytest.raises(RuntimeError, match=r".*not implemented: append detector_counts data to NXstress file.*"):
-            _InputData.init_group([ws], data=existing_data)
+        # Assert
+        assert data["scan_point"].nxdata.tolist() == [1, 2, 3, 4, 5]
+        assert data["detector_counts"].shape[0] == 5
+        # The rows already present are untouched -- a tail-append never rewrites them.
+        assert np.array_equal(np.asarray(data["detector_counts"].nxdata)[:3], before)
+
+    def test_init_group_append_raises_when_counts_loaded_on_one_side(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    ):
+        """An entry with no raw counts cannot gain them by append, or vice versa."""
+        # Arrange: an entry written WITHOUT raw counts, and an input that has them.
+        without = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=False)
+        data = _InputData.init_group([without])
+        with_counts = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=True, sub_runs=np.array([4, 5]))
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r".*does not have raw detector counts.*"):
+            _InputData.init_group([with_counts], data=data)
 
     def test_InputData_init_group_data_values(
         self,

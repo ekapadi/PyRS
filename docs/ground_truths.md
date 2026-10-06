@@ -903,3 +903,26 @@ write is *allowed*, not that one is *intended*. And a read path that can raise
 needs its handle closed in a `finally`, or a failed read leaves the file marked
 as open-for-write. A fixture showing up in `git status` after a test run is the
 symptom to look for.
+
+---
+
+## An HDF5 dataset written without `maxshape` can never be appended to (2026-10-01)
+
+NXstress's append mode (`pyrs/utilities/NXstress/`) grows an `NXentry` already
+on disk by resizing each per-scan-point dataset and writing after its current
+end. That only works for a dataset created with `maxshape` and `chunks`: without
+them HDF5 lays the dataset out contiguously, `NXfield.resize` raises
+`NeXusError: Shape incompatible with current NXfield`, and no mechanism can
+extend it. Half of NXstress's own per-scan-point fields were written that way
+and had to be changed; `_definitions.growable(rank)` now supplies the kwargs and
+`tail_append` refuses a dataset that lacks them, naming it.
+
+**Why this matters going forward:** decide at *creation* whether a dataset will
+ever grow — it cannot be decided later, and a file already written cannot be
+retrofitted. Note also that a fixed-width `|S` string column is sized by the
+longest value present when it is created, so appending a longer one truncates it
+**silently**; store string data as the variable-length UTF-8 dtype if it will
+ever be appended to. The evidence, the probes and the full per-dataset
+measurement are in
+[plans/NXstress-prod/04c-nxstress-append.md](../plans/NXstress-prod/04c-nxstress-append.md)'s
+Follow-up 2 (F2.1, F2.2).

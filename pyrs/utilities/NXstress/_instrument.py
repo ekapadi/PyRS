@@ -27,7 +27,15 @@ from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.config import Config
 from pyrs.utilities.pydantic_transition import validate_call_
 
-from ._definitions import CHUNK_SHAPE, DEFAULT_TAG, FIELD_DTYPE, GROUP_NAME, nxstress_mask_names
+from ._definitions import (
+    CHUNK_SHAPE,
+    DEFAULT_TAG,
+    FIELD_DTYPE,
+    GROUP_NAME,
+    growable,
+    nxstress_mask_names,
+    tail_append,
+)
 
 
 _logger = logging.getLogger(__name__)
@@ -169,7 +177,7 @@ class _Instrument:
 
     @classmethod
     @validate_call_
-    def init_group(cls, wss: list[HidraWorkspace]) -> NXinstrument:
+    def init_group(cls, wss: list[HidraWorkspace], data: NXinstrument | None = None) -> NXinstrument:
         """
         Create a new NXinstrument group subtree.
         Conventions:
@@ -183,8 +191,6 @@ class _Instrument:
         calibration state are validated for agreement across them; wavelength
         is concatenated per scan point.
         """
-        inst = cls._init(*cls._instrument_names())
-
         # Detector base geometry and transformations
         geom: DENEXDetectorGeometry
         shift: DENEXDetectorShift | None
@@ -194,6 +200,19 @@ class _Instrument:
         # Wavelength (`get_wavelength` returns either a single `float` or a `dict` keyed by subrun)
         wavelength = cls._concatenated_wavelength(wss, is_calibrated)
 
+        if data is not None:
+            # Append (spec 04c): geometry, detector shift and the masks are entry-wide
+            # and already written; `wavelength` is the one per-scan-point field here, so
+            # it is the only thing that grows. That the incoming geometry agrees with the
+            # entry's is checked by `validateAppend`, before any mutation anywhere.
+            tail_append(
+                data[GROUP_NAME.MONOCHROMATOR]["wavelength"],
+                np.asarray(wavelength, dtype=np.float64),
+            )
+            return data
+
+        inst = cls._init(*cls._instrument_names())
+
         # Construct required NeXus subgroups:
         #   NXsource, NXmonochromator, NXdetector, NXtransformations.
         src = NXsource()
@@ -202,7 +221,9 @@ class _Instrument:
 
         mono = NXmonochromator()
         # `wavelength` by <sub run>?
-        mono["wavelength"] = NXfield(wavelength, units="angstrom", calibrated=is_calibrated)
+        # `growable`: wavelength is per-scan-point and is sliced by `rows` on read,
+        # so it belongs to the scan-point family and an append must extend it.
+        mono["wavelength"] = NXfield(wavelength, units="angstrom", calibrated=is_calibrated, **growable(1))
 
         det = NXdetector()
         det["type"] = "He_3 PSD"
@@ -351,6 +372,63 @@ class _Instrument:
                 + "".join(f"    [{n}] {sorted(keys)}\n" for n, keys in enumerate(key_sets))
                 + "  Every input must define the same mask names."
             )
+
+    @classmethod
+    def validateAppend(cls, wss: list[HidraWorkspace], instrument) -> None:
+        """Check incoming workspaces against an existing NXinstrument, without mutating it.
+
+        One `NXentry` describes one instrument configuration: geometry, detector
+        shift and calibration state are written once and never grow. Appending a
+        workspace that disagrees with them would attribute its scan points to a
+        geometry that is not the one they were measured with -- readable, and
+        wrong. Kept separate from `init_group`'s append branch so that it can run
+        in the pre-flight pass, before anything has been resized.
+
+        Args:
+            wss: Workspaces being appended.
+            instrument: The target entry's existing `NXinstrument` group.
+
+        Raises:
+            RuntimeError: If geometry, detector shift or calibration state differ.
+        """
+        incoming_geometry, incoming_shift = cls._entry_wide_geometry(wss)
+        existing_geometry, existing_shift, _ = cls.instrumentFromNexus(instrument)
+
+        # The mask arrays are entry-wide and were written at a fixed size, so the
+        # append branch below grows only `wavelength` and leaves them alone. That is
+        # correct only while the incoming masks are the ones already on disk: a
+        # workspace carrying a different set would have its masks silently dropped,
+        # and `masksFromNexus` would hand it the first write's masks on read.
+        cls._validate_masks_agree(wss)
+        on_disk = instrument[GROUP_NAME.MASKS]["names"].nxdata
+        if not isinstance(on_disk, np.ndarray):
+            on_disk = [on_disk]
+        existing_masks = {name.decode("utf-8") if isinstance(name, bytes) else str(name) for name in on_disk}
+        # `mask_keys` already routes through `nxstress_mask_names`, so the default
+        # key is present and no second normalisation is needed.
+        incoming_masks = set(_Masks.mask_keys(wss[0]))
+        if incoming_masks != existing_masks:
+            raise RuntimeError(
+                f"NXstress._instrument: cannot append -- the incoming workspaces' detector masks "
+                f"do not match the target entry's.\n"
+                f"    on disk:  {sorted(existing_masks)}\n"
+                f"    incoming: {sorted(incoming_masks)}\n"
+                "  Masks are entry-wide and are written once; an append grows the scan-point axis "
+                "only, so a mask set that differs cannot be recorded."
+            )
+
+        for label, existing, incoming, key in (
+            ("instrument geometry", existing_geometry, incoming_geometry, cls._geometry_key),
+            ("detector shift", existing_shift, incoming_shift, cls._shift_key),
+        ):
+            if key(existing) != key(incoming):
+                raise RuntimeError(
+                    f"NXstress._instrument: cannot append -- the incoming workspaces disagree with "
+                    f"the target entry on {label}:\n"
+                    f"    on disk:  {key(existing)}\n"
+                    f"    incoming: {key(incoming)}\n"
+                    "  A single NXentry describes one instrument configuration."
+                )
 
     @classmethod
     @validate_call_

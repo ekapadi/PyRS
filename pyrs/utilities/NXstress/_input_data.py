@@ -11,7 +11,7 @@ import numpy as np
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.pydantic_transition import validate_call_
 
-from ._definitions import CHUNK_SHAPE, FIELD_DTYPE
+from ._definitions import CHUNK_SHAPE, FIELD_DTYPE, growable, tail_append
 
 
 """
@@ -29,7 +29,7 @@ class _InputData:
 
     @classmethod
     @validate_call_
-    def init_group(cls, wss: list[HidraWorkspace], data: NXdata = None):
+    def init_group(cls, wss: list[HidraWorkspace], data: NXdata | None = None):
         # Initialize the input-data group, concatenating the inputs in workspace order.
 
         # Raw data may not actually be loaded in the `HidraWorkspace`:
@@ -59,19 +59,73 @@ class _InputData:
             else np.empty((0, 0), dtype=FIELD_DTYPE.FLOAT_DATA.value)
         )
 
-        # TODO: append to the group, if it already exists.
         if data is not None:
-            raise RuntimeError("not implemented: append detector_counts data to NXstress file")
-        else:
-            data = NXdata()
+            # Append (spec 04c): grow both datasets in lockstep, after their current end.
+            # Re-checked here as well as in the pre-flight pass, since this method is
+            # reachable on its own.
+            cls.validateAppend(wss, data)
+            if scan_points:
+                tail_append(data["detector_counts"], scans)
+                tail_append(data["scan_point"], np.asarray(scan_points))
+            return data
+
+        data = NXdata()
         data["detector_counts"] = NXfield(scans, maxshape=(None, None), chunks=CHUNK_SHAPE(2))
-        data["scan_point"] = scan_points
+        data["scan_point"] = NXfield(np.asarray(scan_points), **growable(1))
 
         # Set attributes for axes and signal
         data.attrs["signal"] = "detector_counts"
         data.attrs["axes"] = ["scan_point", "."]
 
         return data
+
+    @classmethod
+    def validateAppend(cls, wss: list[HidraWorkspace], data: NXdata) -> None:
+        """Check incoming workspaces against an existing input-data group, without mutating it.
+
+        An entry whose counts were never loaded holds a `(0, 0)` `detector_counts`,
+        and appending real counts to it would leave the scan points already on disk
+        with no data -- `readSubruns` compares the scan-point axis for exact
+        equality, so the result is an unreadable entry rather than an incomplete
+        one. The same rule `init_group` enforces across a single multi-workspace
+        write, applied across the append boundary.
+
+        Args:
+            wss: Workspaces being appended.
+            data: The target entry's existing `input_data` group.
+
+        `detector_counts` is two-dimensional -- scan point by pixel -- and only
+        the first axis grows, so a detector of a different size cannot be
+        appended either.
+
+        Raises:
+            RuntimeError: If raw counts are present on one side and not the
+                other, or if the pixel counts differ.
+        """
+        incoming_loaded = any(len(ws._raw_counts) for ws in wss)
+        on_disk_loaded = data["detector_counts"].shape[0] > 0
+        if on_disk_loaded != incoming_loaded:
+            raise RuntimeError(
+                f"NXstress._input_data: the target entry "
+                f"{'has' if on_disk_loaded else 'does not have'} raw detector counts, while the "
+                f"incoming workspaces {'do' if incoming_loaded else 'do not'}.\n"
+                "  Load raw counts for both sides, or for neither."
+            )
+        if not incoming_loaded:
+            return
+
+        existing_pixels = int(data["detector_counts"].shape[1])
+        for n, ws in enumerate(wss):
+            for point in ws._raw_counts:
+                incoming_pixels = int(np.asarray(ws.get_detector_counts(point)).shape[0])
+                if incoming_pixels != existing_pixels:
+                    raise RuntimeError(
+                        f"NXstress._input_data: cannot append -- input workspace [{n}] has "
+                        f"{incoming_pixels} detector pixel(s), the target entry {existing_pixels}.\n"
+                        "  Only the scan-point axis grows on an append; the pixel axis is fixed "
+                        "when the entry is written."
+                    )
+                break
 
     @classmethod
     @validate_call_

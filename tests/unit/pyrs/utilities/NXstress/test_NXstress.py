@@ -241,7 +241,11 @@ class TestNXstress:
         file_path = tmp_path / "test_NXstress_multiple_NXentry.nxs"
         with NXstress(file_path, "w") as nx:
             nx.write([ws], [[peak0]])
-            nx.write([ws], [[peak1]])
+            # `entry_number` is what distinguishes "write another entry" from "grow the
+            # one already there": a bare second `write` targets the highest existing
+            # entry and tail-appends to it (spec 04c). Naming the next free number is
+            # how a second entry is requested.
+            nx.write([ws], [[peak1]], entry_number=2)
             root = nx._root
 
             assert root is not None
