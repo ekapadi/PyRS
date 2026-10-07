@@ -7,6 +7,7 @@ from pyrs.core.stress_facade import StressFacade
 from pyrs.core.summary_generator_stress import SummaryGeneratorStress
 from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ignore
 from pyrs.core.workspaces import HidraWorkspace
+from pyrs.utilities.restorable_property import restore
 from qtpy.QtCore import Signal, QObject  # type:ignore
 
 
@@ -281,6 +282,10 @@ class Model(QObject):
         try:
             source_project = HidraProjectFile(filename, mode=HidraProjectFileMode.READONLY)
             ws = HidraWorkspace(direction)
+            # The workspace NAME has always carried the direction here, but `name` is
+            # free text that other viewers use for other things. Record it on the
+            # `direction` property too, which is what NXstress reads and restores.
+            restore(ws, "direction", direction)
             ws.load_hidra_project(source_project, False, False)
             peaks = dict()
             for peak in source_project.read_peak_tags():

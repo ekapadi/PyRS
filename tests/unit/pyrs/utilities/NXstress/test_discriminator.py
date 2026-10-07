@@ -6,22 +6,25 @@ and the reserved-column guard that keeps a configured field from shadowing an
 `test_multi_workspace.py`.
 """
 
-from pathlib import Path
-
 import numpy as np
+import yaml
 import pytest
 
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.dataobjects.sample_logs import SampleLogs, SubRuns
+from pyrs.utilities.restorable_property import is_restorable
 from pyrs.utilities.NXstress import _discriminator
 from pyrs.utilities.NXstress._peaks import _Peaks
 
 
-def configure(default_config, tmp_path: Path, yaml: str) -> None:
-    """Apply an `nxstress` config override, the way `test_config.py` does."""
-    override = tmp_path / "override.yml"
-    override.write_text(yaml)
-    default_config.loadEnv(str(override))
+def configure(config_override, yaml_text: str) -> None:
+    """Apply an `nxstress` config override that production modules can actually see.
+
+    Goes through `config_override` rather than `config_override`: the latter swaps
+    the `Config` singleton, leaving every module that bound it the documented way
+    reading the previous instance. See that fixture's docstring.
+    """
+    config_override(yaml.safe_load(yaml_text))
 
 
 def workspace_with_logs(**logs) -> HidraWorkspace:
@@ -48,8 +51,8 @@ class TestReservedColumns:
 
         assert written == set(_discriminator.RESERVED_PEAK_COLUMNS)
 
-    def test_field_colliding_with_reserved_column_raises(self, default_config, tmp_path):
-        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['mask']\n")
+    def test_field_colliding_with_reserved_column_raises(self, config_override, tmp_path):
+        configure(config_override, "nxstress:\n  discriminator_fields: ['mask']\n")
 
         with pytest.raises(ValueError, match="collides with the reserved"):
             _discriminator.field_names()
@@ -76,29 +79,29 @@ class TestReservedColumns:
 
 
 class TestFieldNames:
-    def test_default_is_empty(self, default_config, tmp_path):
+    def test_default_is_empty(self, config_override, tmp_path):
         assert _discriminator.field_names() == ()
         assert _discriminator.merge_workspaces() is False
 
-    def test_configured_names_are_returned_in_order(self, default_config, tmp_path):
-        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['b_field', 'a_field']\n")
+    def test_configured_names_are_returned_in_order(self, config_override, tmp_path):
+        configure(config_override, "nxstress:\n  discriminator_fields: ['b_field', 'a_field']\n")
 
         assert _discriminator.field_names() == ("b_field", "a_field")
 
-    def test_blank_name_raises(self, default_config, tmp_path):
-        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['  ']\n")
+    def test_blank_name_raises(self, config_override, tmp_path):
+        configure(config_override, "nxstress:\n  discriminator_fields: ['  ']\n")
 
         with pytest.raises(ValueError, match="non-blank strings"):
             _discriminator.field_names()
 
-    def test_repeated_name_raises(self, default_config, tmp_path):
-        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction', 'direction']\n")
+    def test_repeated_name_raises(self, config_override, tmp_path):
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction', 'direction']\n")
 
         with pytest.raises(ValueError, match="more than once"):
             _discriminator.field_names()
 
-    def test_merge_workspaces_override(self, default_config, tmp_path):
-        configure(default_config, tmp_path, "nxstress:\n  merge_workspaces: true\n")
+    def test_merge_workspaces_override(self, config_override, tmp_path):
+        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
 
         assert _discriminator.merge_workspaces() is True
 
@@ -192,3 +195,65 @@ class TestKey:
         ws = workspace_with_logs(direction=np.array(["11"] * 3))
 
         assert _discriminator.key(ws, ()) == ()
+
+
+class TestEveryPropertyRoundTripsOrIsRefused:
+    """No `HidraWorkspace` property may be readable as a discriminator but not restorable.
+
+    `resolve` prefers a property over a sample log, so a field naming a read-only
+    property was read from the property and written back to a *log*: the value
+    went to the file correctly and came back as the constructor's default, with
+    nothing raising. `write(read(f))` then stored something different from `f`.
+
+    This sweeps `vars(HidraWorkspace)` rather than naming properties, so a
+    property added later is covered without editing this test -- which is the
+    whole point, since the original defect was a property nobody thought about.
+    The partition is exhaustive: every property must be in exactly one branch.
+    """
+
+    @staticmethod
+    def _properties():
+        return {name: prop for name, prop in vars(HidraWorkspace).items() if isinstance(prop, property)}
+
+    def test_the_sweep_finds_properties(self):
+        """A sweep that matched nothing would pass both branches vacuously."""
+        assert self._properties(), "no properties found; the sweep's heuristic has drifted"
+
+    def test_restorable_properties_round_trip(self, minimal_HidraWorkspace):
+        # Arrange
+        restorable_names = [n for n in self._properties() if is_restorable(HidraWorkspace, n)]
+        assert restorable_names, "no restorable properties; expected at least `direction`"
+
+        for name in restorable_names:
+            ws = minimal_HidraWorkspace(with_instrument=False)
+
+            # Act
+            _discriminator.apply(ws, name, "sentinel-value")
+
+            # Assert
+            assert _discriminator.resolve(ws, name) == "sentinel-value", name
+
+    def test_settable_or_restorable_properties_are_accepted_as_fields(self, config_override):
+        for name, prop in self._properties().items():
+            if prop.fset is None and not is_restorable(HidraWorkspace, name):
+                continue
+            config_override({"nxstress": {"discriminator_fields": [name]}})
+            assert _discriminator.field_names() == (name,), name
+
+    def test_plain_read_only_properties_are_refused_as_fields(self, config_override):
+        """Refused at configuration time, before any file exists to be written wrong."""
+        # Arrange
+        refusable = [
+            n
+            for n, p in self._properties().items()
+            if p.fset is None
+            and not is_restorable(HidraWorkspace, n)
+            and _discriminator.column_name(n) not in _discriminator.RESERVED_PEAK_COLUMNS
+        ]
+        assert refusable, "expected at least `name` to be a plain read-only property"
+
+        for name in refusable:
+            # Act / Assert
+            config_override({"nxstress": {"discriminator_fields": [name]}})
+            with pytest.raises(ValueError, match=r"read-only `HidraWorkspace` property"):
+                _discriminator.field_names()

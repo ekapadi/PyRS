@@ -21,6 +21,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import yaml
 import pytest
 from nexusformat.nexus import NXentry, NXfield, nxopen
 
@@ -30,11 +31,14 @@ from pyrs.utilities.NXstress._definitions import DEFAULT_TAG, appendable, tail_a
 from pyrs.utilities.NXstress.NXstress import NXstress
 
 
-def configure(default_config, tmp_path: Path, yaml: str) -> None:
-    """Apply an `nxstress` config override, the way `test_multi_workspace.py` does."""
-    override = tmp_path / "override.yml"
-    override.write_text(yaml)
-    default_config.loadEnv(str(override))
+def configure(config_override, yaml_text: str) -> None:
+    """Apply an `nxstress` config override that production modules can actually see.
+
+    Goes through `config_override` rather than `config_override`: the latter swaps
+    the `Config` singleton, leaving every module that bound it the documented way
+    reading the previous instance. See that fixture's docstring.
+    """
+    config_override(yaml.safe_load(yaml_text))
 
 
 def workspace(
@@ -66,10 +70,10 @@ def scan_points(path: Path, group: str = "SAMPLE_DESCRIPTION", entry: str = "ent
 
 
 @pytest.fixture
-def discriminated(default_config, tmp_path):
+def discriminated(config_override, tmp_path):
     """Config with `direction` as the discriminator -- the precondition for any append."""
-    configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
-    return default_config
+    configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
+    return config_override
 
 
 @pytest.fixture
@@ -99,7 +103,7 @@ class TestRoundTrip:
         # Assert
         assert len(workspaces) == 2
         assert [w.get_sub_runs().raw_copy().tolist() for w in workspaces] == [[1, 2, 3], [4, 5, 6]]
-        assert [w.get_sample_log_value("direction") for w in workspaces] == ["11", "22"]
+        assert [w.direction for w in workspaces] == ["11", "22"]
         assert [len(collections) for collections in peakss] == [1, 1]
 
     def test_every_position_aligned_group_grows_by_the_same_count(
@@ -196,7 +200,7 @@ class TestRoundTrip:
             workspaces, _ = nx.read()
 
         # Assert
-        assert [w.get_sample_log_value("direction") for w in workspaces] == ["11", "22", "33"]
+        assert [w.direction for w in workspaces] == ["11", "22", "33"]
         assert [w.get_sub_runs().raw_copy().tolist() for w in workspaces] == [
             [1, 2, 3],
             [4, 5, 6],
@@ -216,7 +220,7 @@ class TestRoundTrip:
         # Assert
         with NXstress(written, "r") as nx:
             workspaces, peakss = nx.read()
-        assert [w.get_sample_log_value("direction") for w in workspaces] == ["11", "22", "33", "44"]
+        assert [w.direction for w in workspaces] == ["11", "22", "33", "44"]
         assert [len(w.get_sub_runs().raw_copy()) for w in workspaces] == [3, 3, 3, 2]
         assert all(len(collections) == 1 for collections in peakss)
 
@@ -498,7 +502,7 @@ class TestPreconditions:
         assert digest(written) == before
 
     def test_entry_without_a_discriminator_scheme_raises(
-        self, default_config, tmp_path, minimal_HidraWorkspace, minimal_PeakCollection
+        self, config_override, tmp_path, minimal_HidraWorkspace, minimal_PeakCollection
     ):
         """There is no column to attach the new workspace's value to."""
         # Arrange -- written with no discriminator configured at all
@@ -508,7 +512,7 @@ class TestPreconditions:
             nx.write([plain], [[minimal_PeakCollection(N_subrun=3, sub_runs=np.array([1, 2, 3]))]])
         before = digest(path)
 
-        configure(default_config, tmp_path, "nxstress:\n  discriminator_fields: ['direction']\n")
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
         ws, peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6))
 
         # Act / Assert

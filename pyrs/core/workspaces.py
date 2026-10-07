@@ -6,6 +6,7 @@ from pyrs.dataobjects import HidraConstants, SampleLogs  # type: ignore
 from pyrs.projectfile import HidraProjectFile  # type: ignore
 from pyrs.utilities import checkdatatypes
 from pyrs.utilities.convertdatatypes import to_int
+from pyrs.utilities.restorable_property import restorable
 from typing import Any, Optional, Tuple
 
 _logger = logging.getLogger(__name__)
@@ -54,6 +55,10 @@ class HidraWorkspace:
         self._project_file_name = None
         self._project_file = None
 
+        # Strain direction ('11', '22', '33'), when this workspace represents one.
+        # `None` until set: see the `direction` property for where the value comes from.
+        self._direction = None
+
         # Masks
         self._default_mask = None
         self._mask_dict = dict()
@@ -66,9 +71,60 @@ class HidraWorkspace:
         """
         return self._name
 
-    @property
+    @restorable()
+    def direction(self) -> str:
+        """Strain direction this workspace represents -- `'11'`, `'22'` or `'33'`.
+
+        Read-only, and **restorable**: an I/O reader rebuilding this workspace puts
+        the value back through `pyrs.utilities.restorable_property.restore`, which
+        writes `_direction`. It is deliberately not a read/write property -- the
+        direction is decided when the workspace is created, not reassigned later.
+
+        Two sources, in precedence order:
+
+        1. `_direction`, set explicitly by whoever created the workspace, or
+           restored by a reader.
+        2. **Fallback:** the `direction` sample log. This is a compatibility shim
+           for data that predates the attribute, and it is why the property can
+           still answer for a workspace nobody told. It retires once every
+           producer sets `_direction` explicitly.
+
+        Note this is *not* the same as `name`, even though
+        `StrainStressViewer` happens to construct its workspaces as
+        `HidraWorkspace(direction)`. The two are kept separate on purpose: `name`
+        is free text that only sometimes carries a direction, and aliasing them
+        would make `ws.direction` answer "Combined Project Files" for
+        `CombineRunsModel`'s workspace.
+
+        Returns:
+            The direction string.
+
+        Raises:
+            ValueError: If neither `_direction` nor a `direction` sample log is
+                present -- a workspace with no direction has none, and saying so
+                is better than returning `None` into a discriminator column.
+            AssertionError: If the fallback log is not constant across sub-runs,
+                raised by `get_sample_log_value`.
+        """
+        if self._direction is not None:
+            return self._direction
+        # HDF5 hands string logs back as `bytes`, so a workspace read from a file
+        # would answer `b"11"` where one built in memory answers `"11"`. Normalise,
+        # so the property's type does not depend on where the workspace came from.
+        value = self.get_sample_log_value("direction")
+        if isinstance(value, (bytes, np.bytes_)):
+            return value.decode("utf-8")
+        return str(value)
+
+    @restorable(restores="_project_file_name")
     def hidra_project_file(self):
         """Name of the associated HiDRA project file
+
+        Read-only, and **restorable**: normally set as a side effect of
+        `load_hidra_project`, which means a workspace rebuilt from any other
+        source -- an NXstress file, say -- could not record where it came from.
+        A reader restores it through
+        `pyrs.utilities.restorable_property.restore`.
 
         Returns
         -------

@@ -198,6 +198,37 @@ first-class dedicated accessor rather than relying on the `SampleLogs`
 fallback, it should add a `@property` matching that convention — NXstress's
 resolver picks it up automatically, with no change to NXstress itself.
 
+### Updated by the PR review — the forward note above was wrong
+
+**"NXstress's resolver picks it up automatically" held for reading and not for
+writing**, and the asymmetry was silent. `resolve` does pick up any `@property`;
+`apply` could only write one that had a *setter*, so a plain `@property` — which
+is what the note recommends, and what all six existing ones are — was read from
+the property and written back to a sample log. The value reached the file and came
+back as the constructor's default. See Follow-up 3 F3.1; the files below are the
+PyRS-side changes this section said were not required.
+
+### `pyrs/utilities/restorable_property.py` (new)
+
+`restorable_property`, a `property` subclass naming the backing attribute an I/O
+reader may write, plus `restorable()` / `is_restorable()` / `restore()`. Read-only
+is preserved — assignment raises — and `isinstance(…, property)` still holds, so
+the read path is untouched.
+
+### `pyrs/core/workspaces.py`
+
+A `_direction` field and a `direction` `restorable_property` (backed by
+`_direction`, **not** aliased to `_name`), and `hidra_project_file` marked
+restorable. This supersedes the "None required" above, and delivers early what
+[05](05-strain-stress-viewer.md) scoped as a settable `direction` property.
+
+### `tests/unit/pyrs/utilities/conftest.py`
+
+A `config_override` fixture that overrides config in place without swapping the
+`Config` singleton, and a fix to `default_config`, which was leaking a new
+singleton per test and orphaning every consumer module for the rest of the
+session. See Follow-up 3 F3.3.
+
 ---
 
 ## NXstress Changes
@@ -827,3 +858,97 @@ accurate when written, an earlier Follow-up is never edited, and the current
 values are in the table above. `landing_trigger.py` will keep surfacing them
 whenever `_peaks.py` moves; that is the expected cost of an append-only record,
 not an unfixed finding.
+
+---
+
+## Follow-up 3 — 2026-10-07 (PR review)
+
+Changes made during the human review of `eb5457b1..cda22352`, per
+[`plans/PR-review-process/review-process.md`](../PR-review-process/review-process.md).
+The review conversation is in [`plans/PR_review/04b-comments.md`](../PR_review/04b-comments.md);
+only the changes are recorded here.
+
+**F3.1** — **A read-only `HidraWorkspace` property used as a discriminator did not
+round-trip, and nothing raised.** `_discriminator.resolve` prefers a property over
+a sample log; `apply` used the property only when it had a setter, and otherwise
+wrote a log. All six `HidraWorkspace` properties are read-only, so such a field was
+read from the property and written back to a log: the value reached the file
+correctly, and `read()` returned a workspace whose property still answered the
+constructor's default. `write(read(f))` therefore stored something different from
+`f`. Not hypothetical — `strainstressviewer/model.py` constructs
+`HidraWorkspace(direction)`, so the viewer this series' spec 05 targets already
+carries direction in a read-only property.
+
+Resolved with a **`restorable_property`**: a `property` subclass that names the
+backing attribute an I/O reader may write, declared on the property itself rather
+than in a registry that would drift.
+
+- **New** [`pyrs/utilities/restorable_property.py`](../../pyrs/utilities/restorable_property.py).
+  Assignment still raises `AttributeError`, so nothing becomes publicly writable;
+  `isinstance(…, property)` still holds, so `resolve`'s read path is unchanged;
+  and a sweep over `vars(cls)` partitions properties into restorable and not,
+  which is what makes the invariant below total.
+- `pyrs/core/workspaces.py` gains `_direction` and a `direction`
+  `restorable_property`, and marks `hidra_project_file` restorable.
+  **`direction` is backed by `_direction`, deliberately not aliased to `_name`** —
+  the viewer happens to put the direction in the name, but `CombineRunsModel`
+  puts `"Combined Project Files"` there. Its getter falls back to the `direction`
+  sample log when `_direction` is unset: a compatibility shim, which spec 05
+  retires (05's Follow-up 2).
+- `_discriminator.apply` gains an `is_restorable` branch.
+- `_discriminator.field_names` **rejects, at configuration time**, a field naming
+  a read-only property that is neither settable nor restorable. That is what
+  makes the asymmetry unreachable rather than merely repaired: a field that
+  cannot round-trip is refused before any file exists.
+- `strainstressviewer/model.py` records the direction on the workspace, in
+  `load_hidra_project_file` — the single funnel all three directions and both
+  entry points pass through.
+
+**F3.2** — **`_discriminator` was the only module in the codebase bypassing
+`config.py`'s documented access rule**, and the comment defending it reasoned from
+a true premise to a wrong conclusion. A bound `Config` name *does* go stale when
+the `default_config` fixture reloads — but that override capability exists for
+tests, so the accommodation belongs in a fixture, not in the shape of production
+code. Now `from pyrs.utilities.config import Config`, as every other consumer does.
+
+**F3.3** — **The fixture that made the deviation look necessary was itself
+leaking.** `default_config`'s teardown reloaded to *yet another* new singleton, so
+any test using it orphaned every consumer module for the remainder of the session.
+It now restores the pre-test instance. A new `config_override` fixture deep-merges
+into the live singleton's `_config` and restores a deep copy, never swapping the
+instance, so an override reaches bound names and module attributes alike.
+
+Four measurements behind that design, none of them previously recorded:
+
+```console
+  Config.__getitem__ -> _find reads _config LIVE        no cache, no rescan needed
+  a shallow assignment drops sibling keys               KeyError on nxstress.enable
+  loadEnv mutates _config in place                      rebound? False
+  _Config.validate() is a no-op                         literally `pass`
+```
+
+**Side effect worth naming:** `_instrument.py` was unoverridable in tests —
+`_instrument_names()` returned the shipped default whatever a test configured, so
+any test asserting a configured instrument name was passing vacuously. Fixed by
+the same change, without touching `_instrument.py`.
+
+### Invariants written by this round
+
+- `test_discriminator.py::TestEveryPropertyRoundTripsOrIsRefused` — **sweeps
+  `vars(HidraWorkspace)`** and asserts the partition is exhaustive: every
+  restorable or settable property round-trips through `apply`→`resolve`, and every
+  plain read-only one is refused by `field_names()`. It names no property, so one
+  added later is covered without editing the test — which is the point, since the
+  defect was a property nobody had thought about.
+- `test_config.py::TestConfigOverrideReachesBoundNames` — that an override reaches
+  production modules which bound `Config` the documented way, that sibling keys
+  survive a partial override, and, requesting **no** config fixture, that
+  `_instrument`'s and `_discriminator`'s bound `Config` is still the live
+  singleton. That last one fails if any fixture anywhere in the run swaps the
+  singleton without restoring it.
+
+### Verification, as run
+
+`pixi run test-unit` **421 passed** · `test-integration` 104 passed, 28 skipped,
+2 xfailed · `test-gui` 16 passed · ruff clean · mypy at its 11-error baseline ·
+`restorable_property`'s doctests pass.

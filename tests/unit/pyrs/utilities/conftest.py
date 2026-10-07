@@ -14,9 +14,15 @@ Fixture conventions
   Defined here (rather than under `NXstress/`) since `pyrs/utilities/config.py`
   isn't itself NXstress-specific code; being one directory up, it's visible to
   `NXstress/` tests as well as siblings of this file (e.g. `test_config.py`).
+- `config_override` — override config values **without** swapping the singleton, so
+  that production modules which bound `Config` the documented way still see the
+  change. Use this for any test whose subject reads config; use `default_config`
+  only when the test is *about* the config machinery itself (reload, `loadEnv`,
+  isolation), which is what `test_config.py` does. See `config_override`'s own
+  docstring for why the two cannot be the same fixture.
 """
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -81,13 +87,78 @@ def default_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator
     reset_Singletons()
     import pyrs.utilities.config  # first-ever import correctly calls init() before Config
 
+    # Captured BEFORE the reload: this is the instance that every module which did
+    # `from pyrs.utilities.config import Config` at import time is bound to. The
+    # reload below replaces the module attribute but cannot reach those bindings,
+    # so unless it is put back at teardown this fixture permanently orphans every
+    # consumer for the rest of the session -- and `config_override` then has no
+    # way to reach them. See `config_override`'s docstring.
+    original_ns_config = sys.modules["neutrons_standard.config"].Config
+    original_pyrs_config = pyrs.utilities.config.Config
+
     importlib.reload(sys.modules["neutrons_standard.config"])
     importlib.reload(pyrs.utilities.config)
 
     yield pyrs.utilities.config.Config
 
-    # Leave a clean, freshly-reset singleton behind for the next test, rather than one
-    # holding this test's `tmp_path`-scoped `HOME` and any `env` override it applied.
+    # Restore the pre-test singleton rather than reloading to yet another new one:
+    # a third instance would be as orphaned as the second. `reset_Singletons()`
+    # still clears the decorator's bookkeeping so the next `default_config` can
+    # build its own fresh instance.
     reset_Singletons()
-    importlib.reload(sys.modules["neutrons_standard.config"])
-    importlib.reload(pyrs.utilities.config)
+    sys.modules["neutrons_standard.config"].Config = original_ns_config
+    pyrs.utilities.config.Config = original_pyrs_config
+
+
+@pytest.fixture
+def config_override() -> Generator[Callable[[dict], None]]:
+    """Override config values in place, without replacing the `Config` singleton.
+
+    `default_config` resets and reloads the singleton, which constructs a **new**
+    `_Config` instance. Any module that bound the name the documented way --
+    `from pyrs.utilities.config import Config`, which is what `config.py`'s
+    docstring instructs and what `_instrument.py`, `_discriminator.py` and the
+    three viewers all do -- still holds the *previous* instance, and so cannot
+    see anything such a test overrides. Measured: with `default_config` active,
+    `_Instrument._instrument_names()` returns the shipped default no matter what
+    the test configured.
+
+    This fixture never swaps the instance. It deep-merges into the live
+    singleton's `_config` -- the same dict `refresh` merges into -- and restores
+    a deep copy afterwards. Lookups are live (`__getitem__` reads `_config` on
+    every access, with no cache), so every binding sees the change, bound-name
+    and module-attribute alike.
+
+    Reaching into `_config` is private access, and is deliberate: the ability to
+    override at runtime exists for tests, so the accommodation belongs in a test
+    fixture rather than in the shape of production code.
+
+    No `HOME` redirection is needed, because nothing is reloaded and so nothing
+    is written: `tests/conftest.py` already performed the one unavoidable
+    first-ever import under a throwaway `HOME`.
+
+    Yields:
+        A callable taking a nested mapping to deep-merge into the live config,
+        e.g. `override({"nxstress": {"discriminator_fields": ["direction"]}})`.
+        It may be called more than once; each call merges onto the last.
+    """
+    # Safe at fixture time: `pyrs.utilities.config` is long since imported (see
+    # `tests/conftest.py`), so `init("pyrs")` has already run and touching
+    # `neutrons_standard.config` here cannot race it.
+    import copy
+
+    import pyrs.utilities.config as config_module
+    from neutrons_standard.config import merge_dicts
+
+    config = config_module.Config
+    saved = copy.deepcopy(config._config)
+
+    def override(mapping: dict) -> None:
+        merge_dicts(config._config, mapping)
+
+    yield override
+
+    # Restore by clearing and refilling rather than rebinding, so that anything
+    # holding a reference to this dict keeps seeing the restored state.
+    config._config.clear()
+    config._config.update(saved)

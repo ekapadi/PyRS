@@ -33,12 +33,9 @@ import numpy as np
 
 from pyrs.core.workspaces import HidraWorkspace
 
-# Reached through the module rather than bound by name at import time. Both
-# forms obey `pyrs/utilities/config.py`'s rule (never import
-# `neutrons_standard.config` directly), but a bound name still points at the
-# superseded singleton after the `default_config` test fixture reloads the
-# module, so a test that overrides a key would have no effect here.
-from pyrs.utilities import config as _config
+from pyrs.utilities.config import Config
+
+from pyrs.utilities.restorable_property import is_restorable, restore
 
 from ._definitions import allowed_identifier
 
@@ -94,7 +91,7 @@ def field_names() -> tuple[str, ...]:
             name encodes onto a reserved `NXreflections` column.
     """
     try:
-        configured = _config.Config["nxstress.discriminator_fields"]
+        configured = Config["nxstress.discriminator_fields"]
     except Exception:  # noqa: BLE001 - a missing or broken key is "none configured"
         _logger.warning(
             "NXstress._discriminator: config key 'nxstress.discriminator_fields' could not be read;\n"
@@ -131,7 +128,47 @@ def field_names() -> tuple[str, ...]:
                 f"  Reserved: {sorted(RESERVED_PEAK_COLUMNS)}.\n"
                 f"  Rename the field in `nxstress.discriminator_fields`."
             )
+        _validate_round_trippable(name)
     return names
+
+
+def _validate_round_trippable(name: str) -> None:
+    """Reject a field that `resolve` could read but `apply` could not put back.
+
+    `resolve` prefers a `HidraWorkspace` property over a sample log, so a field
+    naming a **read-only** property is readable but not restorable: the value
+    would be written to the file correctly and then lost on read, with the
+    reconstructed workspace answering its constructor default instead. Nothing
+    raises -- `write(read(f))` simply stores something different from `f`.
+
+    Checked here, against configuration, rather than at write time: a field that
+    cannot round-trip is a deployment mistake, and the cheapest moment to say so
+    is before any file exists.
+
+    A name that is not a property at all is left alone -- it will be resolved as
+    a sample log, which round-trips through `set_sample_log`, and whether that
+    log exists cannot be known from configuration.
+
+    Args:
+        name: A configured discriminator field name.
+
+    Raises:
+        ValueError: If `name` is a read-only `HidraWorkspace` property that is
+            neither settable nor marked `@restorable()`.
+    """
+    if not name.isidentifier():
+        return
+    prop = getattr(HidraWorkspace, name, None)
+    if not isinstance(prop, property):
+        return
+    if prop.fset is not None or is_restorable(HidraWorkspace, name):
+        return
+    raise ValueError(
+        f"Discriminator field '{name}' is a read-only `HidraWorkspace` property, so its value "
+        f"could be written to a file but never restored when the file is read back.\n"
+        f"  Mark it `@restorable()` in `pyrs/core/workspaces.py` if it should participate in "
+        f"NXstress round trips, or name a sample log instead."
+    )
 
 
 def merge_workspaces() -> bool:
@@ -142,7 +179,7 @@ def merge_workspaces() -> bool:
     workspace boundaries cannot be recovered.
     """
     try:
-        value = _config.Config["nxstress.merge_workspaces"]
+        value = Config["nxstress.merge_workspaces"]
     except Exception:  # noqa: BLE001 - a missing or broken key is the safe default
         _logger.warning(
             "NXstress._discriminator: config key 'nxstress.merge_workspaces' could not be read;\n"
@@ -218,11 +255,15 @@ def _as_text(value: Any) -> Any:
 def apply(ws: HidraWorkspace, name: str, value: Any) -> None:
     """Put a discriminator value back onto a reconstructed workspace.
 
-    Mirrors `resolve` exactly, so a later spec that adds a get/set property for
-    a field (spec 05's `direction`) gets round-trip behaviour with no
-    NXstress-side special-casing. The `fset` test matters: a *read-only*
-    property of the same name falls back to the log path rather than raising on
-    `setattr`.
+    Mirrors `resolve`, so a field backed by a property round-trips rather than
+    being read from one place and written to another. Three cases, in order: a
+    read/write property is assigned; a read-only `restorable_property` has its
+    declared backing attribute written; anything else becomes a sample log.
+
+    The middle case is the one that is easy to omit, and omitting it is silent:
+    `resolve` reads any property, so a read-only one would be read from the
+    property and written to a log, and the reconstructed workspace would answer
+    with its constructor default instead of the stored value.
 
     Args:
         ws: A workspace reconstructed by `NXstress.read`, already carrying its
@@ -233,6 +274,14 @@ def apply(ws: HidraWorkspace, name: str, value: Any) -> None:
     prop = getattr(type(ws), name, None) if name.isidentifier() else None
     if isinstance(prop, property) and prop.fset is not None:
         setattr(ws, name, value)
+        return
+
+    # A read-only property that declares a backing attribute. Without this branch
+    # `resolve` would read the property while `apply` wrote a sample log, so the
+    # value silently changed across a round trip -- the property kept answering
+    # with whatever the constructor defaulted to.
+    if is_restorable(ws, name):
+        restore(ws, name, value)
         return
 
     sub_runs = ws.get_sub_runs().raw_copy()

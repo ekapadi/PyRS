@@ -183,3 +183,80 @@ class TestDiscriminatorConfigKeys:
         default_config.loadEnv(str(override_file))
 
         config_module.validate_config()  # must not raise
+
+
+class TestConfigOverrideReachesBoundNames:
+    """`config_override` must be visible to modules that bound `Config` the documented way.
+
+    `config.py`'s docstring instructs `from pyrs.utilities.config import Config`,
+    which binds the singleton *by value*. `default_config` reloads the module and
+    so replaces that singleton, leaving every such module reading the previous
+    instance -- which silently made config-dependent behaviour untestable:
+    `_Instrument._instrument_names()` returned the shipped default no matter what
+    a test configured.
+
+    These pin the fix. They deliberately exercise **production** modules rather
+    than reading `Config` directly, because reading it directly is the one access
+    pattern that was never broken.
+    """
+
+    def test_production_modules_share_the_live_singleton(self):
+        """The invariant underneath all of this, asserted directly.
+
+        Requests no config fixture on purpose: it checks the *ambient* session
+        state, so it fails if any fixture earlier in the run swapped the
+        singleton without putting it back -- which `default_config` used to do,
+        orphaning every consumer for the remainder of the session.
+        """
+        import pyrs.utilities.config as config_module
+        from pyrs.utilities.NXstress._discriminator import Config as discriminator_bound
+        from pyrs.utilities.NXstress._instrument import Config as instrument_bound
+
+        assert instrument_bound is config_module.Config
+        assert discriminator_bound is config_module.Config
+
+    def test_override_reaches_a_module_that_bound_config(self, config_override):
+        # Arrange
+        from pyrs.utilities.NXstress._instrument import _Instrument
+
+        assert _Instrument._instrument_names() == ("HB2B", "HB2B")
+
+        # Act
+        config_override({"nxstress": {"instrument_name": "OVERRIDDEN"}})
+
+        # Assert
+        assert _Instrument._instrument_names() == ("OVERRIDDEN", "HB2B")
+
+    def test_override_reaches_the_discriminator_module(self, config_override):
+        # Arrange
+        from pyrs.utilities.NXstress import _discriminator
+
+        assert _discriminator.field_names() == ()
+
+        # Act
+        config_override({"nxstress": {"discriminator_fields": ["direction"]}})
+
+        # Assert
+        assert _discriminator.field_names() == ("direction",)
+
+    def test_the_override_is_undone_afterwards(self, config_override):
+        """Guards the teardown: a leaked override would make later tests lie."""
+        from pyrs.utilities.config import Config
+
+        assert Config["nxstress.instrument_name"] == "HB2B"
+        config_override({"nxstress": {"instrument_name": "LEAKED"}})
+        assert Config["nxstress.instrument_name"] == "LEAKED"
+
+    def test_sibling_keys_survive_a_partial_override(self, config_override):
+        """A shallow assignment would drop every key the override does not mention."""
+        # Arrange
+        from pyrs.utilities.config import Config
+
+        enabled = Config["nxstress.enable"]
+
+        # Act
+        config_override({"nxstress": {"instrument_name": "OVERRIDDEN"}})
+
+        # Assert
+        assert Config["nxstress.instrument_name"] == "OVERRIDDEN"
+        assert Config["nxstress.enable"] == enabled
