@@ -10,6 +10,7 @@ between write and read.
 
 from collections.abc import Callable
 
+import h5py
 import numpy as np
 import yaml
 import pytest
@@ -165,6 +166,34 @@ class TestBackCompat:
         with NXstress(path, "r") as nx:
             with pytest.raises(RuntimeError, match="do not match the configured fields"):
                 nx.read()
+
+    def test_an_entry_with_no_peak_collections_carries_no_discriminator_column(
+        self, config_override, minimal_HidraWorkspace, tmp_path
+    ):
+        """`write([ws], [[]])` must not emit a column it has no values for.
+
+        This is `CombineRunsModel`'s export shape. The column used to be written
+        anyway, and typed from no values at all -- `np.asarray([]).dtype` is
+        `float64` -- so a string discriminator went to disk as a numeric column.
+        Emitting nothing is both correct and what makes the entry read back as a
+        single workspace.
+        """
+        # Arrange
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+        path = tmp_path / "no_peaks.nxs"
+
+        # Act
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [[]])
+
+        # Assert
+        with h5py.File(path, "r") as f:
+            assert "direction" not in f["entry/peaks"]
+        with NXstress(path, "r") as nx:
+            workspaces, peakss = nx.read()
+        assert len(workspaces) == 1
+        assert peakss == [[]]
 
 
 class TestEmptyConfigPolicy:

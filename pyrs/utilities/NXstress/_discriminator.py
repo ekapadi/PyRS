@@ -331,9 +331,18 @@ def names_for_read(peaks) -> tuple[str, ...]:
     written under this one. The two are compared, and a disagreement raises.
 
     The one tolerated disagreement is a file carrying *no* discriminator
-    columns: that is what a pre-04b file, a single-workspace file written
-    before any field was configured, and a `merge_workspaces` file all look
-    like, and all three are legitimately read back as one workspace.
+    columns, which means only that **the entry records no workspace boundary**.
+    Three things produce that: a pre-04b file, a single-workspace file written
+    before any field was configured, and a write of several workspaces that
+    `nxstress.merge_workspaces` permitted to be concatenated indistinguishably.
+    All three are legitimately read back as one workspace.
+
+    Note `merge_workspaces` does not make NXstress *merge* anything -- it is
+    purely permissive, lifting the refusal in `_validateMultiWorkspace` so the
+    rows may be concatenated with no boundary recorded. Merging that produces a
+    genuinely merged `HidraWorkspace` happens in PyRS before NXstress is called
+    at all (`HidraWorkspace.append_hidra_project`, used by
+    `CombineRunsModel.combine_project_files`, which then passes a length-1 list).
 
     Args:
         peaks: The `peaks` (NXreflections) group being read.

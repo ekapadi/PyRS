@@ -276,8 +276,24 @@ class _Peaks:
             names: Configured discriminator field names.
 
         Returns:
-            Field name -> dtype, in `names` order.
+            Field name -> dtype, in `names` order. **Empty when `indexed` is
+            empty**: an entry with no peak collections has no discriminator
+            values, so there is nothing to type and no column to write.
+
+        Note:
+            That empty case is not a detail. Inferring from no values at all
+            gives `np.asarray([]).dtype` -- `float64` -- so a string
+            discriminator would have been written as a numeric column. It is
+            reachable: `CombineRunsModel` exports with `write([ws], [[]])`.
+            Emitting no column instead is also the more honest record, and
+            `_discriminator.names_for_read` already reads a column-less entry
+            back as a single workspace. Such an entry cannot be appended to --
+            see `NXstress._rejectUnmetCaseAPreconditions` -- which is correct:
+            there is nothing to tell an appended workspace apart from.
         """
+        if not indexed:
+            return {}
+
         dtypes = {}
         for name in names:
             values = [dict(item.discriminators)[name] for item in indexed]
@@ -458,6 +474,8 @@ class _Peaks:
         RuntimeError
             If interleaved blocks are detected for the same sub-index key
         """
+        cls._validateDiscriminatorNames(peaks, discriminator_names)
+
         # Read index arrays via .nxdata
         phase_name = cls._decoded(peaks["phase_name"].nxdata[:])
         h = peaks["h"].nxdata[:]
@@ -533,6 +551,50 @@ class _Peaks:
         ranges.append((*current_key, start_idx, end_idx))
 
         return ranges
+
+    @classmethod
+    def _validateDiscriminatorNames(cls, peaks, discriminator_names: tuple[str, ...]) -> None:
+        """Check the caller's discriminator names against the columns actually present.
+
+        Getting this wrong does not produce a wrong *error* -- it produces a wrong
+        *answer*, silently. Splitting a two-workspace entry with no names collapses
+        both workspaces into one range whenever their blocks are adjacent and share
+        a compound key, and the monotonicity check passes because the concatenated
+        scan points are still increasing. Measured: 1 range returned where 2 were
+        correct, no exception. With differently-shaped data the same mistake instead
+        surfaces as "Interleaved blocks detected", which is at least loud but names
+        the wrong cause.
+
+        So the group is treated as authoritative and the argument is checked against
+        it. This is a different check from `_discriminator.names_for_read`, which
+        compares *configuration* against the file; this compares what the caller
+        passed.
+
+        Args:
+            peaks: The `peaks` (NXreflections) group being read.
+            discriminator_names: Names the caller says the entry was written with.
+                Empty is legitimate, and means the entry records no workspace
+                boundary: a pre-04b file, a single-workspace file written before
+                any field was configured, or several workspaces that
+                `nxstress.merge_workspaces` permitted to be concatenated
+                indistinguishably. (That setting is permissive only -- NXstress
+                performs no merge of its own; see `_discriminator.names_for_read`.)
+
+        Raises:
+            RuntimeError: If the two disagree.
+        """
+        on_disk = _discriminator.columns_on_disk(peaks)
+        expected = {_discriminator.column_name(name) for name in discriminator_names}
+        if on_disk != expected:
+            raise RuntimeError(
+                f"NXstress._peaks: the discriminator names given do not match this entry's "
+                f"columns.\n"
+                f"  On disk:  {sorted(on_disk)}\n"
+                f"  Given:    {sorted(expected)} (from {list(discriminator_names)})\n"
+                "  Splitting with the wrong set does not fail loudly -- it silently merges or "
+                "interleaves workspaces. Pass the names `_discriminator.names_for_read` returns "
+                "for this group."
+            )
 
     @classmethod
     def validateNoDuplicatePeaks(cls, indexed: list[IndexedPeaks]) -> None:

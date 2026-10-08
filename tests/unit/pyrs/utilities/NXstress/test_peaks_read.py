@@ -615,3 +615,82 @@ class TestSplitterEnforcesOnlyContiguityAndMonotonicity:
         """
         with pytest.raises(RuntimeError, match="not sorted in increasing order"):
             SubRuns(np.array([3, 1, 2]))
+
+
+class TestDiscriminatorNamesAreCheckedAgainstTheGroup:
+    """Passing the wrong discriminator names must fail loudly, not quietly.
+
+    This is the one mistake the splitter could not survive: with the names
+    omitted, a two-workspace entry whose blocks happen to be adjacent and share
+    a compound key collapses into a single range, and the monotonicity check
+    passes because the concatenated scan points are still increasing. Measured
+    before the guard: 1 range returned where 2 were correct, **no exception**.
+    With differently shaped data the same mistake surfaced instead as
+    "Interleaved blocks detected", naming the wrong cause.
+    """
+
+    @staticmethod
+    def _two_block_group(logs, with_column: bool):
+        """Two adjacent blocks sharing one compound key, told apart only by direction."""
+        dtypes = {"direction": FIELD_DTYPE.STRING.value} if with_column else {}
+        peaks = _Peaks._init(logs, dtypes)
+        n = 6
+        for name in ("phase_name", "h", "k", "l", "mask", "scan_point", "center", "center_errors"):
+            peaks[name].resize((n,))
+        peaks["phase_name"][:] = np.array(["Fe"] * n)
+        peaks["h"][:] = np.ones(n, dtype=int)
+        peaks["k"][:] = np.ones(n, dtype=int)
+        peaks["l"][:] = np.zeros(n, dtype=int)
+        peaks["mask"][:] = np.array(["_DEFAULT_"] * n)
+        peaks["scan_point"][:] = np.arange(1, n + 1)
+        peaks["center"][:] = np.full(n, 1.0)
+        peaks["center_errors"][:] = np.full(n, 0.01)
+        if with_column:
+            peaks["direction"].resize((n,))
+            peaks["direction"][:] = np.array(["11"] * 3 + ["22"] * 3)
+        return peaks
+
+    def test_omitting_the_names_raises_instead_of_merging_two_workspaces(self, minimal_HidraWorkspace):
+        # Arrange
+        logs = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.arange(1, 7))._sample_logs
+        peaks = self._two_block_group(logs, with_column=True)
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"discriminator names given do not match"):
+            _Peaks.peakCollectionRanges(peaks)
+
+    def test_naming_a_column_the_group_does_not_have_raises(self, minimal_HidraWorkspace):
+        # Arrange
+        logs = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.arange(1, 7))._sample_logs
+        peaks = self._two_block_group(logs, with_column=False)
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"discriminator names given do not match"):
+            _Peaks.peakCollectionRanges(peaks, ("direction",))
+
+    def test_the_correct_names_split_into_two_ranges(self, minimal_HidraWorkspace):
+        """The case the guard must not break -- and what the silent failure got wrong."""
+        # Arrange
+        logs = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.arange(1, 7))._sample_logs
+        peaks = self._two_block_group(logs, with_column=True)
+
+        # Act
+        ranges = _Peaks.peakCollectionRanges(peaks, ("direction",))
+
+        # Assert
+        assert [(start, end) for _, _, start, end in ranges] == [(0, 3), (3, 6)]
+        assert [dict(disc)["direction"] for disc, _, _, _ in ranges] == ["11", "22"]
+
+    def test_a_column_less_group_still_reads_with_no_names(self, minimal_HidraWorkspace):
+        """Empty is legitimate: it means the entry records no workspace boundary."""
+        # Arrange
+        logs = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.arange(1, 7))._sample_logs
+        peaks = self._two_block_group(logs, with_column=False)
+
+        # Act
+        ranges = _Peaks.peakCollectionRanges(peaks)
+
+        # Assert -- one run, because nothing on disk distinguishes the two halves.
+        # Not "merged" in any NXstress sense: the rows were concatenated with no
+        # boundary recorded, and the splitter has nothing to split on.
+        assert [(start, end) for _, _, start, end in ranges] == [(0, 6)]

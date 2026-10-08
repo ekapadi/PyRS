@@ -140,3 +140,116 @@ tests I wrote in the same pass.
 really hold everywhere it is used?), and the `config_override` / `default_config`
 interaction, which is subtle enough that it failed in a full run after passing in
 isolation.
+
+---
+
+## Batch 3 — `pyrs/utilities/NXstress/_peaks.py`
+
+### D7 — a string discriminator column was created as `float64` when the entry has no peak collections
+
+**Flagged by me.** `discriminator_dtypes` infers each column's dtype from the
+values present. With no collections there are none, and `np.asarray([]).dtype` is
+`float64`, whose kind is not in `("U","S","O")`, so the string branch was skipped.
+Reachable in production: `CombineRunsModel` exports via `write([ws], [[]])`
+(Decisions row 28), and spec 05 configures `discriminator_fields: ["direction"]`.
+
+Measured before the fix — the file round-tripped through PyRS, so the harm was a
+wrong on-disk type for any other reader:
+
+```console
+  peaks/direction   dtype=float64  shape=(0,)     <-- should hold strings
+  peaks/phase_name  dtype=object                  (for comparison)
+  read back: 1 workspace(s), [0] collection(s)
+```
+
+**Reviewer:** *"Emit no discriminator columns when there are no collections."*
+
+**Change:** `discriminator_dtypes` returns `{}` for an empty `indexed`, so `_init`
+emits no column. Verified: the entry now carries only the 15 reserved columns and
+still reads back as one workspace with zero collections. The docstring records why
+the empty case is not a detail.
+
+### Reviewer question — is such a file then non-appendable?
+
+*"I think then that such a NXstress file is non-appendable, except via the
+multiple NXentry route."* **Correct, and already enforced.** Measured:
+
+```console
+  append to a column-less entry -> RuntimeError:
+    "the target entry carries no discriminator columns, so an appended
+     workspace could not be told apart from the one(s) already there."
+  new NXentry route still available? yes
+```
+
+**No change** — 04c's Case-A precondition 2 already covers it.
+
+### Raise earlier than "interleaved blocks detected"
+
+**Reviewer:** *"When `discriminator_names` is `()` (AND should this be `None`
+instead of `()`?) — there is no possible merge allowed? Is this correct? My point
+is we can raise a RuntimeError earlier than 'interleaved blocks detected ...'."*
+
+**The case for raising is stronger than it looked.** Omitting the names does not
+produce a confusing error — it produces a **silent wrong answer**:
+
+```console
+  peakCollectionRanges(peaks) with the argument FORGOTTEN:
+    no error; returned 1 range -- WRONG, should be 2 workspaces
+```
+
+Both workspaces shared `('Fe',1,1,0,'_DEFAULT_')`, so their adjacent blocks merged
+into one range, and the monotonicity check passed because the concatenated scan
+points were still increasing. "Interleaved blocks detected" is only the failure
+mode when the data happens to be shaped differently — the failure varies with the
+data.
+
+**On `None` vs `()`: kept `()`.** Once the group is authoritative via the check
+below, `None` and `()` behave identically, so the extra state buys nothing. The
+alternative use for `None` — "derive the names yourself" — would make
+`peakCollectionRanges` read configuration, turning a pure function over a group
+into one with a hidden config dependency, and would mask the caller's mistake
+rather than surface it.
+
+**Change:** new `_Peaks._validateDiscriminatorNames`, called first in
+`peakCollectionRanges`, comparing the caller's names against the columns actually
+present and naming both sets. Distinct from `_discriminator.names_for_read`, which
+compares *configuration* against the file.
+
+### `merge_workspaces` does not make NXstress merge anything
+
+**Reviewer:** *"the NXstress implementation does not merge workspaces -- that's
+something that is external (in PyRS itself)."* **Correct**, and my phrasing had
+attributed a merge to NXstress. `merge_workspaces` is a config key only — it
+appears in no method signature — and its whole effect is permissive: it lifts
+`_validateMultiWorkspace`'s refusal so rows may be concatenated with no boundary
+recorded. Merging that produces a genuinely merged `HidraWorkspace` happens in
+PyRS first (`HidraWorkspace.append_hidra_project` via
+`CombineRunsModel.combine_project_files`, which then passes a length-1 list).
+
+**Change:** phrasing corrected in all three places I had introduced or inherited it
+— `_discriminator.names_for_read`, `_peaks._validateDiscriminatorNames`, and the
+new test's comments. `()` now reads as "the entry records no workspace boundary"
+rather than "the entry is merged".
+
+Four other sites use "merged write/entry" as shorthand without attributing an
+operation (`_peaks.py:79`, `:458`, `_discriminator.py:175`, `:300`); left as
+shorthand now that `names_for_read` carries the authoritative note.
+
+### Reviewer question — does `merge_workspaces: false` with N>1 and no discriminators raise?
+
+**Yes.** Measured across all three configurations:
+
+```console
+  fields=[]            merge=False -> ValueError: given 2 workspaces, but
+                                      'nxstress.discriminator_fields' names no field
+  fields=[]            merge=True  -> ValueError: Duplicate PeakCollection detected
+                                      at ('Fe', 1, 1, 0, '_DEFAULT_')
+  fields=['direction'] merge=False -> ValueError: sample log 'direction' not found
+```
+
+The middle row is worth recording: **even with `merge_workspaces: true`, two
+workspaces sharing a compound key are still refused**, by `validateNoDuplicatePeaks`
+— with no discriminators their sort keys are identical. So the escape hatch only
+works when the inputs' compound keys already differ, and the ordinary
+multi-direction case (two workspaces measuring the same peak) cannot use it at all.
+**No change**; recorded because it narrows what the setting is for.

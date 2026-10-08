@@ -952,3 +952,93 @@ the same change, without touching `_instrument.py`.
 `pixi run test-unit` **421 passed** · `test-integration` 104 passed, 28 skipped,
 2 xfailed · `test-gui` 16 passed · ruff clean · mypy at its 11-error baseline ·
 `restorable_property`'s doctests pass.
+
+---
+
+## Follow-up 4 — 2026-10-08 (PR review, batch 3)
+
+Changes from the review of `_peaks.py`. Conversation in
+[`plans/PR_review/04b-comments.md`](../PR_review/04b-comments.md); only the
+changes are recorded here.
+
+**F4.1** — **A string discriminator column was written as `float64` when the entry
+held no peak collections.** `discriminator_dtypes` infers each column's dtype from
+the values present; with none, `np.asarray([]).dtype` is `float64`, whose kind is
+not in `("U","S","O")`, so the string branch was skipped. Reachable in production:
+`CombineRunsModel` exports via `write([ws], [[]])` (Decisions row 28) and spec 05
+configures `direction`.
+
+```console
+  peaks/direction   dtype=float64  shape=(0,)     <-- should hold strings
+  peaks/phase_name  dtype=object                  (for comparison)
+  read back: 1 workspace(s), [0] collection(s)    <-- harmless to PyRS itself
+```
+
+**Decided: emit no column at all** when there is nothing to discriminate, rather
+than defaulting the dtype. An entry with no peak collections has no discriminator
+values, and `names_for_read` already reads a column-less entry back as a single
+workspace. Such an entry is consequently **non-appendable** except by writing a new
+`NXentry` — which is correct, and which 04c's Case-A precondition 2 already
+enforced with that exact message.
+
+**F4.2** — **Passing the wrong discriminator names to `peakCollectionRanges` gave a
+silent wrong answer, not an error.** The expected failure was "Interleaved blocks
+detected"; the actual one was worse:
+
+```console
+  peakCollectionRanges(peaks) with the argument FORGOTTEN:
+    no error; returned 1 range -- WRONG, should be 2 workspaces
+```
+
+Both workspaces shared `('Fe',1,1,0,'_DEFAULT_')`, so their adjacent blocks
+collapsed into one range, and the monotonicity check passed because the
+concatenated scan points were still increasing. Which failure you get depends on
+the data.
+
+New `_Peaks._validateDiscriminatorNames` runs first in `peakCollectionRanges` and
+compares the caller's names against the columns actually on the group. Distinct
+from `_discriminator.names_for_read`, which compares *configuration* against the
+file; this compares what the caller passed. The parameter stays `()` rather than
+becoming `None`: with the group authoritative the two would behave identically,
+and the alternative reading of `None` — "derive them yourself" — would give a pure
+function over a group a hidden dependency on configuration, and would mask the
+mistake instead of surfacing it.
+
+**F4.3** — **"Merged" was the wrong word, and this document helped spread it.**
+NXstress performs no merge. `merge_workspaces` is a config key appearing in no
+method signature, and its entire effect is permissive: it lifts
+`_validateMultiWorkspace`'s refusal so rows may be concatenated with no boundary
+recorded. The merging that produces a genuinely merged `HidraWorkspace` happens in
+PyRS before NXstress is called — `HidraWorkspace.append_hidra_project`, via
+`CombineRunsModel.combine_project_files`, which then passes a length-1 list
+(Decisions rows 10 and 31 both say so; the prose elsewhere did not follow).
+
+An empty discriminator-name tuple therefore means **the entry records no workspace
+boundary**, not "the entry is merged". Corrected in
+`_discriminator.names_for_read`, `_peaks._validateDiscriminatorNames` and the new
+tests.
+
+**A narrowing worth recording.** Even with `merge_workspaces: true`, two
+workspaces sharing a compound key are still refused by `validateNoDuplicatePeaks`,
+because with no discriminators their sort keys are identical. The escape hatch
+works only when the inputs' compound keys already differ — so the ordinary
+multi-direction case, two workspaces measuring the same peak, cannot use it at all.
+
+### Invariants written by this round
+
+`test_peaks_read.py::TestDiscriminatorNamesAreCheckedAgainstTheGroup` — omitted
+names raise, names for a column the group lacks raise, the correct names still
+split into two ranges, and a column-less group still reads with no names. The
+third is the one that keeps the guard honest: it fails if the check is made too
+strict.
+
+`test_multi_workspace.py::...test_an_entry_with_no_peak_collections_carries_no_discriminator_column`
+— asserts the column is absent *and* that the entry still reads back as one
+workspace with zero collections.
+
+### Verification, as run
+
+`pixi run test-unit` **426 passed** · `test-integration` 104 passed, 28 skipped,
+2 xfailed · `test-gui` 16 passed · ruff clean · mypy at its 11-error baseline ·
+`a5_peakcollection_ranges`, `a5_append_preconditions` and
+`a5_scan_point_family_resizable` all still run.
