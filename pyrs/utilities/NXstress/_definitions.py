@@ -433,14 +433,34 @@ def nxstress_mask_name(mask_key) -> str:
     return DEFAULT_TAG if mask_key is None else mask_key
 
 
-def nxstress_mask_names(*mask_keys) -> set:
-    """Normalise one or more collections of workspace mask keys to NXstress names.
+# Two namespaces, deliberately separate, because conflating them is what the
+# functions below exist to stop:
+#
+#   * a DETECTOR MASK is a per-pixel array. `_DEFAULT_` is always one of them --
+#     every reduction uses the default detector mask, and `_Masks.init_group`
+#     generates one when the workspace has none. These have arrays, and they live
+#     in `instrument/masks/detector/`.
+#
+#   * a DIFFRACTOGRAM KEY is a `HidraWorkspace._diff_data_set` key: a reduction
+#     identifier that *references* a detector mask and optionally intersects it
+#     with a solid-angle (eta) region of interest. `reduction_manager` builds it
+#     as `"{mask_id}_eta_{eta_cent}"`, dropping either part that is absent, so the
+#     four shapes are `None`, `"mask_a"`, `"eta_-5.0"` and `"mask_a_eta_-5.0"`.
+#     These have no array of their own.
+#
+# `_DEFAULT_` is therefore always in the mask namespace and *not* always in the
+# diffractogram keyspace: a texture workspace reduces only eta-restricted
+# diffractograms, so nothing used the default mask alone.
 
-    The default mask is always present in the result: NXstress requires one, and it
-    is generated at write time when the workspace has none.
+
+def nxstress_mask_names(*mask_keys) -> set:
+    """Normalise one or more collections of workspace **mask** keys to NXstress names.
+
+    The default mask is always present in the result: every reduction uses it, and
+    `_Masks.init_group` generates one at write time when the workspace has none.
 
     Args:
-        *mask_keys: Iterables of `HidraWorkspace` mask keys.
+        *mask_keys: Iterables of `HidraWorkspace._mask_dict` keys.
 
     Returns:
         The set of NXstress mask names, always including `DEFAULT_TAG`.
@@ -449,6 +469,71 @@ def nxstress_mask_names(*mask_keys) -> set:
     for keys in mask_keys:
         names.update(nxstress_mask_name(key) for key in keys)
     return names
+
+
+def nxstress_diffractogram_keys(*data_keys) -> set:
+    """Normalise one or more collections of **diffractogram** keys to NXstress names.
+
+    Unlike `nxstress_mask_names`, this does **not** inject `DEFAULT_TAG`: a
+    diffractogram keyed by the default mask exists only if some reduction used that
+    mask alone. A texture workspace reduces `eta_*` only, and inventing a bare
+    `DIFFRACTOGRAM` for it makes `_Diffractogram._concatenated_diffraction` raise
+    for data that was never reduced.
+
+    Args:
+        *data_keys: Iterables of `HidraWorkspace._diff_data_set` keys.
+
+    Returns:
+        The set of NXstress diffractogram keys actually present.
+    """
+    keys: set = set()
+    for collection in data_keys:
+        keys.update(nxstress_mask_name(key) for key in collection)
+    return keys
+
+
+def diffractogram_detector_mask(key: str, known_masks) -> str:
+    """The detector mask a diffractogram key references.
+
+    Resolved by **matching against the known mask names**, never by parsing the
+    key: a detector mask legitimately named `foo_eta_1.0` would be misparsed, and
+    the eta step is nowhere recorded so a parser could not reconstruct the region
+    anyway. Anchoring on what exists removes the ambiguity.
+
+    Args:
+        key: An NXstress diffractogram key -- `DEFAULT_TAG`, a mask name,
+            `"eta_<angle>"`, or `"<mask>_eta_<angle>"`.
+        known_masks: The detector-mask names available, including `DEFAULT_TAG`.
+
+    Returns:
+        The name of the detector mask the key references.
+
+    Raises:
+        RuntimeError: If the key references no available detector mask. Always
+            satisfiable in practice -- the default is always present -- so this
+            fires only on a malformed key, which is exactly when a silent
+            mis-association would be worst.
+
+    Example:
+        >>> diffractogram_detector_mask("eta_-5.0", {DEFAULT_TAG, "mask_a"}) == DEFAULT_TAG
+        True
+        >>> diffractogram_detector_mask("mask_a_eta_-5.0", {DEFAULT_TAG, "mask_a"})
+        'mask_a'
+    """
+    known = set(known_masks)
+    if key in known:
+        return key
+    if key.startswith("eta_"):
+        return DEFAULT_TAG
+    # Longest match first, so `mask_a_b` is preferred over `mask_a` when both exist.
+    for mask in sorted(known, key=len, reverse=True):
+        if key.startswith(f"{mask}_eta_"):
+            return mask
+    raise RuntimeError(
+        f"NXstress: diffractogram key '{key}' references no available detector mask.\n"
+        f"  Available: {sorted(known)}.\n"
+        "  A key is `<mask>`, `eta_<angle>`, or `<mask>_eta_<angle>`; the mask part must exist."
+    )
 
 
 def allowed_identifier(s: str) -> str:

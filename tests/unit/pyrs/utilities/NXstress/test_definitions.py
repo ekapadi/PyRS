@@ -14,6 +14,9 @@ from pyrs.utilities.NXstress._definitions import (
     GROUP_NAME,
     group_naming_scheme,
     allowed_identifier,
+    diffractogram_detector_mask,
+    nxstress_diffractogram_keys,
+    nxstress_mask_names,
     decode_identifier,
     is_ISO_8601,
     DEFAULT_TAG,
@@ -206,3 +209,49 @@ class TestDefinitions:
         assert is_ISO_8601("not-a-date") is False
         assert is_ISO_8601("2024/01/15 10:30:00") is False
         assert is_ISO_8601("invalid") is False
+
+
+class TestDiffractogramKeysAreNotMaskNames:
+    """Two namespaces, kept apart.
+
+    A **detector mask** is a per-pixel array; `_DEFAULT_` is always one, because
+    every reduction uses the default mask. A **diffractogram key** is a
+    `_diff_data_set` key: a reduction identifier that *references* a detector mask
+    and optionally intersects it with an eta region. Conflating them is what put
+    composites like `eta_-5.0` into `masks/names` with no array behind them.
+    """
+
+    def test_mask_names_always_include_the_default(self):
+        """Every reduction uses the default mask, so it is always in the namespace."""
+        assert nxstress_mask_names([]) == {DEFAULT_TAG}
+        assert nxstress_mask_names(["mask_a"]) == {DEFAULT_TAG, "mask_a"}
+        assert nxstress_mask_names([None]) == {DEFAULT_TAG}
+
+    def test_diffractogram_keys_do_not_invent_the_default(self):
+        """A texture workspace reduces `eta_*` only; nothing used the default alone."""
+        assert nxstress_diffractogram_keys([]) == set()
+        assert nxstress_diffractogram_keys(["eta_-5.0", "eta_0.0"]) == {"eta_-5.0", "eta_0.0"}
+        # `None` is the key for "the default mask alone", and maps to the tag.
+        assert nxstress_diffractogram_keys([None, "mask_a"]) == {DEFAULT_TAG, "mask_a"}
+
+    def test_a_key_resolves_to_the_detector_mask_it_references(self):
+        known = {DEFAULT_TAG, "mask_a"}
+        assert diffractogram_detector_mask(DEFAULT_TAG, known) == DEFAULT_TAG
+        assert diffractogram_detector_mask("mask_a", known) == "mask_a"
+        assert diffractogram_detector_mask("eta_-5.0", known) == DEFAULT_TAG
+        assert diffractogram_detector_mask("mask_a_eta_-5.0", known) == "mask_a"
+
+    def test_resolution_prefers_the_longest_matching_mask_name(self):
+        """`mask_a_b_eta_0` belongs to `mask_a_b`, not to `mask_a`."""
+        known = {DEFAULT_TAG, "mask_a", "mask_a_b"}
+        assert diffractogram_detector_mask("mask_a_b_eta_0.0", known) == "mask_a_b"
+        assert diffractogram_detector_mask("mask_a_eta_0.0", known) == "mask_a"
+
+    def test_a_mask_named_like_a_composite_is_not_misparsed(self):
+        """Resolution matches against known names rather than parsing the string."""
+        known = {DEFAULT_TAG, "foo_eta_1.0"}
+        assert diffractogram_detector_mask("foo_eta_1.0", known) == "foo_eta_1.0"
+
+    def test_a_key_referencing_an_absent_mask_raises(self):
+        with pytest.raises(RuntimeError, match=r"references no available detector mask"):
+            diffractogram_detector_mask("mask_b_eta_0.0", {DEFAULT_TAG, "mask_a"})

@@ -253,3 +253,119 @@ workspaces sharing a compound key are still refused**, by `validateNoDuplicatePe
 works when the inputs' compound keys already differ, and the ordinary
 multi-direction case (two workspaces measuring the same peak) cannot use it at all.
 **No change**; recorded because it narrows what the setting is for.
+
+---
+
+## Batch 4 — `pyrs/utilities/NXstress/_fit.py`
+
+### D8 — a round trip added an all-NaN mask to a workspace that never reduced it
+
+**Flagged by me.** One `DIFFRACTOGRAM` group spans the whole entry, so when one
+input reduced a mask and another did not, `_concatenated_diffraction` NaN-fills
+the second's rows to keep the scan-point axis aligned — deliberately, and
+documented. But the read side handed every group in the entry to every workspace,
+so the second got the mask back:
+
+```console
+  before write:      ws0 [None, 'mask_a']    ws1 [None]
+  after round trip:  ws0 [None, 'mask_a']    ws1 [None, 'mask_a']   <-- all-NaN
+```
+
+`reduction_masks` is *counted* by `texture_fitting_crtl.py:142`
+(`if len(...) == 2:`) and `mantid_peakfit_calibration.py:240`, and drives
+`setup_out_of_plane_angle` / `enable_polar_plot` in the texture viewer. Latent
+today — it needs a multi-workspace file with uneven reduced masks opened in that
+viewer — and live once spec 05's multi-direction files exist.
+
+**Reviewer:** *"Drop the all-NaN mask on read. HOWEVER, I'm wondering if we should
+just warn and drop the mask with no reductions associated with it on write... a
+user setting up a set of masks, and just not bothering to perform a specific
+reduction; that might not necessarily be an error."*
+
+**On the write-side proposal: that case is already handled, and is a different
+case.** Measured, for a single workspace defining `mask_a` but never reducing it:
+
+```console
+  _mask_dict keys       : ['mask_a']            <- defined
+  _diff_data_set keys   : ['None']              <- never reduced
+  DIFFRACTOGRAM groups  : ['DIFFRACTOGRAM']     <- no DIFFRACTOGRAM_mask_a written
+  instrument/masks/names: ['_DEFAULT_', 'mask_a']  <- the mask array IS preserved
+  round-tripped reduction_masks: [None]         <- unchanged
+```
+
+`_Fit.init_group` builds `mask_keys` from `_diff_data_set`, not `_mask_dict`, so
+an unreduced mask already produces no diffractogram, while the mask array itself
+still reaches `instrument/masks` and round-trips into `_mask_dict`. Nothing to
+change, and no warning is warranted: it is not an anomaly, just a mask that was
+defined and not used.
+
+**And a write-side drop would be actively wrong for D8.** There, `mask_a` *does*
+have reductions — the first input's. Dropping it at write would discard real data
+to tidy up the second input's absence. Whether a workspace has a mask is a
+per-workspace fact, so it can only be resolved per workspace, which is the read
+side.
+
+**Change:** `NXstress._workspaceFromNexus` omits a mask whose data is entirely NaN
+across *this workspace's* rows, logging at INFO. The two-theta matrix is taken
+before the check, so dropping the first group does not lose the axis. The comment
+records the accepted cost: a reduction that genuinely produced only NaN is
+indistinguishable from one that never ran and is dropped too — preferred over
+silently changing a workspace's mask set across a round trip.
+
+### Observations, no change
+
+### D9 — `_2theta_matrix`'s row count was never validated against the sub-run count
+
+**Flagged by me as an observation; escalated by the reviewer.** NXstress writes
+`scan_point` from the sub-runs and the diffractogram rows from `_2theta_matrix`.
+A workspace whose two disagree produced a file whose rows did not correspond to
+its scan points, with nothing saying so. Pre-existing, but N workspaces amplify
+it: one short input shifts every later input onto the wrong rows.
+
+**Reviewer:** *"The following must be guarded; we should not allow a silent error
+like this!"* and *"I would probably guard it in both places; or at least add an
+additional test ensuring that the guard does not regress (and pointing to all of
+its consumers in a comment at the test)."*
+
+**Change — guarded in both places, because one is not enough.**
+`HidraWorkspace.set_reduced_diffraction_data_set` now rejects a `two_theta_matrix`
+that is not 2-D, a mask array whose shape disagrees with it, and a row count that
+contradicts the sub-runs when those are known. But that setter is only **one of
+five** paths that write `_2theta_matrix`; the other four bypass it entirely:
+
+| path | reaches `_2theta_matrix` |
+|---|---|
+| `_load_reduced_diffraction_data` | reading a `HidraProjectFile` |
+| `_append_reduced_diffraction_data` | `append_hidra_project` |
+| `set_reduced_diffraction_data` | row-wise; `reduction_manager`, `mantid_peakfit_calibration` |
+| direct assignment | anywhere |
+
+So `_Diffractogram._concatenated_diffraction` carries the second guard, at the
+write boundary every one of those funnels through, naming **which input** is
+short — which matters precisely because the damage is not local.
+
+Four tests in `test_fit.py::TestReducedDataRowCountIsGuarded`, whose class
+docstring carries that table so a future reader knows what each guard covers and
+why removing either leaves a silent route to a misaligned file. Two exercise the
+setter; two force the mismatch *past* it, as the other four paths can.
+- **`_concatenated_diffraction` runs twice per append** — once in `validateAppend`,
+  once in `init_group`. The cost of pre-flighting rather than discovering
+  mid-mutation, and the largest array work on that path.
+
+### Cross-reference — `_fit.py` also changed in batch 5
+
+Batch 5 (`_instrument.py`, written up in
+[04-comments.md](04-comments.md#batch-5--pyrsutilitiesnxstress_instrumentpy-brought-forward-during-batch-4),
+04's Follow-up 8) separated the detector-mask namespace from the diffractogram
+keyspace, and three of its edits land in this file:
+
+- `_Fit.init_group` and `_Fit.validateAppend` now key on
+  `nxstress_diffractogram_keys` instead of `nxstress_mask_names`, so the default
+  tag is no longer forced into the keyspace.
+- `_Fit.init_group` validates that each diffractogram key references a detector
+  mask that is actually registered, via the new
+  `diffractogram_detector_mask(key, known_masks)`.
+- `validateWorkspaceAndPeaksData` lost its mask-namespace check on
+  `PeakCollection.mask`; its `_diff_data_set` check was the correct one all along.
+
+Noted here rather than re-argued: the defect is 04's, the file is 04b's.

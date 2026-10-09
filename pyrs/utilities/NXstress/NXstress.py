@@ -840,6 +840,32 @@ class NXstress:
                 mask_name = suffix_from_group_name(child_name, GROUP_NAME.DIFFRACTOGRAM)
                 scan_pts, two_theta, data, errors = _Diffractogram.diffractogramFromNexus(child, rows)
 
+                # The two-theta axis is entry-wide, so take it from whichever group
+                # comes first -- including one whose data is dropped below.
+                if two_theta_matrix is None:
+                    two_theta_matrix = two_theta
+
+                # A mask that is entirely NaN for THIS workspace's rows is one it
+                # never reduced. One DIFFRACTOGRAM group spans the whole entry, so
+                # when one input reduced a mask and another did not,
+                # `_concatenated_diffraction` NaN-fills the second's rows to keep the
+                # scan-point axis aligned. Handing those rows back would give the
+                # workspace a mask it never had: `reduction_masks` would gain an
+                # entry, and that property is *counted* by
+                # `texture_fitting_crtl` and `mantid_peakfit_calibration`.
+                #
+                # The cost is that a reduction which genuinely produced nothing but
+                # NaN is indistinguishable from one that never ran, and is dropped
+                # too. That trade is deliberate: the alternative silently changes a
+                # workspace's mask set across a round trip.
+                if data.size and np.isnan(data).all():
+                    logger.info(
+                        f"NXstress: mask '{mask_name}' is entirely NaN for this workspace's scan "
+                        f"points -- it was reduced by another input in this entry, not by this one. "
+                        f"Omitting it rather than reporting a mask this workspace does not have."
+                    )
+                    continue
+
                 # Map DEFAULT_TAG to None for workspace dict keys
                 ws_mask_key = None if mask_name == DEFAULT_TAG else mask_name
                 diff_data[ws_mask_key] = data
@@ -847,9 +873,6 @@ class NXstress:
                 # NOTE: Despite the field name 'diffractogram_errors',
                 #   variance values (not standard errors) are stored in this field.
                 var_data[ws_mask_key] = errors
-
-                if two_theta_matrix is None:
-                    two_theta_matrix = two_theta
 
             if two_theta_matrix is not None:
                 ws.set_reduced_diffraction_data_set(two_theta_matrix, diff_data, var_data)

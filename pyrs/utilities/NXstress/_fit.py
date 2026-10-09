@@ -26,6 +26,8 @@ from ._definitions import (
     group_naming_scheme,
     growable,
     tail_append,
+    diffractogram_detector_mask,
+    nxstress_diffractogram_keys,
     nxstress_mask_names,
     UNDEFINED_PEAK_TAG,
     workspace_mask_key,
@@ -435,15 +437,34 @@ class _Diffractogram:
             )
 
         two_theta, data, errors = [], [], []
-        for ws in wss:
+        for n, ws in enumerate(wss):
             n_scan = len(ws.get_sub_runs())
-            two_theta.append(np.asarray(ws._2theta_matrix))
+            ws_two_theta = np.asarray(ws._2theta_matrix)
+
+            # The write boundary, and the only chokepoint every path funnels through.
+            # `HidraWorkspace.set_reduced_diffraction_data_set` guards the same
+            # invariant at its own end, but four other paths reach `_2theta_matrix`
+            # without it -- `_load_reduced_diffraction_data`,
+            # `_append_reduced_diffraction_data`, the row-wise
+            # `set_reduced_diffraction_data`, and direct assignment. Unchecked, the
+            # rows written here do not correspond to the `scan_point` axis, which is
+            # built from the sub-runs; and with several inputs the damage is not
+            # local, because one short input shifts every later one.
+            if ws_two_theta.shape[0] != n_scan:
+                raise RuntimeError(
+                    f"NXstress._fit: input workspace [{n}] has reduced data for "
+                    f"{ws_two_theta.shape[0]} scan point(s) but {n_scan} sub-run(s).\n"
+                    "  The first axis of the reduced data is the scan-point axis; a mismatch would "
+                    "write a diffractogram whose rows do not correspond to `scan_point`."
+                )
+
+            two_theta.append(ws_two_theta)
             if cls._diffraction_data_key(mask_name) in ws._diff_data_set:
                 ws_data, ws_errors = cls._get_diffraction_data(ws, mask_name)
                 data.append(np.asarray(ws_data))
                 errors.append(np.asarray(ws_errors))
             else:
-                n_two_theta = np.asarray(ws._2theta_matrix).shape[-1]
+                n_two_theta = ws_two_theta.shape[-1]
                 data.append(np.full((n_scan, n_two_theta), np.nan))
                 errors.append(np.full((n_scan, n_two_theta), np.nan))
 
@@ -673,9 +694,28 @@ class _Fit:
         # The union across inputs, not just the first workspace's: each group
         # spans the whole concatenated scan-point axis, so a mask any input
         # reduced needs a group even if the others did not.
+        # The DIFFRACTOGRAM keyspace, which is NOT the mask namespace: it carries
+        # only the reductions actually performed, and so does not force
+        # `DEFAULT_TAG`. A texture workspace reduces `eta_*` only, and inventing a
+        # bare `DIFFRACTOGRAM` for it would ask `_concatenated_diffraction` for
+        # data that was never reduced.
+        #
+        # The union across inputs, not just the first workspace's: each group
+        # spans the whole concatenated scan-point axis, so a key any input reduced
+        # needs a group even if the others did not.
         mask_keys = set()
         for ws in wss:
-            mask_keys |= set(nxstress_mask_names(ws._diff_data_set.keys()))
+            mask_keys |= nxstress_diffractogram_keys(ws._diff_data_set.keys())
+
+        # Every key must reference a detector mask that exists. Always true in
+        # practice -- the default is always written -- so this catches a malformed
+        # key rather than a missing mask.
+        known_masks = set()
+        for ws in wss:
+            known_masks |= nxstress_mask_names(ws._mask_dict.keys())
+        for key in sorted(mask_keys):
+            diffractogram_detector_mask(key, known_masks)
+
         for mask in sorted(mask_keys):
             dgram_name = group_naming_scheme(GROUP_NAME.DIFFRACTOGRAM, mask)
             if data is not None:
@@ -718,7 +758,7 @@ class _Fit:
         """
         mask_keys = set()
         for ws in wss:
-            mask_keys |= set(nxstress_mask_names(ws._diff_data_set.keys()))
+            mask_keys |= nxstress_diffractogram_keys(ws._diff_data_set.keys())
         for mask in sorted(mask_keys):
             dgram_name = group_naming_scheme(GROUP_NAME.DIFFRACTOGRAM, mask)
             if dgram_name in fit:
@@ -736,8 +776,6 @@ class _Fit:
                 f"Diffraction-data keys '{diff_data_keys}' and variance keys '{var_data_keys}' are not the same."
             )
 
-        mask_keys = nxstress_mask_names(ws._mask_dict.keys())
-
         for peaks in peakss:
             # VERIFY that any <scan point> referenced by any `PeakCollection` is included in the workspace.
 
@@ -750,15 +788,19 @@ class _Fit:
                     f"  are not present in workspace scan points {scan_point}."
                 )
 
-            # VERIFY that any <mask> referenced by any `PeakCollection` is included in the workspace.
+            # VERIFY that the diffractogram a `PeakCollection` was fitted on exists.
+            #
+            # `PeakCollection.mask` is a DIFFRACTOGRAM key, not a mask name -- it
+            # indexes `_diff_data_set`, as the lookup below does. It was previously
+            # also checked against the *mask* namespace, which rejected every
+            # legitimate texture peak: `eta_0.0` is a perfectly good diffractogram
+            # key and is not a mask. That check is gone; this one is the correct
+            # form, and was always doing the real work.
             peaks_mask = peaks.mask
-            if peaks_mask not in mask_keys:
-                raise ValueError(
-                    f"Mask '{peaks_mask}' required by `PeakCollection`,\n  is not present in the workspace."
-                )
             data_key = _Diffractogram._diffraction_data_key(peaks_mask)
             if data_key not in ws._diff_data_set:
                 raise ValueError(
-                    f"Reduced data required for mask '{peaks_mask}', required by `PeakCollection`,\n"
-                    "  is not present in the workspace."
+                    f"Reduced data for diffractogram '{peaks_mask}', required by `PeakCollection`,\n"
+                    f"  is not present in the workspace. Available: "
+                    f"{sorted(nxstress_diffractogram_keys(ws._diff_data_set.keys()))}."
                 )

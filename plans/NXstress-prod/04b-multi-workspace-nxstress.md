@@ -1042,3 +1042,66 @@ workspace with zero collections.
 2 xfailed · `test-gui` 16 passed · ruff clean · mypy at its 11-error baseline ·
 `a5_peakcollection_ranges`, `a5_append_preconditions` and
 `a5_scan_point_family_resizable` all still run.
+
+---
+
+## Follow-up 5 — 2026-10-08 (PR review, batch 4)
+
+Changes from the review of `_fit.py`. Conversation in
+[`plans/PR_review/04b-comments.md`](../PR_review/04b-comments.md).
+
+**F5.1** — **The NaN fill leaked into the reconstructed workspace's mask set.**
+One `DIFFRACTOGRAM` group spans the whole entry, so an input that did not reduce a
+mask has its rows NaN-filled to keep the scan-point axis aligned. That part is
+correct and deliberate. The read side then handed every group to every workspace,
+so a workspace came back carrying a mask it never reduced:
+
+```console
+  before write:      ws0 [None, 'mask_a']    ws1 [None]
+  after round trip:  ws0 [None, 'mask_a']    ws1 [None, 'mask_a']   <-- all-NaN
+```
+
+That matters because `reduction_masks` is **counted**, not just listed, by
+`texture_fitting_crtl.py:142` and `mantid_peakfit_calibration.py:240`, and drives
+the texture viewer's out-of-plane-angle setup.
+
+`_workspaceFromNexus` now omits a mask that is entirely NaN across *this
+workspace's* rows. The accepted cost, recorded at the code: a reduction that
+genuinely produced only NaN is indistinguishable from one that never ran, and is
+dropped too — preferred over silently changing a workspace's mask set.
+
+**Two things deliberately NOT changed**, both checked rather than assumed:
+
+- **A mask defined but never reduced is already handled correctly.** `mask_keys`
+  comes from `_diff_data_set`, not `_mask_dict`, so no diffractogram is written
+  for it, while the mask array still reaches `instrument/masks` and round-trips
+  into `_mask_dict`. Verified end to end. No warning is warranted: that is a mask
+  defined and not used, not an anomaly.
+- **Dropping such a mask at *write* time would be wrong for the case above**, where
+  the mask does have reductions from another input. Whether a workspace has a mask
+  is a per-workspace fact, resolvable only on read.
+
+**F5.2** — **A workspace whose reduced data and sub-runs disagreed wrote a
+misaligned file, silently.** NXstress writes `scan_point` from the sub-runs and
+the diffractogram rows from `_2theta_matrix`; nothing checked that they agreed.
+Pre-existing, but N workspaces amplify it from local corruption to a shift of
+every later input.
+
+Guarded in **two** places, because one does not cover it.
+`HidraWorkspace.set_reduced_diffraction_data_set` now rejects a non-2-D matrix, a
+mask array disagreeing with it, and a row count contradicting known sub-runs —
+but that setter is one of **five** paths that write `_2theta_matrix`, and the
+other four bypass it: `_load_reduced_diffraction_data`,
+`_append_reduced_diffraction_data`, the row-wise `set_reduced_diffraction_data`,
+and direct assignment. So `_Diffractogram._concatenated_diffraction` carries the
+second guard at the write boundary they all funnel through, naming **which**
+input is short — which matters precisely because the damage is not local.
+
+`test_fit.py::TestReducedDataRowCountIsGuarded` pins both, and its docstring
+lists those five paths so a later reader can see what each guard is for. Two of
+its four tests force the mismatch *past* the setter, the way the other paths do.
+
+### Verification, as run
+
+`pixi run test-unit` **431 passed** · `test-integration` 104 passed, 28 skipped,
+2 xfailed · `test-gui` 16 passed · ruff clean · mypy at its 11-error baseline.

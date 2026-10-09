@@ -116,7 +116,7 @@ def main() -> int:
     print("=" * 78)
 
     ws = build_workspace()
-    inst = _Instrument.init_group(ws)
+    inst = _Instrument.init_group([ws])  # 04b generalised this to `list[HidraWorkspace]`
     detector = inst[GROUP_NAME.DETECTOR]
     transformations = detector["transformations"]
 

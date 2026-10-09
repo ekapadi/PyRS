@@ -1310,6 +1310,38 @@ class HidraWorkspace:
         -------
         None
         """
+        two_theta_matrix = np.asarray(two_theta_matrix)
+        if two_theta_matrix.ndim != 2:
+            raise RuntimeError(
+                f"`two_theta_matrix` must be 2-D, (n_subruns, n_2theta); got shape {two_theta_matrix.shape}."
+            )
+
+        # Every array here is sampled on the same axes, so a disagreement is not a
+        # difference of opinion -- it is one of them being wrong. Unchecked, the
+        # mismatch is silent: NXstress takes its two-theta rows from this matrix and
+        # sizes other rows from the sub-run count, so a workspace whose arrays
+        # disagree writes a diffractogram whose rows do not correspond to its scan
+        # points. With several workspaces in one NXentry it is worse than local --
+        # one bad input shifts every later input onto the wrong rows.
+        for label, data_set in (("diff_data_set", diff_data_set), ("var_data_set", var_data_set)):
+            for mask_id, values in data_set.items():
+                shape = np.asarray(values).shape
+                if shape != two_theta_matrix.shape:
+                    raise RuntimeError(
+                        f"`{label}[{mask_id!r}]` has shape {shape}, but `two_theta_matrix` has "
+                        f"{two_theta_matrix.shape}; they are sampled on the same axes and must agree."
+                    )
+
+        # Checked only when the sub-runs are already known: some callers populate
+        # diffraction data first. When they are known, they are authoritative --
+        # `scan_point` is written from them, not from these arrays.
+        sub_runs = self._sample_logs.subruns
+        if len(sub_runs) and two_theta_matrix.shape[0] != len(sub_runs):
+            raise RuntimeError(
+                f"`two_theta_matrix` has {two_theta_matrix.shape[0]} row(s) but this workspace has "
+                f"{len(sub_runs)} sub-run(s); the first axis of the reduced data is the scan-point axis."
+            )
+
         self._2theta_matrix = np.copy(two_theta_matrix)
         self._diff_data_set = {k: np.copy(v) for k, v in diff_data_set.items()}
         self._var_data_set = {k: np.copy(v) for k, v in var_data_set.items()}

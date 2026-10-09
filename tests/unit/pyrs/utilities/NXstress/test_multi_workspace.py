@@ -195,6 +195,53 @@ class TestBackCompat:
         assert len(workspaces) == 1
         assert peakss == [[]]
 
+    def test_a_mask_one_input_never_reduced_does_not_survive_the_round_trip(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """A NaN-filled mask is alignment padding, not a mask the workspace has.
+
+        One DIFFRACTOGRAM group spans the whole entry, so when one input reduced a
+        mask and another did not, the second's rows are NaN-filled to keep the
+        scan-point axis aligned. Handing those rows back would add an entry to
+        `reduction_masks` -- a property `texture_fitting_crtl` and
+        `mantid_peakfit_calibration` both *count*.
+        """
+
+        # Arrange -- both define `mask_a`; only the first reduces it.
+        def ws_for(direction: str, points: tuple, reduced: tuple):
+            sub_runs = np.array(points)
+            ws = minimal_HidraWorkspace(
+                with_instrument=True, with_masks=True, mask_names=("mask_a",), sub_runs=sub_runs
+            )
+            ws.set_sample_log("direction", sub_runs, np.array([direction] * len(sub_runs)))
+            two_theta = np.tile(np.linspace(60.0, 120.0, 20), (len(sub_runs), 1))
+            ones = np.ones((len(sub_runs), 20))
+            ws.set_reduced_diffraction_data_set(two_theta, {m: ones for m in reduced}, {m: ones for m in reduced})
+            return ws, [minimal_PeakCollection(N_subrun=len(sub_runs), sub_runs=sub_runs)]
+
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
+        first, first_peaks = ws_for("11", (1, 2, 3), (None, "mask_a"))
+        second, second_peaks = ws_for("22", (4, 5, 6), (None,))
+        assert first.reduction_masks == [None, "mask_a"]
+        assert second.reduction_masks == [None]
+        path = tmp_path / "uneven_masks.nxs"
+
+        # Act
+        with NXstress(path, "w") as nx:
+            nx.write([first, second], [first_peaks, second_peaks])
+        with NXstress(path, "r") as nx:
+            workspaces, _ = nx.read()
+
+        # Assert -- each workspace gets back exactly the masks it reduced
+        assert workspaces[0].reduction_masks == [None, "mask_a"]
+        assert workspaces[1].reduction_masks == [None]
+        # ...and the group really is on disk, carrying the first input's real data
+        with h5py.File(path, "r") as f:
+            masked = f["entry/FIT/DIFFRACTOGRAM_mask_a/diffractogram"][()]
+        assert masked.shape == (6, 20)
+        assert not np.isnan(masked[:3]).any()
+        assert np.isnan(masked[3:]).all()
+
 
 class TestEmptyConfigPolicy:
     def test_multiple_workspaces_without_a_discriminator_raises(

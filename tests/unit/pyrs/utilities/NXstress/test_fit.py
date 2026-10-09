@@ -3,6 +3,7 @@ Tests for pyrs/utilities/NXstress/_fit.py
 """
 
 from collections.abc import Callable
+import h5py
 import numpy as np
 from nexusformat.nexus import NXdata, NXnote, NXparameters, NXprocess
 import pytest
@@ -12,6 +13,7 @@ from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.utilities.NXstress._fit import _BackgroundParameters, _Diffractogram, _Fit, _PeakParameters
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG, GROUP_NAME
 from pyrs.utilities.NXstress._peaks import _Peaks
+from pyrs.utilities.NXstress.NXstress import NXstress
 
 
 class TestFit:
@@ -378,6 +380,11 @@ class TestFit:
         for mask_name in mask_names:
             diff_data_set[mask_name] = np.ones((N_subrun, n_two_theta))
             var_data_set[mask_name] = np.ones((N_subrun, n_two_theta))
+            # The mask itself must exist, not just a reduction keyed by its name: a
+            # diffractogram key references a detector mask, and `_Fit.init_group` now
+            # checks that the reference resolves. A real reduction using `mask1` had
+            # `mask1` loaded; this test previously only pretended.
+            ws.set_detector_mask(np.ones(16, dtype=np.int64), False, mask_name)
         ws.set_reduced_diffraction_data_set(two_theta_matrix, diff_data_set, var_data_set)
 
         peak0 = createPeakCollection(
@@ -702,3 +709,151 @@ class TestFitTailAppend:
         # Act / Assert
         with pytest.raises(RuntimeError, match=r"trailing shape"):
             _Diffractogram.init_group([wider], DEFAULT_TAG, indexed, data=dg)
+
+
+class TestReducedDataRowCountIsGuarded:
+    """A workspace whose reduced data and sub-runs disagree must never reach a file.
+
+    NXstress writes `scan_point` from the sub-runs and the diffractogram rows from
+    `_2theta_matrix`. If those disagree the rows do not correspond to the scan
+    points, and nothing says so -- the file is readable and wrong. With several
+    inputs in one `NXentry` the damage is not even local: one short input shifts
+    every later input onto the wrong rows.
+
+    **The invariant is guarded in two places, and both are needed.**
+
+    `HidraWorkspace.set_reduced_diffraction_data_set` guards its own end, but it is
+    only one of five paths that write `_2theta_matrix`; the other four bypass it:
+
+    - `_load_reduced_diffraction_data`    (reading a HidraProjectFile)
+    - `_append_reduced_diffraction_data`  (`append_hidra_project`)
+    - `set_reduced_diffraction_data`      (row-wise; `reduction_manager`,
+                                           `mantid_peakfit_calibration`)
+    - direct assignment to `_2theta_matrix`
+
+    `_Diffractogram._concatenated_diffraction` is therefore the second guard, at the
+    write boundary every one of those paths funnels through. Removing either leaves
+    a silent route to a misaligned file, which is why both are tested here.
+    """
+
+    @staticmethod
+    def _inconsistent(ws, n_rows: int, n_two_theta: int = 20):
+        """Force the mismatch past the setter, as the four other paths can."""
+        ws._2theta_matrix = np.tile(np.linspace(60.0, 120.0, n_two_theta), (n_rows, 1))
+        ones = np.ones((n_rows, n_two_theta))
+        ws._diff_data_set = {None: ones}
+        ws._var_data_set = {None: ones.copy()}
+
+    def test_setter_rejects_a_row_count_that_contradicts_the_sub_runs(
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
+    ):
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        two_theta = np.tile(np.linspace(60.0, 120.0, 20), (5, 1))  # 5 rows, 3 sub-runs
+        ones = np.ones((5, 20))
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"5 row\(s\) but this workspace has 3 sub-run"):
+            ws.set_reduced_diffraction_data_set(two_theta, {None: ones}, {None: ones})
+
+    def test_setter_rejects_a_mask_array_that_disagrees_with_two_theta(
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
+    ):
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        two_theta = np.tile(np.linspace(60.0, 120.0, 20), (3, 1))
+
+        # Act / Assert -- a mask sampled on a different number of channels
+        with pytest.raises(RuntimeError, match=r"sampled on the same axes and must agree"):
+            ws.set_reduced_diffraction_data_set(two_theta, {None: np.ones((3, 25))}, {None: np.ones((3, 25))})
+
+    def test_write_boundary_rejects_a_mismatch_the_setter_never_saw(
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection
+    ):
+        """The case that matters: the mismatch arrived by one of the four other paths."""
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        self._inconsistent(ws, n_rows=5)  # bypasses the setter, as production paths do
+        indexed = _Peaks.indexed([], ws._sample_logs)
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"input workspace \[0\] has reduced data for 5 scan"):
+            _Diffractogram._concatenated_diffraction([ws], DEFAULT_TAG)
+        assert indexed == []
+
+    def test_the_offending_input_is_named_when_several_are_written(
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
+    ):
+        """With N inputs a short one shifts every later one, so the message must say which."""
+        # Arrange
+        good = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        bad = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5, 6]))
+        self._inconsistent(bad, n_rows=2)
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"input workspace \[1\] has reduced data for 2 scan"):
+            _Diffractogram._concatenated_diffraction([good, bad], DEFAULT_TAG)
+
+
+class TestTextureWorkspaceRoundTrip:
+    """A texture workspace reduces `eta_*` only, and could not be written at all.
+
+    Every reduction uses the default detector mask; a texture reduction
+    additionally intersects it with an eta region, so its `_diff_data_set` keys are
+    `eta_<angle>` and there is **no** key for the default mask alone. Two things
+    rejected that:
+
+    - `nxstress_mask_names` injected `DEFAULT_TAG` into the *diffractogram*
+      keyspace, so a bare `DIFFRACTOGRAM` was demanded for data never reduced; and
+    - `validateWorkspaceAndPeaksData` checked `PeakCollection.mask` against the
+      *mask* namespace, where `eta_0.0` is correctly absent -- it is a
+      diffractogram key, not a mask.
+
+    Nothing in PyRS writes texture through NXstress yet, which is why neither was
+    caught; this pins the shape before something does.
+    """
+
+    @staticmethod
+    def _texture_workspace(minimal_HidraWorkspace, sub_runs, keys):
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True, sub_runs=sub_runs)
+        two_theta = np.tile(np.linspace(60.0, 120.0, 20), (len(sub_runs), 1))
+        ones = np.ones((len(sub_runs), 20))
+        ws.set_reduced_diffraction_data_set(two_theta, {k: ones for k in keys}, {k: ones.copy() for k in keys})
+        return ws
+
+    def test_eta_only_reductions_write_and_read(self, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path):
+        # Arrange
+        sub_runs = np.array([1, 2, 3])
+        keys = ("eta_-5.0", "eta_0.0", "eta_5.0")
+        ws = self._texture_workspace(minimal_HidraWorkspace, sub_runs, keys)
+        peaks = minimal_PeakCollection(N_subrun=3, sub_runs=sub_runs)
+        peaks._mask = "eta_0.0"  # the diffractogram it was fitted on
+        path = tmp_path / "texture.nxs"
+
+        # Act
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [[peaks]])
+        with NXstress(path, "r") as nx:
+            workspaces, peakss = nx.read()
+
+        # Assert -- one group per eta key, and NO bare DIFFRACTOGRAM invented
+        with h5py.File(path, "r") as f:
+            groups = sorted(k for k in f["entry/FIT"] if k.startswith("DIFFRACTOGRAM"))
+        assert groups == ["DIFFRACTOGRAM_eta_-5.0", "DIFFRACTOGRAM_eta_0.0", "DIFFRACTOGRAM_eta_5.0"]
+        assert sorted(str(k) for k in workspaces[0].reduction_masks) == sorted(keys)
+        assert peakss[0][0].mask == "eta_0.0"
+
+    def test_a_peak_naming_a_diffractogram_that_does_not_exist_is_refused(
+        self, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """The check that replaced the mask-namespace one, doing the real work."""
+        # Arrange
+        sub_runs = np.array([1, 2, 3])
+        ws = self._texture_workspace(minimal_HidraWorkspace, sub_runs, ("eta_0.0",))
+        peaks = minimal_PeakCollection(N_subrun=3, sub_runs=sub_runs)
+        peaks._mask = "eta_99.0"  # never reduced
+
+        # Act / Assert
+        with pytest.raises(ValueError, match=r"Reduced data for diffractogram 'eta_99.0'"):
+            with NXstress(tmp_path / "bad.nxs", "w") as nx:
+                nx.write([ws], [[peaks]])

@@ -897,3 +897,145 @@ Verification step 2 is therefore **runnable**, as
 non-NaN, equal to `vx`/`vy`/`vz` under the writer's own flattening, *not* equal to
 the stage logs, `local_name` provenance, full chain reachability on a real written
 file, and `decode(encode(name)) == name` over the fixture's real PV-log names.
+
+---
+
+## Follow-up 8 — 2026-10-08 (PR review: detector masks and diffractogram keys are two namespaces, not one)
+
+Raised in the human PR review of 04 + 04b + 04c (batch 5,
+[plans/PR_review/04-comments.md](../PR_review/04-comments.md)), brought forward
+into batch 4 because the D8 all-NaN-mask discussion ran into the same code.
+
+Four defects (D10–D13) with **one root cause**, which this document does not
+name anywhere: `masks/names` was being asked to hold two different kinds of
+string.
+
+| | what it is | has an array | produced by |
+|---|---|---|---|
+| **detector mask name** | `_DEFAULT_` and the entries of `HidraWorkspace._mask_dict` | yes | `set_detector_mask` |
+| **diffractogram key** | a key of `_diff_data_set` | **no** | `reduction_manager.py:613-615`, as `"{mask_id}_eta_{eta_cent}"` with either part dropped when absent |
+
+So the key space is `{None, "mask_a", "eta_-5.0", "mask_a_eta_-5.0"}`, and only
+the second of those four is also a mask name. `_Masks.mask_keys` returned the
+union of both sets.
+
+### F8.1 — `nxstress_mask_names` conflated them; there are now two functions
+
+`_definitions.py` gains `nxstress_diffractogram_keys(ws)` alongside
+`nxstress_mask_names(ws)`. They differ in two ways, both load-bearing:
+
+- `nxstress_mask_names` reads `_mask_dict` only; `nxstress_diffractogram_keys`
+  reads `_diff_data_set` only.
+- `nxstress_mask_names` injects `DEFAULT_TAG`, because the default detector mask
+  is **always** present. `nxstress_diffractogram_keys` does not, because a
+  reduction keyed `eta_0.0` is a reduction *that used the default mask* — the
+  bare `DEFAULT_TAG` key means "the default mask with no eta ROI", which such a
+  reduction never produced.
+
+The second point is the correction the reviewer supplied twice, and it is the
+whole of the fix: there is no reduction "with no mask", so `None` is not an
+absence to be filled in — it is the name of a specific reduction.
+
+Also new: `diffractogram_detector_mask(key, known_masks)`, which resolves a key
+to the detector mask it references by matching against the names actually
+present (longest first, so `mask_a` wins over a hypothetical `mask`), rather
+than by splitting on `_eta_`. Parsing would have been wrong in both directions —
+a mask legitimately named `rotated_eta_bar` parses as an eta ROI, and `__`-escaped
+identifiers (Follow-up 5) do not survive a naive split at all.
+
+### F8.2 — `masks/names` listed names with no array (D11); the `NXlink` is gone
+
+Measured on a texture-shaped workspace before the fix:
+
+```console
+  names          : ['_DEFAULT_', 'eta_0.0', 'eta_-5.0', 'eta_5.0']
+  detector/      : ['_DEFAULT_']
+      eta_0.0    -> NOWHERE
+```
+
+[_instrument.py](../../pyrs/utilities/NXstress/_instrument.py)'s `_Masks` had an
+`NXlink`-to-default branch intended to cover this. It never serialised. **Making
+it work would have been a worse defect than leaving it broken**: `masksFromNexus`
+would then hand back the default array under each composite key, and
+`set_masks_from_dict` would install `_mask_dict` entries the source workspace
+never had — D8 (all-NaN masks appearing on read) in a different property.
+Branch deleted; `mask_keys` returns the mask namespace only.
+
+### F8.3 — a texture workspace could not be written at all (D13)
+
+```console
+  eta-only reductions      -> ValueError: Reduced data required for mask '_DEFAULT_'
+  eta-keyed PeakCollection -> ValueError: Mask 'eta_0.0' required by `PeakCollection`
+```
+
+Both from F8.1's conflation: the first from forcing `DEFAULT_TAG` into the key
+space, the second from `validateWorkspaceAndPeaksData` checking
+`PeakCollection.mask` — a diffractogram key — against the *mask* namespace. That
+function's **second** check, against `_diff_data_set`, was correct all along, so
+the fix was to delete the first rather than add a third.
+
+This means §Tests' round-trip coverage never exercised a texture workspace. It
+does now.
+
+### F8.4 — the solid-angle heuristic misclassified in both directions (D10)
+
+`_Masks` guessed between detector and solid-angle masks from dtype and length
+parity:
+
+```console
+  detector mask, float, 16 px -> solid_angle=True    MISCLASSIFIED
+  solid-angle, 3 floats (odd) -> solid_angle=False   MISCLASSIFIED
+```
+
+Nothing in PyRS ever loads a solid-angle mask into a `HidraWorkspace`
+(`HidraProjectFile.read_mask_solid_angle` has exactly one caller, a test), so the
+branch has never run on real data. Per the reviewer's direction it now
+`raise NotImplementedError` rather than classify. The `solid_angle` group stays
+as the schema placeholder and `masksFromNexus` still reads it, so implementing
+the writer later needs no reader change. The dead `detector_mask=False` branch of
+`_generate_default_mask` — which returned a plausible-looking `[-180.0, 180.0]` —
+became a raise for the same reason.
+
+### F8.5 — a workspace with no masks wrote a file PyRS could not read (D12)
+
+```console
+  masks SET (default exists):        on disk (16,)  -> read back OK
+  masks ABSENT (default generated):  on disk (4, 4) -> READ FAILED
+                                     RuntimeError: Mask array with shape (4, 4) is not acceptable
+```
+
+`_generate_default_mask` returned `np.ones(detector_size)`, which is 2-D, while
+`set_detector_mask` refuses a 2-D array whose second axis is not 1. All 42
+existing round-trip tests pass `with_masks=True`, so the generated path was never
+round-tripped. Now returns 1-D `np.ones(nrows * ncols, dtype=np.int64)`, with the
+missing `with_masks=False` round trip added.
+
+### F8.6 — invariants added
+
+Per `CLAUDE.md`'s "invariants belong in tests, not prose", the namespace split is
+pinned rather than described:
+
+- `test_definitions.py::TestDiffractogramKeysAreNotMaskNames` — over a texture
+  workspace, `nxstress_diffractogram_keys` and `nxstress_mask_names` are
+  disjoint except where a key genuinely *is* a mask name, and `DEFAULT_TAG` is in
+  the second and not the first.
+- `test_instrument.py::TestMaskGroupHoldsOnlyRealMasks` — every name in
+  `masks/names` resolves to an array under `detector/` or `solid_angle/`. This is
+  the one that would have caught D11, and it iterates the written group rather
+  than restating a list, so a future mask kind is covered automatically.
+
+### F8.7 — an unrelated repair, and an open defect
+
+`probes/a5_transformations_chain.py` has been broken since 04b generalised
+`_Instrument.init_group` to take `list[HidraWorkspace]`; nothing runs the probes,
+so it went unnoticed. Repointed — it again confirms README Decisions row 26 (8 of
+8 transformations reachable). This is distinct from `a5_nxstress_roundtrip`, whose
+failure is documented and deliberate.
+
+**Open:** `_Masks.init_group(ws, masks=...)` reads `names = masks["names"].nxvalue`,
+which returns a bare `str` rather than a 1-element list when the group holds
+exactly one mask, so the following `names.append(...)` would raise
+`AttributeError`. Unreachable today (`_Instrument.init_group` never passes
+`masks=`) and left standing rather than fixed blind, since mask-append semantics
+are not specified anywhere. Recorded here so 04c's append work does not inherit it
+silently.
