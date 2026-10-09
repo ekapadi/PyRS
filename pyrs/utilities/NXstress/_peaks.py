@@ -66,6 +66,9 @@ REQUIRED PARAMETERS FOR NXstress:
 """
 
 
+# At module scope, not nested in `_Peaks`, because `@validate_call_` resolves
+# annotations while the class body is still executing, when a nested name does
+# not yet exist.
 class IndexedPeaks(NamedTuple):
     """A `PeakCollection` together with the input workspace it came from.
 
@@ -112,11 +115,6 @@ class _Peaks:
     # ALL methods must be `classmethod`.  ##
     ########################################
 
-    # Re-exported so callers can reach it as `_Peaks.IndexedPeaks`; it lives at
-    # module scope because `@validate_call_` resolves annotations while the class
-    # body is still executing, when a nested name does not yet exist.
-    IndexedPeaks = IndexedPeaks
-
     class PeakIndex(NamedTuple):
         # Corresponds to the `n_Peaks` index in the `NXstress` schema.
         # Each `PeakCollection` instance provides
@@ -137,7 +135,7 @@ class _Peaks:
             return (phase_name, h, k, l, mask)
 
     @classmethod
-    def indexed(cls, peakss: list[PeakCollection], logs: SampleLogs = None) -> list[IndexedPeaks]:
+    def indexed(cls, peakss: list[PeakCollection], logs: SampleLogs | None = None) -> list[IndexedPeaks]:
         """Wrap a single workspace's peak collections with an empty discriminator key."""
         return [IndexedPeaks((), peaks, logs) for peaks in peakss]
 
@@ -608,7 +606,7 @@ class _Peaks:
 
         Parameters
         ----------
-        indexed : list[_Peaks.IndexedPeaks]
+        indexed : list[IndexedPeaks]
             Peak collections to validate, each tagged with the discriminator
             values of the input workspace it came from.
 
@@ -647,7 +645,7 @@ class _Peaks:
 
         Returns
         -------
-        list[_Peaks.IndexedPeaks]
+        list[IndexedPeaks]
             Reconstructed peak collections, each tagged with the discriminator
             values of the input workspace it came from. Group by
             `.discriminators` to recover the per-workspace lists; that grouping

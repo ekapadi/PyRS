@@ -1105,3 +1105,74 @@ its four tests force the mismatch *past* the setter, the way the other paths do.
 
 `pixi run test-unit` **431 passed** · `test-integration` 104 passed, 28 skipped,
 2 xfailed · `test-gui` 16 passed · ruff clean · mypy at its 11-error baseline.
+
+---
+
+## Follow-up 6 — 2026-10-09 (PR review, batch 3 reopened: `IndexedPeaks` was invisible to `mypy`)
+
+Reopens batch 3. Found by questioning a phrase in the batch 4/5 verification
+report — "mypy at the 11-error baseline" — which measured against the state at
+the *start of the review* rather than against `next`. Since the review's subject
+is 04 + 04b + 04c, those are different frames only if the errors are inherited,
+and these are not:
+
+```console
+next   : Success: no issues found in 8 source files
+HEAD   : Found 11 errors in 1 file (checked 10 source files)
+```
+
+`git blame` attributes all 11, in [_peaks.py](../../pyrs/utilities/NXstress/_peaks.py),
+to `7799a6738` — this subspec's implementation commit. **The word "baseline" was
+doing the hiding**, not the measurement: the number was right and the referent
+was wrong. Recorded here because the same mistake is available on any later
+subspec — a type checker, a linter and a test count are all baselined against
+the merge target, never against the branch.
+
+### F6.1 — one line made ten of the eleven
+
+```python
+class _Peaks:
+    # Re-exported so callers can reach it as `_Peaks.IndexedPeaks`; it lives at
+    # module scope because `@validate_call_` resolves annotations while the class
+    # body is still executing, when a nested name does not yet exist.
+    IndexedPeaks = IndexedPeaks
+```
+
+At runtime this is a harmless alias. To `mypy` it binds a class **variable** that
+shadows the module-level `NamedTuple` for the remainder of the class body, so
+every subsequent annotation named a variable rather than a type:
+
+- `Variable "…_Peaks.IndexedPeaks" is not valid as a type` × 6 (`:140, :265, :307, :334, :600, :632`)
+- and the knock-on `IndexedPeaks? has no attribute "discriminators" / "collection" / "logs"` × 4 (`:299, :339, :375, :399`)
+
+So `IndexedPeaks` — the type the whole multi-workspace split is expressed in, and
+the one Follow-up 2 F2.3 introduced to carry discriminators alongside a
+`PeakCollection` — was the one type in this subspec that `mypy` could not check.
+
+Note what the comment actually justifies. The rationale is true and worth
+keeping, but it explains why the class is defined at **module scope**; it does
+not justify the alias, and the alias is the shadowing. The comment now sits on
+the definition, where it applies, and the re-export is gone. Nothing consumed it:
+`_Peaks.IndexedPeaks` appeared in exactly two places repo-wide, both docstrings
+in this same file, now naming the class directly.
+
+### F6.2 — the eleventh: an implicit `Optional` contradicting the field it fills
+
+`_Peaks.indexed(cls, peakss, logs: SampleLogs = None)` declares a non-optional
+parameter with a `None` default, while the field it populates is declared
+`logs: SampleLogs | None = None` — and most call sites omit the argument
+entirely. Now `SampleLogs | None`, matching the field.
+
+### Verification
+
+`mypy` over `pyrs/utilities/NXstress`, `restorable_property.py` and
+`pyrs/core/workspaces.py`: **no issues in 11 source files** — the first time this
+branch has matched `next`'s clean result. 443 unit / 104 integration / 16 GUI
+pass, `ruff check` and `ruff format --check` clean, and all probes run except the
+deliberately-retired `a5_nxstress_roundtrip`.
+
+**Not adopted:** adding `mypy` to `.pre-commit-config.yaml`, which would have
+prevented this. It is declared in `pyproject.toml`'s dependencies but has no hook
+and no pixi task, so nothing ran it; enabling it would surface whatever the rest
+of `pyrs/` carries, which is out of scope for a PR review. Left as a deliberate
+decision rather than an oversight.

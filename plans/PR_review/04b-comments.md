@@ -369,3 +369,55 @@ keyspace, and three of its edits land in this file:
   `PeakCollection.mask`; its `_diff_data_set` check was the correct one all along.
 
 Noted here rather than re-argued: the defect is 04's, the file is 04b's.
+
+---
+
+## Batch 3 reopened — `pyrs/utilities/NXstress/_peaks.py` (static typing)
+
+Raised after batches 4 and 5 were committed (`602ec3b5`), by the reviewer
+challenging the phrase "mypy at the 11-error baseline" in that batch's
+verification report.
+
+### D14 — `mypy` was measured against the wrong referent, and the errors are this PR's
+
+The 11 errors were real and were being reported each batch as a stable
+*baseline*. They are not inherited:
+
+```console
+next   : Success: no issues found in 8 source files
+HEAD   : Found 11 errors in 1 file (checked 10 source files)
+```
+
+All 11 blame to `7799a6738` — subspec 04b, one of the three subspecs under
+review. **The measurement was correct and the word was wrong**: "baseline" means
+the merge target, and I had taken it to mean the state at review start, which for
+this review is the thing being reviewed. Nothing about the numbers would have
+revealed it; only re-anchoring them did.
+
+### The defect itself
+
+Ten of the eleven come from `IndexedPeaks = IndexedPeaks` inside the `_Peaks`
+class body. Harmless at runtime, but it binds a class variable that shadows the
+module-level `NamedTuple` for the rest of the body, so every later
+`list[IndexedPeaks]` annotation named a variable, not a type — meaning the one
+type this subspec introduced was also the one type `mypy` could not check.
+
+The accompanying comment justifies the *module-scope definition* (`@validate_call_`
+resolves annotations while the class body is still executing), which is correct
+and now sits on the definition. It does not justify the alias. Nothing consumed
+the alias: `_Peaks.IndexedPeaks` occurred twice repo-wide, both docstrings in the
+same file.
+
+The eleventh: `indexed(..., logs: SampleLogs = None)` against a field declared
+`SampleLogs | None`.
+
+Verified before and after by experiment, not inference — commenting out the one
+line dropped `mypy` from 11 errors to 1 with 236 NXstress unit tests still
+passing, which is what established that the alias had no consumer.
+
+### `mypy` is still not enforced
+
+Per the reviewer's direction it was **not** added to `.pre-commit-config.yaml`.
+It is in `pyproject.toml`'s dependencies with no hook and no pixi task, so
+nothing runs it; turning it on would surface the rest of `pyrs/`, which this
+review is not scoped to. Recorded so the absence reads as a decision.
