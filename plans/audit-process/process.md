@@ -546,6 +546,27 @@ semantic half of A1 and A2, and all of A4 and A5, which are probes not checkers.
    or `stays a probe` -- naming **both** the PR that makes promotion possible and
    the PR that owns the invariant. Do not write the promoted test during the audit:
    **an audit flags, the implementing PR writes.**
+9. **A probe that is expected to fail says so in the file, not only in the index.**
+   An audit re-runs the probe directory, so `retire to record` creates a probe that
+   *must* fail -- and a traceback is indistinguishable from a regression unless the
+   file itself declares it. Such a probe carries three things:
+
+   - `AUDIT_STATUS = "retired"` at module level, after the imports. Absent means
+     live. This is the machine-readable half: a sweep skips, or expects the failure
+     of, any probe that sets it, without parsing prose.
+   - A `RETIRED` block opening the module docstring: why, **the exact failure to
+     expect**, and the sentence *any other failure is a real finding*. Without the
+     exact failure, the annotation excuses every future breakage too.
+   - The per-claim successor map required by item 6, in **both** the file and the
+     index row -- naming a successor *probe* where there is one, and saying
+     **none** where there is not. "Covered by tests" is not a successor: a claim
+     that leaves probe coverage is a coverage change, and the A5 matrix must move
+     with it.
+
+   A retired probe's claims are **not** edited to match current behaviour -- that
+   is item 6, and a log preserves what was believed. But a claim that has since
+   become *false* is marked as false at the claim, or the file reads as a current
+   description of the system to anyone who opens it.
 
 ### 7.6 What these tools cannot do
 

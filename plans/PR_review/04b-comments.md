@@ -421,3 +421,86 @@ Per the reviewer's direction it was **not** added to `.pre-commit-config.yaml`.
 It is in `pyproject.toml`'s dependencies with no hook and no pixi task, so
 nothing runs it; turning it on would surface the rest of `pyrs/`, which this
 review is not scoped to. Recorded so the absence reads as a decision.
+
+---
+
+## Batch 27 brought forward — `probes/a5_nxstress_roundtrip.py`, `probes/README.md`
+
+Raised when the reviewer challenged a phrase I had been repeating in every
+batch's verification line — "all probes run except the deliberately-retired
+`a5_nxstress_roundtrip`" — and then corrected a claim I made while explaining it.
+
+### What I got wrong
+
+I said the probes "are run by nothing". **They are run by the full audit** —
+`process.md` §7.5 makes them audit evidence, re-run on each pass. What is true is
+narrower and was the real point: nothing runs them *between* audits, which is why
+`a5_transformations_chain.py` was broken from 04b until batch 5.
+
+That correction is what makes the rest a defect rather than tidiness. If an audit
+re-runs the directory, a probe that is *expected* to fail must say so **in the
+file**, because a traceback is indistinguishable from a regression.
+
+### D15 — the retirement was recorded in one place, and that place is not the file
+
+The disposition lived only in `probes/README.md`'s table. The probe itself opened
+as a live A5 probe and closed with `Run: pixi run python …`. Two further things in
+it had gone stale:
+
+- **Claim 4** — "`NXstress.py:151-152` raise on any operation that would extend an
+  existing `NXentry`" — is stated as a claim under test, and 04c **inverted** it
+  (Decisions row 33). A reader takes it as current behaviour.
+- The *"Deliberately NOT probed"* paragraph said 04b's round trip, discriminator
+  resolution and 04c's append path "cannot be probed: none of that code exists
+  yet… uncovered until 04b and 04c land." All three have landed and all three are
+  now probed.
+
+And the one statement that still executes, `inspect.signature(NXstress.write)`,
+now prints the **post**-04b signature under a claim heading asserting the pre-04b
+one. So the file's live measurement contradicts the claim it is filed under.
+
+### D16 — the successor was named as a test, and only for one of five claims
+
+`process.md` §7.5 item 6 is *supersede, do not delete* — "keep the probe and say
+so in **both files**." Neither file did. The index named `test_multi_workspace.py`,
+which is a test, not a probe, and covers one claim. The actual map:
+
+| claim | successor |
+|---|---|
+| 1 — I/O types `(HidraWorkspace, list[PeakCollection])` | `a5_discriminator_resolution.py`, `a5_subruns_nonmonotonic.py` |
+| 2 — read-back completeness, raw counts only with `input_data` | **none** |
+| 3 — multiple `NXentry` per file | `a5_append_preconditions.py` |
+| 4 — mode `"a"` cannot extend an entry | `a5_append_preconditions.py` — *and the claim is now false* |
+| 5 — pre-04b `write` signature | nothing; it is history, which is the part that justifies keeping the file |
+
+**Claim 2 is the one that matters beyond bookkeeping.** Retiring this probe
+dropped read-back completeness out of probe coverage entirely — `read()` is now
+called by exactly one other probe (`a5_append_preconditions.py`), and only for the
+append round trip. The matrix is not over-claiming: `README.md`'s A5 cell is
+already `~`. But the *reason* it is `~` now includes something it did not before,
+and that belongs in `review/findings.md` §3 — **left for batch 28**, which owns
+that file.
+
+### Agreed fixes (three, all applied)
+
+1. **The probe is self-describing.** A `RETIRED` block opens the docstring: why,
+   the exact failure to expect (`ValidationError` at `nxs.write(ws, peaks)`), the
+   sentence *any other failure is a real finding*, and the successor map. Claim 4
+   is marked **NO LONGER TRUE** at the claim; the stale "cannot be probed"
+   paragraph is kept with a note that all three have since landed. No claim is
+   rewritten — §7.5 item 6, a log preserves what was believed.
+2. **`AUDIT_STATUS = "retired"`**, module level, so a sweep honours the retirement
+   without parsing prose. Absent means live. It sits below the imports because
+   `plans/` is linted and a statement above them trips ruff `E402`.
+3. **The index row** gains the per-claim successor map and the expected failure,
+   and its Verdict now says which two claims have since become false.
+
+Plus a new convention, since this is not specific to one probe:
+`process.md` **§7.5 item 9** states what a retired probe must carry, and
+`probes/README.md` gains a *"Running them all, during an audit"* section with a
+sweep that keys on the marker rather than the filename — so a second retirement
+is not hard-coded into whatever ran the last one.
+
+### Verification
+
+The documented sweep, run as written: **19 OK, 1 SKIPPED (retired), 0 FAIL.**

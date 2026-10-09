@@ -1176,3 +1176,74 @@ prevented this. It is declared in `pyproject.toml`'s dependencies but has no hoo
 and no pixi task, so nothing ran it; enabling it would surface whatever the rest
 of `pyrs/` carries, which is out of scope for a PR review. Left as a deliberate
 decision rather than an oversight.
+
+---
+
+## Follow-up 7 — 2026-10-09 (PR review: the probe this subspec retired was retired in one file only)
+
+04b retired [`probes/a5_nxstress_roundtrip.py`](probes/a5_nxstress_roundtrip.py)
+"to record" — it pinned the pre-04b single-`HidraWorkspace` `write` signature,
+which is precisely what this subspec changed, so re-pointing it would erase the
+baseline it exists to preserve. That decision stands. Its *execution* was
+incomplete in a way that matters now that 04c has also landed.
+
+### F7.1 — an expected failure must be declared in the file, not only in the index
+
+The disposition was recorded only in `probes/README.md`'s table. The probe opened
+as a live A5 probe and ended with `Run: pixi run python …`. Since an audit re-runs
+the probe directory ([`process.md` §7.5](../audit-process/process.md)), that makes
+its traceback indistinguishable from a regression — and the directory is run by
+nothing *between* audits, which is how `a5_transformations_chain.py` stayed broken
+from this subspec until the 04 PR review.
+
+The file now carries a `RETIRED` block naming the exact failure to expect — a
+pydantic `ValidationError` at `nxs.write(ws, peaks)`, the bare workspace against
+this subspec's list signature — and the sentence **any other failure is a real
+finding**, without which the annotation would excuse every future breakage too.
+It also sets `AUDIT_STATUS = "retired"` at module level so a sweep can honour the
+retirement without parsing prose.
+
+Generalised, since this will recur: **`process.md` §7.5 gains item 9**, stating
+what a retired probe must carry, and `probes/README.md` gains a sweep that keys on
+the marker rather than the filename.
+
+### F7.2 — two of its claims have since become false, and one left probe coverage
+
+A retired probe's claims are not rewritten — §7.5 item 6, a log preserves what was
+believed. But a claim that has become *false* must be marked as false at the claim,
+or the file reads as a current description of the system:
+
+- **Claim 4** asserted that `NXstress.py` raises on any operation extending an
+  existing `NXentry` and that "each write must currently be a fresh entry". 04c
+  inverted this (Decisions row 33). Marked **NO LONGER TRUE** in place.
+- The *"Deliberately NOT probed"* paragraph said 04b's round trip, discriminator
+  resolution and 04c's append path "cannot be probed: none of that code exists
+  yet". All three have landed and all three are now probed.
+- The one statement that still executes, `inspect.signature(NXstress.write)`,
+  prints the **post**-04b signature under the claim heading asserting the pre-04b
+  one — so the live measurement contradicts its own heading. The record of the old
+  signature is the prose, not the measurement, and the file now says so.
+
+§7.5 item 6 also requires the successor to be named in **both** files. The index
+named `test_multi_workspace.py` — a *test*, and for one claim of five. The
+per-claim map is now in both:
+
+| claim | successor |
+|---|---|
+| 1 — I/O types | `a5_discriminator_resolution.py`, `a5_subruns_nonmonotonic.py` |
+| 2 — read-back completeness, raw counts only with `input_data` | **none** |
+| 3 — multiple `NXentry` per file | `a5_append_preconditions.py` |
+| 4 — mode `"a"` cannot extend an entry | `a5_append_preconditions.py` |
+| 5 — pre-04b `write` signature | nothing; history, and the reason the file is kept |
+
+**Claim 2 is a real coverage change, not bookkeeping.** Read-back completeness is
+no longer probed at all: `read()` is called by exactly one other probe, and only
+for the append round trip. `README.md`'s A5 cell is already `~`, so the matrix is
+not over-claiming — but the composition of that `~` has changed, which belongs in
+`review/findings.md` §3 and is left for the batch that owns that file. "Covered by
+tests" is not a successor probe, and item 9 now says so explicitly.
+
+### Verification
+
+The sweep documented in `probes/README.md`, run as written: **19 OK, 1 SKIPPED
+(retired), 0 FAIL.**
