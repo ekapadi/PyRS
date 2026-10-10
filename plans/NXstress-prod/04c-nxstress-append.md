@@ -1035,3 +1035,273 @@ axis grows on an append; the trailing axes are fixed when the entry is written."
 axes. That is the one legitimate both-axis resize in the package, and it is why
 pinning was rejected here — if 09 instead writes those fields at their final size, the
 objection disappears and pinning becomes cheap.
+
+---
+
+## Follow-up 5 — 2026-10-09 (PR review, batch 6: the append pre-flight asked the wrong question)
+
+Batch 6 of the PR review covered `NXstress.py`
+([plans/PR_review/04c-comments.md](../PR_review/04c-comments.md)). Two defects, and
+the second one invalidates a claim made in Follow-up 2.
+
+### F5.1 — the diffractogram-key check still used the mask namespace
+
+`_rejectMaskMismatch` was the last call site in the package passing
+`_diff_data_set` keys to `nxstress_mask_names`, which injects `DEFAULT_TAG`
+because every reduction uses the default *detector mask*. The on-disk side it
+compares against is written by `_Fit.init_group`, which after 04's Follow-up 8
+does not inject it. An eta-only workspace therefore presented one key more than
+the entry could possibly hold, and **every texture append was refused** — through
+`self._reject`, so the instance was invalidated too.
+
+Renamed `_rejectDiffractogramKeyMismatch` and switched to
+`nxstress_diffractogram_keys`. The rename is part of the fix: the defect was a
+name under which the wrong function looked right.
+
+Covered by `test_append.py::TestTextureEntryAppends`. Note what let this through:
+all ~40 existing tests in that module reduce under `{None: ...}`, the one shape
+where the two namespaces agree.
+
+### F5.2 — `_perScanPointDatasets` rejected legal appends; **Follow-up 2's framing of it was wrong**
+
+Follow-up 2 introduced the pre-flight sweep and its docstring argued that
+identifying scan-point datasets by array length is safe because over-matching
+"can only demand that something be resizable which need not be". That is the
+defect, not a mitigation: the swept set feeds a resizability **requirement**, so a
+false match *rejects a legal append*.
+
+Raised by the reviewer from the specification alone, then measured:
+
+```console
+n_scan = 3;  43 dataset(s) swept in
+  FIX  entry/instrument/masks/names   shape=(3,) maxshape=(3,)
+APPEND: RuntimeError: ... 1 dataset(s) in this entry were written at a fixed size
+        and cannot be extended: ['entry/instrument/masks/names'].
+```
+
+Three detector masks and three scan points. `masks/names` is entry-wide, is never
+grown, and `_Instrument.validateAppend` *requires* it to stay constant — so the
+sweep demanded growability of the one thing the design forbids growing, and the
+message blamed a PyRS predating `growable`, which is both false and unactionable.
+
+It also **under**-matched. The peak index is one row per (compound key, scan
+point), so it equals `n_scan` only while each workspace fits exactly one peak. Fit
+a second phase and `peaks/*`, `peak_parameters/*` and `background_parameters/*`
+left the pre-flight entirely — restoring precisely the mid-mutation refusal
+Follow-up 3 F3.1 had hoisted out of `tail_append`.
+
+**The hazard was already written down, in the wrong place.**
+`TestWriterEmitsResizableDatasets` picks `N_SCAN = 7` under a comment explaining
+that a smaller value risks colliding with an entry-wide array length. The
+collision was understood well enough to be designed around in a test fixture and
+was never reported as a defect in the code it was testing.
+
+**Resolution.** Each grouping module gains `appendableDatasets(group)`, declaring
+the datasets *it* writes row-aligned, and `NXstress._appendableDatasets` composes
+them. This is exact rather than heuristic **because the declarer owns the group's
+layout**: inside a group NXstress writes, a field is either row-aligned — and
+therefore `growable` — or an entry-wide scalar, so `_definitions.row_aligned_fields`
+can enumerate a group without a maintained name list. `_Instrument` is the
+exception and enumerates explicitly, because its non-scalar fields are mostly
+entry-wide arrays — which is how this started.
+
+Declared: **49** datasets, against 43 swept of which one was false and the
+peak-index family was present only by coincidence.
+
+**What the sweep gave for free, and where it went.** A field added to the writer
+later was covered without editing the check. That is now stated directly instead
+of emerging from a heuristic:
+`TestAppendableDatasetsAreDeclaredByTheirOwner::test_every_growable_dataset_has_exactly_one_owner`
+asserts over a written entry that every dataset carrying `maxshape[0] is None` is
+declared by exactly one module, and that every declared dataset is resizable on
+disk. That is a stronger guarantee than the sweep's, and it fails at commit time
+rather than at the next append.
+
+### F5.3 — `@validate_call_` restored on `_validateWorkspaceAndPeaksData`
+
+Lost during 04b's signature rewrite, while `_init` and `init_group` kept theirs.
+Re-added after measuring that the suite still passes with it, rather than assuming
+it had been dropped for a reason — 04c's Follow-up 3 F3.4 records a genuine
+`@validate_call_` incompatibility, so the question was real.
+
+### Withdrawn during this batch
+
+A concern that nothing checks the per-scan-point `start_time`/`end_time` arrays
+against the scan-point count: `SampleLogs.__setitem__` already refuses a log whose
+length differs from the subruns, so the counts cannot diverge. Recorded because an
+unchecked worry and a checked one look identical afterwards.
+
+### F5.4 — string sample logs: `bytes` on disk, `str` in memory
+
+**This change reaches outside the plan series. It is flagged for explicit review
+and is called out in the commit message.**
+
+`_entryTimes` decoded every time value unconditionally, inside a `try` that
+catches only `ValueError` — the clause that substitutes `NO_LOG` for an
+unparseable timestamp — so a `str`-valued log raised `AttributeError` past the
+fallback. On the append path `_appendEntryTimes` is the **first** mutation step,
+so the instance was invalidated for a type mismatch.
+
+The underlying cause is not NXstress's. Nothing in PyRS normalised a string log
+at any boundary, so its dtype was an accident of provenance: `bytes` from
+`HidraProjectFile.read_sample_logs` and from NXstress's own reader, `str` from a
+workspace built in memory. Six consumers downstream, four tolerant and two not.
+
+Both candidate directions were **built and measured** against all three tiers
+before choosing, rather than argued:
+
+| | `bytes` in memory | **`str` in memory** |
+|---|---|---|
+| unit | 2 failed | passed |
+| integration | 1 failed | passed |
+| what failed | the CSV exporter wrote `# string1 = b'a constant string'` into a user-facing header | 83 failures, all the *same* defect: the unconditional `.decode()`, in two places |
+
+Writers that must encode are few and already do it; readers that must decode are
+many and mostly untested. `str` also ratifies the two deliberate normalisations
+already in the tree (`_discriminator._as_text`, `HidraWorkspace.direction`)
+instead of reversing them.
+
+Enforced by **one** conversion rather than per-site coercions, at the
+stakeholder's direction: *"those sections need to go through the same conversion
+mechanism — it must be centralised."* `to_text` and `to_text_array` live in
+`pyrs/utilities/convertdatatypes.py`, beside the existing `to_int`/`to_float`,
+and are called
+
+- at the store boundary, `SampleLogs.__setitem__`. **Both** file readers
+  therefore normalise without either one decoding for itself — which answers the
+  stakeholder's original question ("what happens if we adjust both readers?")
+  better than adjusting them would have, since `HidraProjectFile` needed no
+  change and NXstress's reader needed the *opposite* of a decode;
+- at the HDF5 boundary, `HidraProjectFile.add_sample_log`. Not optional: h5py has
+  no conversion path for numpy's `<U` dtype, and 18 integration tests failed on
+  exactly that until it was added;
+- at the **nine** sites across five modules that previously hand-rolled
+  `isinstance(v, bytes)`, which had drifted into four different behaviours —
+  some handling `numpy.bytes_` and some not, some coercing the non-bytes branch
+  to `str` and some returning it untouched. `_definitions.as_text`, added earlier
+  in this batch, is gone; `_discriminator._as_text` delegates.
+
+### F5.5 — two defects in F5.4, found after it had passed every tier
+
+Both were caught by the stakeholder reading the claim rather than the test
+results, and both are recorded because the *shape* of each mistake recurs.
+
+**The dtype that matters is `object`, not `|S`.** The first version tested
+`value.dtype.kind == "S"`, which catches only **fixed-width** byte arrays. HDF5
+does not produce those: h5py and `nexusformat` both yield an **object** array of
+Python `bytes` for the variable-length UTF-8 dtype, whose kind is `"O"`. So the
+check passed 465 unit, 104 integration and 16 GUI tests while doing nothing at
+all for `start_time`, `end_time`, `Filename` or any discriminator column:
+
+```console
+AFTER the first "fix", a round-tripped workspace:
+    start_time    array-dtype=object   first=bytes    b'2024-01-15T10:00:00'
+    direction     array-dtype=object   first=bytes    b'11'
+    SampleName    array-dtype=<U5      first=str_     'steel'
+```
+
+Only `SampleName` and `chemical_formula` converted, and only because
+`_Sample.sampleLogsFromNexus` broadcasts them through `np.array([b"steel"] * n)`,
+which *is* `|S`. **The tiers were green for the wrong reason** — they pass because
+the intolerant consumers had been made tolerant, not because logs had become
+text. And the unit test passed because its fixture was `np.array([b"11", ...])`:
+it tested the dtype the literal syntax gives, not the one the reader yields.
+
+**Encode to variable-length, never to fixed-width.** The write boundary first
+used `numpy.char.encode`, producing `|S`, whose width is fixed by the longest
+value present at creation — the silent-truncation hazard this plan already
+documented for NXstress. Since `HidraProjectFile` re-saves a workspace it
+previously read, that would also have converted an existing file's
+variable-length columns to fixed-width on every save. It now targets
+`h5py.string_dtype(encoding="utf-8")`, the same dtype `_Sample._writable` uses.
+
+Both are pinned: `test_convertdatatypes.py::TestToTextArray` constructs the
+object array explicitly and says why, `test_sample_logs.py` (dataobjects) stores
+one, and `test_sample_logs.py` (projectfile) asserts the stored dtype is
+variable-length and that a longer value written later survives.
+
+### F5.6 — the conversion raises on misuse rather than passing it through
+
+`to_text_array` first returned a numeric array unchanged, on the reasoning that
+`SampleLogs` calls it for *every* log and most logs are numbers.
+
+**Stakeholder:** *"Why would `to_text_array` leave numeric types untouched? In
+that case it's obviously being abused and should raise an exception -- that would
+be a developer 'usage' error!"*
+
+Correct, and the pass-through is the same mistake in miniature as the one F5.5
+records: it makes a misdirected call indistinguishable from a working one, and
+the symptom surfaces later, somewhere else, as a `bytes` value in a consumer that
+did not expect one. So the dispatch moves to the caller, where the ambiguity
+actually lives, and the conversion is strict:
+
+- `is_text_array(values)` is public and is the single definition of "array of
+  strings", including the element-wise inspection an `object` array requires.
+- `to_text_array(values)` raises `TypeError` naming the dtype that arrived, and
+  points at the predicate.
+- The two call sites that may legitimately hold either kind guard with it:
+  `SampleLogs.__setitem__`, whose logs are mostly numeric, and
+  `_Peaks._decoded`, whose discriminator column is whatever the configured sample
+  log holds -- so a numeric discriminator passes through untouched by intent
+  rather than by accident.
+
+`TestIsTextArray::test_it_agrees_with_what_to_text_array_accepts` pins the pair
+together: a True must mean the conversion succeeds, a False must mean it raises.
+
+**One case is accepted, not refused: an empty `object` array.**
+
+**Stakeholder:** *"Behavior on an empty array should not necessarily raise --
+that's going to cause problems... I can imagine a sample-log that will be an
+array of bytes (on disk), but is presently empty -- it is still legitimate during
+conversion, and during I/O."*
+
+Measured, and the ambiguity turns out not to exist on the path that matters: an
+empty HDF5 dataset keeps its own dtype on read, and **only** a variable-length
+string comes back as `object`.
+
+```console
+empty_fixed_str    h5 |S4     -> numpy |S4
+empty_float        h5 float64 -> numpy float64
+empty_int          h5 int32   -> numpy int32
+empty_vlen_str     h5 object  -> numpy object
+```
+
+So an empty object array is unambiguously an empty string column. It has no
+values to misclassify, so only its dtype is at stake, and `<U` is both what the
+invariant wants and what the data was. An empty array whose dtype still says
+*numbers* stays an error: `float64` is not ambiguous merely for being empty.
+
+This is already reachable, and both the old and the interim behaviour were wrong.
+Writing the documented "no peak fits" shape (`write([ws], [[]])`) leaves
+`peaks/phase_name` and `peaks/mask` as empty `object` columns:
+
+```console
+phase_name  read=object -> _decoded=<U1 (len 0)      # now
+                        -> float64                   # the hand-rolled version
+                        -> object                    # the interim predicate
+```
+
+The hand-rolled conversion returned `np.array([])`, which is **`float64`** — an
+empty array of *numbers* standing in for a string column. `to_text_array` now
+passes `dtype=np.str_` explicitly for exactly that reason. None of it was visible
+because `peakCollectionRanges` does `if len(phase_name) == 0: return []` two lines
+later.
+
+Promoted to [docs/ground_truths.md](../../docs/ground_truths.md) and Decisions
+row 40, since it is a property of PyRS rather than of this document. Pinned by
+`test_sample_logs.py::TestStringLogsAreTextInMemory` (dataobjects) and
+`::TestStringLogsAreBytesOnDisk` (projectfile), which cross-reference each other
+so neither half reads as redundant.
+
+**Incidental, not fixed:** `summary_generator.py:169` calls `value.decode()` and
+discards the result, which is why bytes reached that CSV header at all.
+Unreachable under the new policy; left for its own change.
+
+**Also found:** nothing runs the doctests. There is no `--doctest-modules` in
+`addopts` and no collector in `tests/`, so the examples in
+`restorable_property.py` and `as_text` are documentation, not tests.
+
+### Verification
+
+**494 unit** (was 443) / 104 integration / 16 GUI; `ruff` and `mypy` clean; probe
+sweep 19 OK, 1 SKIPPED (retired), 0 FAIL.

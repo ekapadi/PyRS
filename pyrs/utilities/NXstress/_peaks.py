@@ -18,7 +18,9 @@ from pyrs.dataobjects.constants import HidraConstants
 from pyrs.dataobjects.sample_logs import SampleLogs
 from pyrs.utilities.pydantic_transition import validate_call_
 
-from ._definitions import CHUNK_SHAPE, FIELD_DTYPE
+from pyrs.utilities.convertdatatypes import is_text_array, to_text, to_text_array
+
+from ._definitions import CHUNK_SHAPE, FIELD_DTYPE, GROUP_NAME, row_aligned_fields
 from . import _discriminator
 from ._discriminator import DiscriminatorKey
 
@@ -430,10 +432,15 @@ class _Peaks:
 
     @classmethod
     def _decoded(cls, values: np.ndarray) -> np.ndarray:
-        """HDF5 string columns come back as bytes; index keys must be `str`."""
-        if values.dtype.kind in ("S", "O"):
-            return np.array([v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in values])
-        return values
+        """HDF5 string columns come back as bytes; index keys must be `str`.
+
+        Guarded rather than unconditional: a discriminator column is whatever the
+        configured sample log holds, so it may legitimately be numeric, and
+        `to_text_array` raises on a non-string array instead of passing it
+        through. `phase_name` and `mask` are always text and would be safe
+        either way.
+        """
+        return to_text_array(values) if is_text_array(values) else values
 
     @classmethod
     def peakCollectionRanges(
@@ -626,6 +633,25 @@ class _Peaks:
             seen_keys[key] = item
 
     @classmethod
+    def appendableDatasets(cls, peaks) -> dict:
+        """Every dataset in the peak index that an append grows.
+
+        All of them: the index columns, the per-row fit results, the sample
+        positions and the discriminator columns are one row per peak record, and
+        an append adds rows to every one. `center_type` is the group's one
+        entry-wide scalar and drops out for being scalar. The discriminator
+        columns are *configured*, so enumerating the group rather than listing
+        names is what keeps them covered.
+
+        Args:
+            peaks: The target entry's existing `peaks` group.
+
+        Returns:
+            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+        """
+        return row_aligned_fields(peaks, GROUP_NAME.PEAKS)
+
+    @classmethod
     @validate_call_
     def peakCollectionsFromNexus(cls, peaks, fit, discriminator_names: tuple[str, ...] = ()) -> list[IndexedPeaks]:
         """Read PeakCollections from NXreflections and NXprocess groups.
@@ -666,9 +692,7 @@ class _Peaks:
         # is nothing to reconstruct. The reader previously didn't recognize its
         # own writer's sentinel and crashed trying to parse it as a real
         # PeakShape/BackgroundFunction name.
-        pp_title = pp["title"].nxdata
-        if isinstance(pp_title, bytes):
-            pp_title = pp_title.decode()
+        pp_title = to_text(pp["title"].nxdata)
         if pp_title == UNDEFINED_PEAK_TAG:
             return []
 

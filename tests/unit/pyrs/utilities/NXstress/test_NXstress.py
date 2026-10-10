@@ -16,6 +16,7 @@ from nexusformat.nexus import (
     NXsource,
 )
 from pathlib import Path
+import numpy as np
 
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
@@ -406,6 +407,34 @@ class TestNXstress:
         assert isinstance(entry, NXentry)
         assert "start_time" in entry
         assert "end_time" in entry
+
+    def test_NXentry_init_accepts_str_timestamps(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    ):
+        """A `str`-valued time log must not crash the writer.
+
+        `_entryTimes` decoded every value unconditionally, inside a `try` that
+        catches only `ValueError` -- the clause that substitutes `NO_LOG` for an
+        unparseable timestamp. A `str` log therefore raised `AttributeError`
+        straight past it, and on the append path `_appendEntryTimes` is the first
+        mutation step, so the instance was invalidated for what was only a type
+        mismatch. In-memory logs are now normalized to `str`, which makes this the
+        ordinary case rather than the exotic one.
+        """
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+        stamps = [f"2024-01-15T10:{n:02d}:00" for n in range(len(ws._sample_logs.subruns))]
+        ws._sample_logs["start_time"] = np.array(stamps)
+        ws._sample_logs["end_time"] = np.array(stamps)
+
+        # Act
+        start_times, end_times = NXstress._entryTimes([ws])
+
+        # Assert -- parsed, not substituted with the `NO_LOG` sentinel
+        assert len(start_times) == len(stamps)
+        assert all(t.startswith("2024-01-15T10:") for t in start_times)
+        assert start_times == end_times
 
     def test_validateWorkspaceAndPeaksData_valid(
         self,

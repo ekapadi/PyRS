@@ -5,7 +5,7 @@ from mantid.kernel import Logger
 from pyrs.dataobjects import HidraConstants, SampleLogs  # type: ignore
 from pyrs.projectfile import HidraProjectFile  # type: ignore
 from pyrs.utilities import checkdatatypes
-from pyrs.utilities.convertdatatypes import to_int
+from pyrs.utilities.convertdatatypes import to_int, to_text
 from pyrs.utilities.restorable_property import restorable
 from typing import Any, Optional, Tuple
 
@@ -108,13 +108,11 @@ class HidraWorkspace:
         """
         if self._direction is not None:
             return self._direction
-        # HDF5 hands string logs back as `bytes`, so a workspace read from a file
-        # would answer `b"11"` where one built in memory answers `"11"`. Normalise,
-        # so the property's type does not depend on where the workspace came from.
-        value = self.get_sample_log_value("direction")
-        if isinstance(value, (bytes, np.bytes_)):
-            return value.decode("utf-8")
-        return str(value)
+        # `SampleLogs` normalises string logs to text on store, so this is already
+        # `str`. Routed through the shared conversion anyway: a value can reach a
+        # workspace without passing through that boundary, and the cost of assuming
+        # is an `AttributeError` in whichever caller meets the other spelling.
+        return to_text(self.get_sample_log_value("direction"))
 
     @restorable(restores="_project_file_name")
     def hidra_project_file(self):

@@ -19,6 +19,8 @@ from pyrs.core.workspaces import HidraWorkspace
 from pyrs.dataobjects.sample_logs import SampleLogs
 from pyrs.utilities.pydantic_transition import validate_call_
 
+from pyrs.utilities.convertdatatypes import to_text
+
 from ._definitions import (
     FIELD_DTYPE,
     CHUNK_SHAPE,
@@ -29,6 +31,7 @@ from ._definitions import (
     diffractogram_detector_mask,
     nxstress_diffractogram_keys,
     nxstress_mask_names,
+    row_aligned_fields,
     UNDEFINED_PEAK_TAG,
     workspace_mask_key,
 )
@@ -537,6 +540,22 @@ class _Diffractogram:
         return dg
 
     @classmethod
+    def appendableDatasets(cls, data, prefix: str) -> dict:
+        """Every dataset in one DIFFRACTOGRAM group that an append grows.
+
+        All four of them: `scan_point`, the two-theta axis, the diffractogram and
+        its errors are scan-point aligned, so the whole group grows together.
+
+        Args:
+            data: One existing `DIFFRACTOGRAM_<key>` group.
+            prefix: Path prefix for the returned keys.
+
+        Returns:
+            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+        """
+        return row_aligned_fields(data, prefix)
+
+    @classmethod
     def validateAppend(cls, wss: list[HidraWorkspace], maskName: str, data) -> None:
         """Check incoming diffraction against an existing group, without mutating it.
 
@@ -642,7 +661,7 @@ class _Fit:
         # `Filename` is a per-scan-point log and is not one of
         # `_Sample.NXstress_logs`, so every input's filenames are retained in
         # full under SAMPLE_DESCRIPTION/logs.
-        fit["raw_data_file"] = NXfield(logss[0]["Filename"][0].decode("utf-8"))
+        fit["raw_data_file"] = NXfield(to_text(logss[0]["Filename"][0]))
 
         note = NXnote(
             type="text/plain",
@@ -741,6 +760,33 @@ class _Fit:
             fit[dgram_name] = _Diffractogram.init_group(wss, mask, indexed)
 
         return fit
+
+    @classmethod
+    def appendableDatasets(cls, fit) -> dict:
+        """Every dataset under `FIT` that an append grows.
+
+        Two families, both row-aligned and both growing on every append: the
+        per-key DIFFRACTOGRAM groups (scan-point aligned) and the peak and
+        background parameter groups (peak-index aligned). The parameter groups'
+        field *names* come from the fitted profile, so they are enumerated rather
+        than listed -- their `title` is the group's one entry-wide scalar and drops
+        out for being scalar, not by being named here.
+
+        Args:
+            fit: The target entry's existing `FIT` group.
+
+        Returns:
+            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+        """
+        found: dict = {}
+        for name in fit:
+            child = fit[name]
+            prefix = f"{GROUP_NAME.FIT}/{name}"
+            if isinstance(child, NXdata):
+                found.update(_Diffractogram.appendableDatasets(child, prefix))
+            elif name in (GROUP_NAME.PEAK_PARAMETERS, GROUP_NAME.BACKGROUND_PARAMETERS):
+                found.update(row_aligned_fields(child, prefix))
+        return found
 
     @classmethod
     def validateAppend(cls, wss: list[HidraWorkspace], fit) -> None:

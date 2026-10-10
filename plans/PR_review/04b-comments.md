@@ -504,3 +504,139 @@ is not hard-coded into whatever ran the last one.
 ### Verification
 
 The documented sweep, run as written: **19 OK, 1 SKIPPED (retired), 0 FAIL.**
+
+---
+
+## Batch 5 completed — `_input_data.py`, `_sample.py`
+
+**Process note first.** Appendix A's batch 5 is three files — `_input_data.py`,
+`_instrument.py`, `_sample.py`. Only `_instrument.py` was walked: it was pulled
+forward during batch 4's mask discussion, written up under the heading "Batch 5",
+and the walk then moved to batch 6 on the label rather than on the file list.
+`_input_data.py` and `_sample.py` were skipped and are reviewed here, after batch
+6. Between them they own the scan-point family, the retained-log columns,
+`_writable`'s dtype coercion and the `detector_counts` append path — not files to
+let through on a heading.
+
+**Reviewer:** *"You need to deal with '_input_data.py and _sample.py remain
+unwalked' -- we are beyond 'batch 5' at this point!"*
+
+### D23 — `stress field direction` round-tripped 1-D into 2-D, silently
+
+The direction is held as a per-scan-point log but the schema defines it as a
+scalar attribute on `stress_field`. The writer stored the whole array:
+
+```python
+direction = sampleLogs[direction_key] if direction_key in sampleLogs else "x"
+sff.attrs["direction"] = direction
+```
+
+and `sampleLogsFromNexus` broadcast it again. Measured on three scan points:
+
+```console
+WRITE  direction attr value : ['z', 'z', 'z']        (TODO says: scalar in {x,y,z})
+READ   recovered dtype/shape: <U1 (3, 3)
+       recovered value      : [['z' 'z' 'z'] ['z' 'z' 'z'] ['z' 'z' 'z']]
+       original was         : ['z' 'z' 'z']
+```
+
+Nothing raised: `SampleLogs.__setitem__` checks the first axis only, and
+`len((3, 3)) == 3`. The same line also used `logss[0]` with **no cross-input
+agreement check**, where `name` and `chemical_formula` raise through `_scalar`.
+
+**The existing test documented the defect instead of catching it.**
+`test_Sample_stress_field_present` asserted:
+
+```python
+# The direction attribute gets the array value
+if isinstance(direction_val, list):
+    assert direction_val[0] == "z"
+else:
+    assert direction_val == "z"
+```
+
+— an accommodation for the array case, with a comment naming it. Third instance
+of this pattern in the PR, after `N_SCAN = 7` (D18) and the `|S` fixture (D20): a
+hazard understood precisely enough to be written around in a test, and not
+reported against the code.
+
+**Fixed.** The direction goes through `_scalar`, so it is a scalar and must agree
+across inputs; the read side takes `to_text(np.atleast_1d(attr)[0])`, which also
+recovers a file written before the fix as a 1-D log rather than a 2-D one. The
+test now asserts a bare scalar, and `TestStressFieldDirectionIsEntryWide` adds
+the round trip, cross-input disagreement, and variation within one input.
+
+**Left as it was, deliberately:** the `else "x"` default still invents a
+direction when no log is present, rather than omitting the attribute. Changing it
+alters what the read side recovers, and the writer's own TODO records that there
+is no real example of these entries. Flagged rather than guessed at.
+
+### D24 — `_scalar` compared normalised values and returned the raw one
+
+```python
+distinct = {to_text(v) for v in values}   # comparison normalised
+return values[0]                          # un-normalised value written
+```
+
+Harmless once logs are `str` in memory, but it is the pattern the centralisation
+(D19) had just removed everywhere else. Now returns the agreed `str`.
+
+**And it only compared the first element of each input.** Since these are
+entry-wide values held as per-scan-point logs, a log that *varies within* one
+input is as wrong as two inputs disagreeing — and `[0]` silently kept one. Every
+value is now compared.
+
+### Growable inconsistency — fixed
+
+`_input_data` wrote `maxshape=(None, None), chunks=CHUNK_SHAPE(2)` and
+`_sample`'s `scan_point` wrote `chunks=CHUNK_SHAPE(1), maxshape=(None,)`.
+Literally equivalent to `**growable(2)` / `**growable(1)`, so no behaviour
+change — but these were the last two sites not using the helper that exists to be
+the single spelling. `CHUNK_SHAPE` is no longer imported by either module.
+
+### O5-O7 — fixed, at the reviewer's direction
+
+*"Let's go forward with 05, 06, and 07, before we call this batch complete?"*
+
+**O5 — the assertion-message match.** `if "some coordinates do not have finite
+values" in str(e)` depended on upstream wording: a rewording would stop the
+branch matching and let the `AssertionError` escape mid-write.
+
+New `_Sample._coordinates_are_finite(logs)` asks instead of provoking, and
+`get_pointlist` is now called only when it will succeed. `PointList`'s other two
+assertions still propagate — they report a *malformed* coordinate set, not an
+absent one. A **missing** coordinate log deliberately still raises `ValueError`
+naming the log, rather than being NaN-filled, since that would hide a workspace
+with no positions at all. No `sample_logs.py` change was needed.
+
+`TestNonFiniteCoordinatesAreAsked` covers NaN, `inf`, the finite case, and the
+missing-log case, and its last test states the property directly: the NaN path
+must survive a reworded assertion.
+
+**O6 — the full `detector_counts` read.** Measured before changing it, on a
+64 MB dataset with a 5% row selection:
+
+```console
+  full .nxdata then mask     peak=   67.2 MB   result=(20, 20000)
+  field[mask] then .nxdata   peak=    3.2 MB   result=(20, 20000)
+```
+
+So the selection does reach h5py — a 21x reduction, and the saving scales with
+how small one workspace is relative to the entry. `readSubruns` now indexes the
+`NXfield` with `np.flatnonzero(rows)` before `.nxdata`.
+
+`TestRowSelectionHappensInH5py` pins what can silently go wrong in that swap: an
+index list must pick the same rows as the boolean mask, in the same order,
+**including when the selected rows are not contiguous**.
+
+**O7 — the `break`.** Now `next(iter(ws._raw_counts), None)` with the loop gone,
+which says "the first scan point is representative" in the code rather than
+leaving it to be inferred from a loop that exits on its first iteration. The
+`None` case — a workspace carrying no counts — is stepped over explicitly and
+covered by `TestPixelCheckHandlesAWorkspaceWithNoCounts`; the previous `for`
+simply never entered, which worked but by accident.
+
+### Verification
+
+507 unit (was 443 at the start of batch 6) / 104 integration / 16 GUI; `ruff` and
+`mypy` clean; probe sweep 19 OK, 1 SKIPPED (retired), 0 FAIL.

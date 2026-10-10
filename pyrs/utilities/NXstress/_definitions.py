@@ -126,6 +126,41 @@ def appendable(field) -> bool:
     return maxshape is not None and len(maxshape) > 0 and maxshape[0] is None
 
 
+def row_aligned_fields(group, prefix: str = "") -> dict:
+    """Every non-scalar `NXfield` directly under `group`, keyed by path.
+
+    The grouping modules call this to declare which of their datasets an append
+    grows. It is exact rather than heuristic **because the caller owns the
+    group's layout**: inside a group NXstress writes, a field is either
+    row-aligned -- and therefore written `growable` -- or an entry-wide scalar
+    (`definition`, `title`, `center_type`, the instrument names). A field added
+    to such a group later is covered without editing anything, which is the
+    property worth keeping.
+
+    Contrast identifying the same set by *array length*, sweeping the whole
+    entry for `shape[0] == n_scan`. That cannot tell a coincidentally-sized
+    entry-wide array from a row-aligned one, and over-matching is not the safe
+    direction it looks like: the sweep feeds a resizability *requirement*, so a
+    false match rejects a legal append. An entry with as many detector masks as
+    scan points was refused because `masks/names` -- entry-wide, never grown,
+    and required by `_Instrument.validateAppend` to stay constant -- happened to
+    be the right length. See 04c's Follow-up 5.
+
+    Args:
+        group: An `NXgroup` whose layout the caller owns.
+        prefix: Path prefix for the returned keys, used in error messages.
+
+    Returns:
+        Path -> `NXfield`, for every non-scalar field directly under `group`.
+    """
+    found = {}
+    for name in group:
+        child = group[name]
+        if isinstance(child, NXfield) and tuple(child.shape or ()):
+            found[f"{prefix}/{name}" if prefix else str(name)] = child
+    return found
+
+
 def _field_label(field) -> str:
     """How to name a field in an error message, including when it has no name.
 

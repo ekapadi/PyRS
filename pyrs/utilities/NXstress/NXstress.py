@@ -13,13 +13,15 @@ from pyrs.core.peak_profile_utility import BackgroundFunction
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.utilities.pydantic_transition import validate_call_
 
+from pyrs.utilities.convertdatatypes import to_text
+
 from ._definitions import (
     DEFAULT_TAG,
     GROUP_NAME,
     appendable,
     group_naming_scheme,
     growable,
-    nxstress_mask_names,
+    nxstress_diffractogram_keys,
     suffix_from_group_name,
     tail_append,
     NO_LOG,
@@ -429,7 +431,7 @@ class NXstress:
         self._rejectUngrowableOrDisagreeingGroups(entry, wss)
         self._classifyCompoundKeys(entry, indexed, discriminator_names)
         self._rejectScanPointCollisions(entry, wss)
-        self._rejectMaskMismatch(entry, wss)
+        self._rejectDiffractogramKeyMismatch(entry, wss)
         self._rejectFitModelMismatch(entry, indexed)
 
     def _reject(self, message: str) -> RuntimeError:
@@ -542,26 +544,36 @@ class NXstress:
                     "attributed."
                 )
 
-    def _rejectMaskMismatch(self, entry, wss: list[HidraWorkspace]) -> None:
-        """Every scan point in an entry needs a diffractogram under each mask."""
-        # -- The diffractogram mask set must match. A mask the entry has no group
+    def _rejectDiffractogramKeyMismatch(self, entry, wss: list[HidraWorkspace]) -> None:
+        """Every scan point in an entry needs a diffractogram under each key.
+
+        Compares **diffractogram keys**, not detector-mask names. The two are
+        different sets: a key is a reduction identifier -- `eta_-5.0`,
+        `mask_a_eta_-5.0` -- that references a detector mask without being one,
+        and only a reduction that used the default mask *alone* produces a bare
+        `DEFAULT_TAG` key. Reading this side through `nxstress_mask_names`, which
+        injects `DEFAULT_TAG` because every reduction uses the default mask,
+        therefore added a key the writer never emits -- and made every texture
+        append impossible. See 04's Follow-up 8.
+        """
+        # -- The diffractogram key set must match. A key the entry has no group
         #    for would need a new group with no rows for the scan points already on
         #    disk, which is restructuring rather than growth.
-        incoming_masks = set()
+        incoming_keys: set = set()
         for ws in wss:
-            incoming_masks |= set(nxstress_mask_names(ws._diff_data_set.keys()))
-        on_disk_masks = {
+            incoming_keys |= nxstress_diffractogram_keys(ws._diff_data_set.keys())
+        on_disk_keys = {
             suffix_from_group_name(name, GROUP_NAME.DIFFRACTOGRAM)
             for name in entry[GROUP_NAME.FIT]
             if isinstance(entry[GROUP_NAME.FIT][name], NXdata)
         }
-        if incoming_masks != on_disk_masks:
+        if incoming_keys != on_disk_keys:
             raise self._reject(
-                f"NXstress: cannot append -- the incoming workspaces' reduced-diffraction masks do "
+                f"NXstress: cannot append -- the incoming workspaces' reduced-diffraction keys do "
                 f"not match the target entry's.\n"
-                f"  On disk:   {sorted(on_disk_masks)}\n"
-                f"  Incoming:  {sorted(incoming_masks)}\n"
-                "  Every scan point in an entry must have a diffractogram under each mask."
+                f"  On disk:   {sorted(on_disk_keys)}\n"
+                f"  Incoming:  {sorted(incoming_keys)}\n"
+                "  Every scan point in an entry must have a diffractogram under each key."
             )
 
     def _rejectFitModelMismatch(self, entry, indexed: list) -> None:
@@ -582,9 +594,7 @@ class NXstress:
                 {str(BackgroundFunction.getFunction(item.collection.background_type)).lower() for item in indexed},
             ),
         ):
-            on_disk_title = fit_group[group_name]["title"].nxdata
-            if isinstance(on_disk_title, bytes):
-                on_disk_title = on_disk_title.decode("utf-8")
+            on_disk_title = to_text(fit_group[group_name]["title"].nxdata)
             if str(on_disk_title) == UNDEFINED_PEAK_TAG:
                 # The entry was written with no peak collections at all (the
                 # CombineRuns export shape, `write([ws], [[]])`). Its fit model is
@@ -605,39 +615,54 @@ class NXstress:
                 )
 
     @classmethod
-    def _perScanPointDatasets(cls, group, n_scan: int, prefix: str = "") -> dict:
-        """Every dataset under `group` whose first axis is the scan-point axis.
+    def _appendableDatasets(cls, entry) -> dict:
+        """Every dataset in `entry` that an append grows, declared by its owner.
 
-        Identified by length rather than by a maintained list of names, so a
-        field added to the writer later is covered without this being edited --
-        the property that matters, since the failure mode is a field that
-        silently cannot grow. A scalar (`shape == ()`) is entry-wide by
-        construction and never matches.
+        Each grouping module reports the datasets *it* writes row-aligned, because
+        each one owns its group's layout. Inside a group NXstress writes, a field
+        is either row-aligned -- and therefore `growable` -- or an entry-wide
+        scalar, so a field added to such a group later is covered without editing
+        anything here.
 
-        The length test can over-match: an array that happens to be `n_scan`
-        long for an unrelated reason (a pixel count, a mask count) would be
-        swept in. That is the safe direction -- it can only demand that
-        something be resizable which need not be -- and everything the writer
-        emits at a fixed size is entry-wide metadata written once.
+        This replaced a sweep of the whole entry for `shape[0] == n_scan`, which
+        was wrong in both directions. It **over**-matched, and over-matching is
+        not the harmless direction it was documented to be: the result feeds a
+        resizability *requirement*, so any entry-wide array that happened to be
+        `n_scan` long rejected a legal append. Three detector masks and three scan
+        points was enough -- `masks/names` is entry-wide, is never grown, and is
+        required by `_Instrument.validateAppend` to stay constant, yet the append
+        was refused with a message blaming an out-of-date writer. It also
+        **under**-matched: the peak index is one row per (compound key, scan
+        point), so it equals `n_scan` only while each workspace fits exactly one
+        peak. Fit a second phase -- the ordinary multi-peak case -- and `peaks/*`
+        and both parameter groups dropped out of the pre-flight entirely, leaving
+        exactly the mid-mutation refusal that 04c's Follow-up 3 F3.1 hoisted out.
+        See 04c's Follow-up 5.
 
         Args:
-            group: An `NXgroup` to walk, recursively.
-            n_scan: Current length of the entry's scan-point axis.
-            prefix: Path accumulated so far, for error messages.
+            entry: The target `NXentry`.
 
         Returns:
-            Path -> `NXfield`, for every match.
+            Path -> `NXfield`, for every dataset an append would extend.
         """
-        found = {}
-        for name in group:
-            child = group[name]
-            path = f"{prefix}/{name}"
-            if isinstance(child, NXfield):
-                shape = tuple(child.shape or ())
-                if shape and shape[0] == n_scan:
-                    found[path] = child
-            else:
-                found.update(cls._perScanPointDatasets(child, n_scan, path))
+        found = {
+            f"{GROUP_NAME.ENTRY}/start_time": entry["start_time"],
+            f"{GROUP_NAME.ENTRY}/end_time": entry["end_time"],
+        }
+        for group_name, owner in (
+            (GROUP_NAME.INPUT_DATA, _InputData),
+            (GROUP_NAME.INSTRUMENT, _Instrument),
+            (GROUP_NAME.SAMPLE_DESCRIPTION, _Sample),
+            (GROUP_NAME.FIT, _Fit),
+            (GROUP_NAME.PEAKS, _Peaks),
+        ):
+            if group_name in entry:
+                found.update(
+                    {
+                        f"{GROUP_NAME.ENTRY}/{path}": field
+                        for path, field in owner.appendableDatasets(entry[group_name]).items()
+                    }
+                )
         return found
 
     @classmethod
@@ -653,17 +678,17 @@ class NXstress:
            two-dimensional data, since only they know what the incoming rows
            would be shaped like.
 
+        Which datasets those are is likewise asked of the groups that wrote them
+        (`_appendableDatasets`), not inferred from array length.
+
         Args:
             entry: The target `NXentry`.
             wss: Workspaces being appended.
 
         Raises:
-            RuntimeError: Naming the first dataset that cannot grow.
+            RuntimeError: Naming every dataset that cannot grow.
         """
-        n_scan = len(entry[GROUP_NAME.SAMPLE_DESCRIPTION]["scan_point"].nxdata)
-        fixed = [
-            path for path, field in cls._perScanPointDatasets(entry, n_scan, "entry").items() if not appendable(field)
-        ]
+        fixed = [path for path, field in cls._appendableDatasets(entry).items() if not appendable(field)]
         if fixed:
             raise RuntimeError(
                 f"NXstress: cannot append -- {len(fixed)} dataset(s) in this entry were written at a "
@@ -885,6 +910,7 @@ class NXstress:
     ############################################
 
     @classmethod
+    @validate_call_
     def _validateWorkspaceAndPeaksData(
         cls, wss: list[HidraWorkspace], peakss: list[list[PeakCollection]], indexed: list
     ):
@@ -976,12 +1002,12 @@ class NXstress:
         n_scan_point = sum(len(ws._sample_logs.subruns) for ws in wss)
         try:
             start_times: list[str] = [
-                datetime.fromisoformat(t.decode("utf-8")).astimezone().isoformat()
+                datetime.fromisoformat(to_text(t)).astimezone().isoformat()
                 for ws in wss
                 for t in ws.get_sample_log_values("start_time")
             ]
             end_times: list[str] = [
-                datetime.fromisoformat(t.decode("utf-8")).astimezone().isoformat()
+                datetime.fromisoformat(to_text(t)).astimezone().isoformat()
                 for ws in wss
                 for t in ws.get_sample_log_values("end_time")
             ]

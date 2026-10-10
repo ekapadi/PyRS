@@ -37,6 +37,8 @@ from pyrs.utilities.config import Config
 
 from pyrs.utilities.restorable_property import is_restorable, restore
 
+from pyrs.utilities.convertdatatypes import to_text
+
 from ._definitions import allowed_identifier
 
 
@@ -243,12 +245,8 @@ def _as_text(value: Any) -> Any:
     than raise. Evidence:
     `plans/NXstress-prod/probes/a4_string_log_dtypes.py`.
     """
-    if isinstance(value, bytes):
-        return value.decode("utf-8")
-    if isinstance(value, np.bytes_):
-        return bytes(value).decode("utf-8")
-    if isinstance(value, np.str_):
-        return str(value)
+    if isinstance(value, (bytes, np.bytes_, np.str_)):
+        return to_text(value)
     return value
 
 

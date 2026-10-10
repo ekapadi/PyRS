@@ -1247,3 +1247,116 @@ tests" is not a successor probe, and item 9 now says so explicitly.
 
 The sweep documented in `probes/README.md`, run as written: **19 OK, 1 SKIPPED
 (retired), 0 FAIL.**
+
+---
+
+## Follow-up 8 — 2026-10-10 (PR review, batch 5 completed: `_input_data.py`, `_sample.py`)
+
+These two files were skipped. Appendix A's batch 5 names three — `_input_data.py`,
+`_instrument.py`, `_sample.py` — and only `_instrument.py` was walked, because it
+was pulled forward during batch 4 and written up under the heading "Batch 5",
+after which the walk advanced on the label rather than the file list. Recorded
+because the failure mode is a property of batch *labels*, not of these files: a
+heading that names one file can stand for a batch that names three.
+
+### F8.1 — the `stress_field` direction was written as an array into a scalar attribute
+
+The direction is held as a per-scan-point sample log but the NXstress schema
+defines it as a scalar attribute on `stress_field`. `init_group` stored
+`logss[0][key]` — the whole array — and `sampleLogsFromNexus` broadcast it again:
+
+```console
+WRITE  direction attr value : ['z', 'z', 'z']
+READ   recovered dtype/shape: <U1 (3, 3)
+       original was         : ['z' 'z' 'z']
+```
+
+Nothing raised. `SampleLogs.__setitem__` validates the first axis only, and
+`len((3, 3)) == 3`, so a 3-point direction became a 3×3 log on a round trip.
+
+The same line bypassed the cross-input agreement that `name` and
+`chemical_formula` get from `_scalar`, so two inputs could disagree and the first
+would silently win.
+
+Both now go through `_scalar`. The read side takes
+`to_text(np.atleast_1d(attr)[0])`, which additionally recovers a file written
+before this fix as a 1-D log instead of a 2-D one.
+
+**`else "x"` is left standing**: when no direction log exists the writer still
+invents `"x"` rather than omitting the attribute. Changing that alters what the
+reader recovers, and the writer's own TODO records that no real example of these
+entries exists. Flagged, not guessed at.
+
+### F8.2 — `_scalar` compared normalised values and returned an unnormalised one, over first elements only
+
+`distinct = {to_text(v) for v in values}` then `return values[0]`: the check
+looked at one spelling and the write used another. Harmless once sample logs are
+`str` in memory (04c Follow-up 5 F5.4), but it is the pattern that work removed
+everywhere else.
+
+It also took `[0]` of each input. These values are entry-wide but held
+per-scan-point, so a log varying *within* one input is as wrong as two inputs
+disagreeing — and `[0]` kept one of them silently. Every value is now compared,
+and the agreed `str` is returned.
+
+### F8.3 — the last two sites bypassing `growable`
+
+`_input_data`'s `detector_counts` wrote `maxshape=(None, None), chunks=CHUNK_SHAPE(2)`
+and `_sample`'s `scan_point` wrote `chunks=CHUNK_SHAPE(1), maxshape=(None,)`.
+Literally equivalent to `**growable(2)`/`**growable(1)`, so no behaviour change —
+but `growable` exists to be the one spelling, and a second spelling is how the
+next field gets written with only half of it. Neither module imports
+`CHUNK_SHAPE` any more.
+
+### A pattern worth naming
+
+Three defects in this PR were already understood by a test that worked around
+them rather than reporting them:
+
+| | the test | what it accommodated |
+|---|---|---|
+| D18 | `N_SCAN = 7`, with a comment reasoning about collisions with entry-wide array lengths | the length heuristic rejecting legal appends |
+| D20 | a fixture built as `np.array([b"11", ...])` | a normalisation that handled `\|S` but not the `object` dtype HDF5 yields |
+| D23 | `if isinstance(direction_val, list): assert direction_val[0] == "z"` | a scalar attribute holding an array |
+
+Each comment is accurate about the hazard. In each case the accommodation was
+written and the code was not changed. Worth a reviewer's attention wherever a
+test explains *why* it is shaped unusually.
+
+### F8.4 — three fragilities, raised as observations and then fixed
+
+**An assertion's message text was load-bearing.** `_concatenated_pointlist`
+detected non-finite sample positions by catching `AssertionError` from
+`PointList` and matching `"some coordinates do not have finite values"`. A
+reworded upstream assertion would stop the branch matching and let the error
+escape part-way through a write. `_Sample._coordinates_are_finite` now asks
+first, and `get_pointlist` is called only when it will succeed. `PointList`'s
+other two assertions still propagate, which is correct: they report a malformed
+coordinate set rather than an absent one. A **missing** coordinate log still
+raises `ValueError` naming it, rather than being NaN-filled, which would hide a
+workspace with no positions at all. No change to `sample_logs.py` was needed.
+
+**`readSubruns` read the whole of `detector_counts` to keep one workspace's
+rows.** Measured rather than assumed, on a 64 MB dataset with a 5% selection:
+
+```console
+  full .nxdata then mask     peak=   67.2 MB
+  field[mask] then .nxdata   peak=    3.2 MB
+```
+
+The selection does reach h5py, so the field is now indexed with
+`np.flatnonzero(rows)` before `.nxdata`. The saving scales with how small one
+workspace is relative to its entry, which is exactly the multi-workspace case
+this subspec introduced. Pinned by tests that check an index-list selection
+matches the boolean mask it replaced, **including for non-contiguous rows**.
+
+**A loop that exited on its first iteration.** `_InputData.validateAppend`'s
+pixel check used `for point in ws._raw_counts: ... break`, which is correct --
+one scan point is representative -- but reads like a defect. Now
+`next(iter(...), None)`, with the empty case stepped over explicitly instead of
+working because the loop never entered.
+
+### Verification
+
+507 unit (was 443 at the start of batch 6) / 104 integration / 16 GUI; `ruff` and
+`mypy` clean; probe sweep 19 OK, 1 SKIPPED (retired), 0 FAIL.

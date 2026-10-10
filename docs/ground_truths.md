@@ -926,3 +926,99 @@ ever be appended to. The evidence, the probes and the full per-dataset
 measurement are in
 [plans/NXstress-prod/04c-nxstress-append.md](../plans/NXstress-prod/04c-nxstress-append.md)'s
 Follow-up 2 (F2.1, F2.2).
+
+## A string sample log's dtype used to depend on where the workspace came from (2026-10-09)
+
+`SampleLogs` stored whatever numpy dtype it was handed, and nothing normalized
+string values at any boundary, so the in-memory dtype of a string log was an
+accident of provenance:
+
+| source | string log value |
+|---|---|
+| `HidraProjectFile.read_sample_logs` — `data_set[()]`, straight from h5py | `bytes` |
+| `NXstress._sample._Sample.sampleLogsFromNexus` | `bytes` (except `name` and `chemical_formula`, decoded one-off) |
+| built in memory from a `<U` array, e.g. `set_sample_log("direction", pts, np.array(["11", ...]))` | `str` |
+
+Consumers each invented a policy. Some were tolerant
+(`summary_generator`, `peak_profile_utility`, `NXstress._discriminator._as_text`,
+`HidraWorkspace.direction`); some assumed `bytes` and called `.decode()`
+unconditionally. The latter crashed on a workspace built in memory —
+`NXstress._entryTimes` raised `AttributeError: 'numpy.str_' object has no
+attribute 'decode'` from inside a `try` that catches only `ValueError`, the
+clause that exists to substitute `NO_LOG` for an unparseable timestamp, so the
+fallback could not catch it. Even the test fixtures carried the split: the
+NXstress conftest `.encode("utf-8")`s `start_time`/`end_time`/`Filename` with a
+comment explaining that it must match h5py, and writes `direction` as a plain
+`<U` array four lines later.
+
+The rule is now **`bytes` on disk, `str` in memory**, with one conversion —
+`pyrs/utilities/convertdatatypes.py`'s `to_text`, `to_text_array` and the
+`is_text_array` predicate, alongside the existing `to_int`/`to_float` — applied
+at the two boundaries and at the nine sites that previously hand-rolled it:
+
+- `SampleLogs.__setitem__` converts a string array to `<U` on store, so *both*
+  file readers normalize without either one having to decode for itself.
+- `HidraProjectFile.add_sample_log` converts back at the HDF5 boundary. This is
+  not optional: **h5py has no conversion path for numpy's `<U` dtype**, so a
+  project file cannot be written at all without it.
+  `NXstress._sample._Sample._writable` was already doing the equivalent.
+
+**Two things that are easy to get wrong, both found by getting them wrong:**
+
+*Three dtypes mean "array of strings", and the one that matters is `object`.*
+The first version of this change tested `dtype.kind == "S"`, which catches only
+**fixed-width** byte arrays. HDF5 does not produce those: h5py and `nexusformat`
+both hand back an **object** array of Python `bytes` for the variable-length
+UTF-8 dtype, whose kind is `"O"`. The check therefore passed every test tier
+while doing nothing whatsoever for `start_time`, `end_time`, `Filename` or any
+discriminator column — and looked correct, because the unit fixture had been
+built with `np.array([b"11", ...])`, which *is* `|S`. A test for this kind of
+normalization has to construct the dtype the real reader yields, not the one the
+literal syntax happens to give.
+
+*Encode to variable-length, never to fixed-width.* `numpy.char.encode` produces
+`|S`, whose width is fixed by the longest value present at creation; a longer
+value written later is truncated **silently** (see the `maxshape` entry below for
+the same hazard in NXstress). Worse, since `HidraProjectFile` re-saves a
+workspace it previously read, encoding that way would quietly convert an existing
+file's variable-length columns to fixed-width on every save. The target is
+`h5py.string_dtype(encoding="utf-8")`.
+
+Both directions were built and measured against all three tiers before choosing.
+Normalizing toward **`bytes`** in memory cost one real regression — the CSV
+exporter wrote `# string1 = b'a constant string'` into a user-facing header —
+plus two test failures, and would have put the burden on every display consumer,
+most of them untested. Normalizing toward **`str`** produced 83 failures that
+were all the *same* defect (the unconditional `.decode()`, in two places), and
+once those were fixed every tier passed. The asymmetry is the argument: writers
+that must encode are few and already do it; readers that must decode are many
+and mostly invisible.
+
+`to_text_array` **raises** on an array that is not strings, rather than
+returning it unchanged — with one deliberate exception, an **empty `object`
+array**, which is accepted as an empty string column. That is safe because an
+empty HDF5 dataset keeps its own dtype on read and only a variable-length string
+comes back as `object`; an empty `float64` array still raises. Note the trap it
+replaces: `np.array([])` is `float64`, so a conversion that builds its result
+from a comprehension turns an empty string column into an empty array of
+*numbers* unless it names `dtype=np.str_`. A caller that may hold either kind — `SampleLogs`, whose
+logs are mostly numeric, and `_Peaks._decoded`, whose discriminator column is
+whatever the configured log holds — asks `is_text_array` first. A pass-through
+would make a misdirected call look like a working one, and the symptom would
+surface later as a `bytes` value in whichever consumer did not expect one, which
+is the failure this whole invariant exists to end.
+
+**Why this matters going forward:** when a value crosses between HDF5 and memory,
+pick the representation for each side *once*, put the conversion in **one**
+function, and call it at the boundary — do not let the type be decided by which
+loader ran, and do not hand-roll `isinstance(v, bytes)` at the point of use. The
+nine sites that did had drifted into four different behaviours: some handling
+`numpy.bytes_` and some not, some coercing the non-bytes branch to `str` and some
+returning it untouched. The failure mode of not doing so is
+not a crash at the boundary, where you would see it, but a crash or a wrong
+string far downstream in whichever consumer happens to meet the spelling it did
+not expect. Pinned by
+`tests/unit/pyrs/dataobjects/test_sample_logs.py::TestStringLogsAreTextInMemory`
+and
+`tests/unit/pyrs/projectfile/test_sample_logs.py::TestStringLogsAreBytesOnDisk`,
+which reference each other so neither half can be removed as redundant.

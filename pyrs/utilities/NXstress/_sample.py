@@ -12,7 +12,16 @@ from pyrs.dataobjects.constants import HidraConstants
 from pyrs.dataobjects.sample_logs import SampleLogs, SubRuns
 from pyrs.utilities.pydantic_transition import validate_call_
 
-from ._definitions import allowed_identifier, CHUNK_SHAPE, FIELD_DTYPE, growable, tail_append
+from pyrs.utilities.convertdatatypes import to_text
+
+from ._definitions import (
+    allowed_identifier,
+    FIELD_DTYPE,
+    GROUP_NAME,
+    growable,
+    row_aligned_fields,
+    tail_append,
+)
 
 
 """
@@ -47,19 +56,38 @@ class _Sample:
     def _scalar(cls, logss: list[SampleLogs], key: str, fallback: str) -> str:
         """One entry-wide value drawn from N inputs, which must agree.
 
-        `name` and `chemical_formula` describe the sample, and the NXstress
-        schema allows exactly one of each per entry. Writing one input's value
-        while silently discarding a different one would misdescribe the file,
-        so a disagreement raises.
+        `name`, `chemical_formula` and the `stress_field` direction describe the
+        sample, and the NXstress schema allows exactly one of each per entry.
+        Writing one input's value while silently discarding a different one
+        would misdescribe the file, so a disagreement raises.
+
+        **Every** value is compared, not the first of each input. These are held
+        as per-scan-point logs but describe the entry, so a log that varies
+        *within* one input is as wrong as two inputs disagreeing -- and taking
+        `[0]` would quietly keep one of them.
+
+        Args:
+            logss: Sample logs of every input workspace.
+            key: Log key holding the entry-wide value.
+            fallback: Value to use when no input carries the log.
+
+        Returns:
+            The agreed value, as `str`. Normalised rather than returned raw: the
+            comparison above already goes through `to_text`, so returning the
+            unnormalised value would write the one spelling the check did not
+            look at.
+
+        Raises:
+            RuntimeError: If any two values disagree.
         """
-        values = [logs.get(key, (fallback,))[0] for logs in logss]
-        distinct = {v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in values}
+        values = [v for logs in logss for v in np.atleast_1d(logs.get(key, (fallback,)))]
+        distinct = {to_text(v) for v in values}
         if len(distinct) > 1:
             raise RuntimeError(
                 f"NXstress._sample: input workspaces disagree on '{key}': {sorted(distinct)}.\n"
                 "  A single NXentry describes one sample; write them to separate entries."
             )
-        return values[0]
+        return distinct.pop() if distinct else fallback
 
     @classmethod
     def _concatenated_pointlist(cls, logss: list[SampleLogs], counts: list[int]) -> tuple:
@@ -72,17 +100,43 @@ class _Sample:
         """
         per_axis: list[list[np.ndarray]] = [[], [], []]
         for logs, n_scan in zip(logss, counts):
-            try:
+            if cls._coordinates_are_finite(logs):
                 pl = logs.get_pointlist()
                 vv = (pl.vx, pl.vy, pl.vz)
-            except AssertionError as e:
-                if "some coordinates do not have finite values" in str(e):
-                    vv = (np.full((n_scan,), np.nan),) * 3
-                else:
-                    raise
+            else:
+                vv = (np.full((n_scan,), np.nan),) * 3
             for axis, values in zip(per_axis, vv):
                 axis.append(np.asarray(values))
         return tuple(np.concatenate(axis) for axis in per_axis)
+
+    @classmethod
+    def _coordinates_are_finite(cls, logs: SampleLogs) -> bool:
+        """Whether every sample coordinate this `SampleLogs` carries is finite.
+
+        Asked up front rather than discovered by catching the failure. `PointList`
+        enforces finiteness with a bare `assert`, so the only way to detect it
+        through `get_pointlist` was to catch `AssertionError` and **match its
+        message text** -- which stops matching the moment that message is
+        reworded, turning a handled case into an unhandled failure mid-write.
+        `PointList`'s other two assertions still propagate, which is correct:
+        they report a malformed coordinate set, not an absent one.
+
+        A *missing* coordinate log is deliberately not covered here. That raises
+        `ValueError` from `get_pointlist`, naming which log is absent, and must
+        keep doing so -- NaN-filling it would hide a workspace with no positions
+        at all.
+
+        Args:
+            logs: One input workspace's sample logs.
+
+        Returns:
+            True when every coordinate log present holds only finite values.
+        """
+        return all(
+            bool(np.all(np.isfinite(np.asarray(logs[name], dtype=float))))
+            for name in HidraConstants.SAMPLE_COORDINATE_NAMES
+            if name in logs
+        )
 
     @classmethod
     def init_group(cls, logss: list[SampleLogs], data: NXsample | None = None) -> NXsample:
@@ -113,9 +167,7 @@ class _Sample:
         per_workspace = [logs.subruns.raw_copy() for logs in logss]
         counts = [len(points) for points in per_workspace]
         scan_points = np.concatenate(per_workspace) if per_workspace else np.empty((0,), dtype=int)
-        sd["scan_point"] = NXfield(
-            scan_points.astype(FIELD_DTYPE.INT_DATA.value), chunks=CHUNK_SHAPE(1), maxshape=(None,), units=""
-        )
+        sd["scan_point"] = NXfield(scan_points.astype(FIELD_DTYPE.INT_DATA.value), units="", **growable(1))
         N_scan = len(scan_points)
 
         # 3) Sample positions per scanpoint (mm). Use SampleLogs.get_pointlist().
@@ -151,7 +203,6 @@ class _Sample:
 
         # Example of stress_field if present (values + direction attribute)
         if cls._present_in_all(logss, HidraConstants.STRESS_FIELD):
-            sampleLogs = logss[0]
             # TODO: we don't have an example of these entries, so the dimensions may not be correct!
             # -- Assuming:
             #      <stress field> :: (<scan points>, ...)
@@ -168,9 +219,14 @@ class _Sample:
             # Rank comes from the data, not an assumption: `stress_field` is
             # (<scan point>, ...) and the trailing axes are unknown -- see the TODO above.
             sff = NXfield(sf, name="stress_field", **growable(sf.ndim))
-            # If a direction log exists, attach it; otherwise default to 'x'
-            direction_key = HidraConstants.STRESS_FIELD_DIRECTION
-            direction = sampleLogs[direction_key] if direction_key in sampleLogs else "x"
+            # The direction is entry-wide, so it goes through `_scalar` like `name`
+            # and `chemical_formula`: a bare `logss[0][key]` wrote the whole
+            # per-scan-point ARRAY into what the schema defines as a scalar
+            # attribute, and the read side then broadcast it again -- a 3-point
+            # direction round-tripped from shape (3,) to (3, 3) without raising,
+            # because `SampleLogs` only checks the first axis. It also let input
+            # workspaces disagree silently, where `name` raises.
+            direction = cls._scalar(logss, HidraConstants.STRESS_FIELD_DIRECTION, "x")
             sff.attrs["direction"] = direction
             sd["stress_field"] = sff
 
@@ -214,6 +270,25 @@ class _Sample:
         match.
         """
         return {allowed_identifier(key): key for key in cls._retained_log_keys(logss)}
+
+    @classmethod
+    def appendableDatasets(cls, sd: NXsample) -> dict:
+        """Every dataset in ``SAMPLE_DESCRIPTION`` that an append grows.
+
+        Declared by the module that writes the group, rather than discovered by
+        array length from outside it -- see `_definitions.row_aligned_fields` for
+        why the length sweep this replaced could reject a legal append.
+
+        Args:
+            sd: The target entry's existing `SAMPLE_DESCRIPTION` group.
+
+        Returns:
+            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+        """
+        found = row_aligned_fields(sd, GROUP_NAME.SAMPLE_DESCRIPTION)
+        if "logs" in sd:
+            found.update(row_aligned_fields(sd["logs"], f"{GROUP_NAME.SAMPLE_DESCRIPTION}/logs"))
+        return found
 
     @classmethod
     def validateAppend(cls, logss: list[SampleLogs], sd: NXsample) -> None:
@@ -444,15 +519,11 @@ class _Sample:
 
         # Read optional scalar fields
         if "name" in sample:
-            sample_name = sample["name"].nxdata
-            if isinstance(sample_name, (bytes, np.bytes_)):
-                sample_name = sample_name.decode("utf-8")
+            sample_name = to_text(sample["name"].nxdata)
             logs[HidraConstants.SAMPLE_NAME, ""] = np.array([sample_name] * len(scan_point))
 
         if "chemical_formula" in sample:
-            chem_formula = sample["chemical_formula"].nxdata
-            if isinstance(chem_formula, (bytes, np.bytes_)):
-                chem_formula = chem_formula.decode("utf-8")
+            chem_formula = to_text(sample["chemical_formula"].nxdata)
             logs[HidraConstants.CHEMICAL_FORMULA, ""] = np.array([chem_formula] * len(scan_point))
 
         if "temperature" in sample:
@@ -467,7 +538,11 @@ class _Sample:
             logs[HidraConstants.STRESS_FIELD, ""] = stress_values
             # Read direction attribute if present
             if "direction" in stress_field.attrs:
-                direction = stress_field.attrs["direction"]
+                # Scalar by construction on the write side; `to_text` because an
+                # HDF5 attribute comes back as `bytes`, and because a file written
+                # before that fix holds the whole array here -- which would
+                # broadcast into a 2-D log rather than failing.
+                direction = to_text(np.atleast_1d(stress_field.attrs["direction"])[0])
                 logs[HidraConstants.STRESS_FIELD_DIRECTION, ""] = np.array([direction] * len(scan_point))
 
         return logs

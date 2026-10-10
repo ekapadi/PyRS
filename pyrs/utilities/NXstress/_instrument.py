@@ -26,6 +26,8 @@ from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.config import Config
 from pyrs.utilities.pydantic_transition import validate_call_
 
+from pyrs.utilities.convertdatatypes import to_text
+
 from ._definitions import (
     CHUNK_SHAPE,
     DEFAULT_TAG,
@@ -373,6 +375,26 @@ class _Instrument:
             )
 
     @classmethod
+    def appendableDatasets(cls, instrument) -> dict:
+        """Every dataset in `instrument` that an append grows -- just the wavelength.
+
+        Geometry, detector shift and the masks are entry-wide: `validateAppend`
+        requires them to *match*, so they never grow. Enumerated explicitly rather
+        than by walking the group, because unlike `SAMPLE_DESCRIPTION` this group's
+        non-scalar fields are mostly entry-wide arrays -- which is exactly how the
+        length sweep this replaced came to demand that `masks/names` be resizable.
+
+        Args:
+            instrument: The target entry's existing `instrument` group.
+
+        Returns:
+            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+        """
+        path = f"{GROUP_NAME.INSTRUMENT}/{GROUP_NAME.MONOCHROMATOR}/wavelength"
+        mono = instrument[GROUP_NAME.MONOCHROMATOR] if GROUP_NAME.MONOCHROMATOR in instrument else None
+        return {path: mono["wavelength"]} if mono is not None and "wavelength" in mono else {}
+
+    @classmethod
     def validateAppend(cls, wss: list[HidraWorkspace], instrument) -> None:
         """Check incoming workspaces against an existing NXinstrument, without mutating it.
 
@@ -402,7 +424,7 @@ class _Instrument:
         on_disk = instrument[GROUP_NAME.MASKS]["names"].nxdata
         if not isinstance(on_disk, np.ndarray):
             on_disk = [on_disk]
-        existing_masks = {name.decode("utf-8") if isinstance(name, bytes) else str(name) for name in on_disk}
+        existing_masks = {to_text(name) for name in on_disk}
         # `mask_keys` already routes through `nxstress_mask_names`, so the default
         # key is present and no second normalisation is needed.
         incoming_masks = set(_Masks.mask_keys(wss[0]))
@@ -689,11 +711,9 @@ class _Masks:
             (default_mask_or_None, {mask_name: np.ndarray})
         """
         # Read mask names
-        mask_names = masks["names"].nxdata
-        if isinstance(mask_names, np.ndarray):
-            mask_names = [name.decode("utf-8") if isinstance(name, bytes) else name for name in mask_names]
-        else:
-            mask_names = [mask_names.decode("utf-8") if isinstance(mask_names, bytes) else mask_names]
+        # `nxvalue`/`nxdata` yields a bare scalar for a length-1 array, not a
+        # 1-element sequence, so normalise the shape before the text conversion.
+        mask_names = [to_text(name) for name in np.atleast_1d(masks["names"].nxdata)]
 
         default_mask = None
         mask_dict = {}

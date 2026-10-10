@@ -350,6 +350,98 @@ class TestRoundTrip:
         assert not np.isnan(default).any()
 
 
+class TestTextureEntryAppends:
+    """An entry whose reductions are eta ROIs only can be appended to.
+
+    A `_diff_data_set` key is a *reduction identifier*, not a detector-mask name:
+    `reduction_manager` builds it as `"{mask_id}_eta_{eta_cent}"`, dropping either
+    part that is absent. `nxstress_mask_names` injects `DEFAULT_TAG` because every
+    reduction does use the default detector mask -- but the diffractogram keyspace
+    must not be defaulted into, because a bare `DEFAULT_TAG` key means *the default
+    mask with no eta ROI*, which an eta-resolved reduction never produced.
+
+    Reading the incoming side through the mask function therefore invented a key
+    the writer never emits, and every texture append was refused for a mismatch
+    that did not exist -- with `self._invalid` set, so the instance died with it.
+    Every other test here reduces under `{None: ...}`, where the two functions
+    agree, which is why the whole module passed over it. See 04's Follow-up 8.
+    """
+
+    ETA_KEYS = ("eta_-5.0", "eta_0.0", "eta_5.0")
+
+    @classmethod
+    def _texture(cls, minimal_HidraWorkspace, minimal_PeakCollection, *, direction, sub_runs):
+        """A workspace whose only reductions are eta ROIs -- no bare-default key."""
+        points = np.array(sub_runs)
+        ws = minimal_HidraWorkspace(
+            with_instrument=True, with_masks=True, sub_runs=points, with_reduced_diffraction=False
+        )
+        ws.set_sample_log("direction", points, np.array([direction] * len(points)))
+        two_theta = np.tile(np.linspace(60.0, 120.0, 20), (len(points), 1))
+        ones = np.ones((len(points), 20))
+        ws.set_reduced_diffraction_data_set(
+            two_theta, {key: ones for key in cls.ETA_KEYS}, {key: ones.copy() for key in cls.ETA_KEYS}
+        )
+        peaks = [minimal_PeakCollection(N_subrun=len(points), sub_runs=points, mask=cls.ETA_KEYS[0])]
+        return ws, peaks
+
+    @pytest.fixture
+    def textured(self, discriminated, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path):
+        path = tmp_path / "texture.nxs"
+        ws, peaks = self._texture(minimal_HidraWorkspace, minimal_PeakCollection, direction="11", sub_runs=(1, 2, 3))
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [peaks])
+        return path
+
+    def test_no_bare_default_diffractogram_is_written(self, textured):
+        """The precondition that makes this entry shaped differently from the others."""
+        # Act
+        with h5py.File(textured, "r") as f:
+            groups = sorted(name for name in f["entry/FIT"] if name.startswith("DIFFRACTOGRAM"))
+
+        # Assert
+        assert groups == [f"DIFFRACTOGRAM_{key}" for key in sorted(self.ETA_KEYS)]
+        assert "DIFFRACTOGRAM" not in groups
+
+    def test_appends_and_reads_back_as_two_workspaces(self, textured, minimal_HidraWorkspace, minimal_PeakCollection):
+        # Arrange
+        ws, peaks = self._texture(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6))
+
+        # Act
+        with NXstress(textured, "a") as nx:
+            nx.write([ws], [peaks])
+        with NXstress(textured, "r") as nx:
+            workspaces, peakss = nx.read()
+
+        # Assert
+        assert [w.get_sub_runs().raw_copy().tolist() for w in workspaces] == [[1, 2, 3], [4, 5, 6]]
+        assert [w.direction for w in workspaces] == ["11", "22"]
+        assert all(set(w.reduction_masks) == set(self.ETA_KEYS) for w in workspaces)
+
+    def test_a_genuinely_different_key_set_is_still_refused(
+        self, textured, minimal_HidraWorkspace, minimal_PeakCollection
+    ):
+        """The check still does its job: only the spurious half of it was wrong."""
+        # Arrange
+        ws, peaks = self._texture(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6))
+        points = ws.get_sub_runs().raw_copy()
+        two_theta = np.tile(np.linspace(60.0, 120.0, 20), (len(points), 1))
+        ones = np.ones((len(points), 20))
+        # One eta ROI the entry has no group for; the collection's own key stays valid,
+        # so this reaches the key-set check rather than the earlier per-collection one.
+        extra = (*self.ETA_KEYS, "eta_9.0")
+        ws.set_reduced_diffraction_data_set(
+            two_theta, {key: ones for key in extra}, {key: ones.copy() for key in extra}
+        )
+        before = digest(textured)
+
+        # Act / Assert
+        with NXstress(textured, "a") as nx:
+            with pytest.raises(RuntimeError, match=r"reduced-diffraction keys do not match"):
+                nx.write([ws], [peaks])
+        assert digest(textured) == before
+
+
 class TestEntryTargeting:
     def test_omitted_entry_number_grows_the_highest_entry(
         self, written, minimal_HidraWorkspace, minimal_PeakCollection
@@ -879,6 +971,138 @@ class TestWriterEmitsResizableDatasets:
 
         # Assert
         assert datasets["entry/SAMPLE_DESCRIPTION/careless"][0] is not None
+
+
+class TestAppendableDatasetsAreDeclaredByTheirOwner:
+    """Which datasets an append grows is declared by the module that writes them.
+
+    It used to be inferred by sweeping the whole entry for `shape[0] == n_scan`,
+    which was wrong in both directions.
+
+    It **over**-matched, and over-matching is not the harmless direction the old
+    docstring claimed: the result feeds a resizability *requirement*, so an
+    entry-wide array that happens to be `n_scan` long rejects a legal append.
+    `masks/names` is the live case -- entry-wide, never grown, and required by
+    `_Instrument.validateAppend` to stay constant. Note that
+    `TestWriterEmitsResizableDatasets` picked `N_SCAN = 7` with a comment
+    reasoning about exactly this collision: the hazard was understood and
+    designed around in a test instead of being fixed in the code.
+
+    It also **under**-matched: the peak-index family is one row per peak record,
+    so unless that count happened to equal `n_scan`, none of `peaks/*` or the
+    parameter groups was pre-flighted at all -- which is the mid-mutation refusal
+    04c's Follow-up 3 F3.1 exists to prevent. See 04c's Follow-up 5.
+    """
+
+    def test_as_many_detector_masks_as_scan_points_still_appends(
+        self, discriminated, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Three masks, three scan points -- the collision that refused a legal append."""
+        # Arrange
+        masks = ("mask_a", "mask_b")  # plus `_DEFAULT_` -> `masks/names` has length 3
+        path = tmp_path / "collide.nxs"
+        first, first_peaks = workspace(
+            minimal_HidraWorkspace, minimal_PeakCollection, direction="11", sub_runs=(1, 2, 3), mask_names=masks
+        )
+        with NXstress(path, "w") as nx:
+            nx.write([first], [first_peaks])
+        with h5py.File(path, "r") as f:
+            assert f["entry/instrument/masks/names"].shape == (3,)
+            assert len(f["entry/SAMPLE_DESCRIPTION/scan_point"]) == 3
+
+        second, second_peaks = workspace(
+            minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6), mask_names=masks
+        )
+
+        # Act
+        with NXstress(path, "a") as nx:
+            nx.write([second], [second_peaks])
+        with NXstress(path, "r") as nx:
+            workspaces, _ = nx.read()
+
+        # Assert
+        assert [w.get_sub_runs().raw_copy().tolist() for w in workspaces] == [[1, 2, 3], [4, 5, 6]]
+
+    def test_the_peak_index_family_is_pre_flighted_when_it_outnumbers_scan_points(
+        self, discriminated, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Two phases over three scan points: six peak rows, three scan points.
+
+        The peak index is one row per (compound key, scan point), so it equals
+        `n_scan` only while each workspace fits exactly one peak. Fit a second
+        phase -- the ordinary multi-peak case -- and the two counts diverge, at
+        which point a length-matched sweep stopped covering `peaks/*` and the
+        parameter groups entirely.
+        """
+        # Arrange
+        points = (1, 2, 3)
+        path = tmp_path / "peakindex.nxs"
+        ws, peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="11", sub_runs=points)
+        peaks.append(minimal_PeakCollection(N_subrun=len(points), peak_tag="Si111", sub_runs=np.array(points)))
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [peaks])
+
+        # Act
+        with NXstress(path, "r") as nx:
+            entry = nx._root["entry"]
+            n_scan = len(entry["SAMPLE_DESCRIPTION"]["scan_point"].nxdata)
+            declared = set(NXstress._appendableDatasets(entry))
+
+        # Assert
+        with h5py.File(path, "r") as f:
+            assert f["entry/peaks/h"].shape == (2 * n_scan,)
+        assert "entry/peaks/h" in declared
+        assert "entry/FIT/peak_parameters/center" in declared
+        assert "entry/FIT/background_parameters/A0" in declared
+
+    def test_every_growable_dataset_has_exactly_one_owner(
+        self, discriminated, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """The guarantee the length sweep gave for free, now stated directly.
+
+        A field written `growable` is one an append is expected to extend, so a
+        new one that no module declares would silently drop out of the pre-flight
+        -- the failure the sweep was there to prevent. This keeps that covered
+        without the sweep's false positives.
+        """
+        # Arrange
+        path = tmp_path / "owned.nxs"
+        ws, peaks = workspace(
+            minimal_HidraWorkspace,
+            minimal_PeakCollection,
+            direction="11",
+            sub_runs=(1, 2, 3),
+            with_raw_counts=True,
+        )
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [peaks])
+
+        growable_on_disk = set()
+        with h5py.File(path, "r") as f:
+
+            def walk(group, prefix):
+                for name, item in group.items():
+                    sub = f"{prefix}/{name}"
+                    if isinstance(item, h5py.Group):
+                        walk(item, sub)
+                    elif item.maxshape and item.maxshape[0] is None:
+                        growable_on_disk.add(sub)
+
+            walk(f["entry"], "entry")
+
+        # Act
+        with NXstress(path, "r") as nx:
+            declared = set(NXstress._appendableDatasets(nx._root["entry"]))
+
+        # Assert
+        assert growable_on_disk, "no resizable datasets were written at all"
+        assert growable_on_disk - declared == set(), (
+            "dataset(s) written `growable` that no module declares, so an append would never "
+            f"pre-flight them: {sorted(growable_on_disk - declared)}"
+        )
+        assert declared - growable_on_disk == set(), (
+            f"declared dataset(s) that are not resizable on disk: {sorted(declared - growable_on_disk)}"
+        )
 
 
 class TestTailAppendHelper:
