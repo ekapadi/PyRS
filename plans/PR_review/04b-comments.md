@@ -113,13 +113,16 @@ any test asserting a configured instrument name was passing vacuously. It works 
 
 ---
 
-## `OPEN DEFECT`
+## `OPEN DEFECT` — **closed in batch 7, and the diagnosis was wrong**
 
-**D5 — whitespace in a configured discriminator field name.** A config typo
-produces a valid but surprising column that will not match on read once corrected.
-Would be resolved by either rejecting a name that differs from its own `.strip()`,
-or normalising it. Not raised with the reviewer; recorded here per §6c and to be
-raised again at the end of 04b's walk.
+**D5 — whitespace in a configured discriminator field name.** Recorded in batch 2
+as "a config typo produces a valid but surprising column", with two proposed
+fixes: reject a name differing from its own `.strip()`, or normalise it.
+
+**Both proposals were wrong, and so was the framing.** See batch 7 (D25) in this
+document: the encoding is not the problem, whitespace is incidental, and
+restricting field names would have broken a case that works today. Kept here
+unedited as the record of what was believed.
 
 ---
 
@@ -640,3 +643,140 @@ simply never entered, which worked but by accident.
 
 507 unit (was 443 at the start of batch 6) / 104 integration / 16 GUI; `ruff` and
 `mypy` clean; probe sweep 19 OK, 1 SKIPPED (retired), 0 FAIL.
+
+---
+
+## Batch 7 — `pyrs/resources/application.yml`, `pyrs/utilities/config.py`
+
+Keys, then their reader. +18 and +35 lines — the smallest batch so far, and the
+one where every later module's behaviour is decided.
+
+### D25 — closes D5, by disproving it
+
+I opened this batch by re-raising D5 as a whitespace defect and measuring it:
+
+```console
+fields after override : [' direction ']
+validate_config()     : ACCEPTED
+field_names()         : (' direction ',)
+column_name()         : '__20direction__20'
+write                 : ValueError: Sample log name  direction  is not found in
+                        allowed value list ['vx', 'vy', 'vz', ...]
+```
+
+**Reviewer:** *"This isn't quite right. The issue has not much to do with
+whitespace. Any field-name that is not an identifier would trigger this. Is the
+correct solution to not allow non-identifier names to be used as discriminator
+columns?"*
+
+The first half is right and the second does not hold. Measured with a realistic
+non-identifier PV log name:
+
+```console
+encode/decode round trip: True -> BL7__3ACS__3ASample__3ADir
+on-disk column(s)       : ['BL7__3ACS__3ASample__3ADir']
+read back               : 2 workspace(s), ['11', '22']
+```
+
+`BL7:CS:Sample:Dir` writes, splits and recovers correctly. Requiring
+`column_name(n) == n` would **reject that**, which is the case the `__` escape
+introducer exists for (Decisions row 23) — a PV log would be usable as a
+retained log in `logs/*` but not as a discriminator, for no reason the format
+imposes.
+
+**What actually failed** is that no property or sample log of that name exists.
+`direciton` — an ordinary misspelling, and a perfectly good identifier — fails
+identically. Whitespace was incidental and the identifier distinction is a red
+herring; I carried batch 2's framing forward instead of testing it.
+
+**And it cannot be checked at configuration time.** Whether a field resolves
+depends on the workspace, which does not exist when the config is read.
+`field_names()` already does everything that *is* checkable there: blank,
+duplicate, reserved-column collision, and an unrestorable property.
+
+**So the defect is diagnosis, not acceptance**, and the fix is in
+`_discriminator.resolve`, where the failure occurs and the context exists. It now
+reports the configuration key, quotes the name with `repr` so whitespace is
+visible without anyone guessing at it, says which of the two lookups were tried,
+notes when the name matches a *method* rather than a property, and lists the logs
+that are present.
+
+**Not added, at the reviewer's direction:** a "did you mean" suggestion.
+*"Every time I've seen that attempted, the developers get it wrong, so it ends up
+being extra code that isn't helping anyway."* Quoting the configured name exactly
+shows the whitespace case without guessing at intent.
+
+One implementation note: `resolve` tests `name in ws.sample_log_names` rather than
+catching `get_sample_log_value`'s `ValueError`. The other failure that method
+raises — a log varying across scan points — is an `AssertionError` that must keep
+propagating, and re-describing one of two failures by catching an exception type
+means depending on which is which. Same reasoning as O5 in batch 5.
+
+Pinned by `TestUnresolvableFieldIsReportedAgainstTheConfiguration`, whose
+docstring records that a non-identifier name is legal, so the disproved premise
+is not re-adopted later.
+
+### D26 — `validate_config`'s docstring claims more than it checks
+
+> *"Raise RuntimeError unless **every typed key** holds the type it declares"*
+
+It checks four of nine. Measured:
+
+```console
+instrument_name       : 123     -> validate_config() ACCEPTED
+use_production_names  : 'yes'   -> validate_config() ACCEPTED
+```
+
+Severity differs per key, which is the useful part:
+
+- `instrument_name` / `instrument_short_name` **are** defended at the point of
+  use — `_Instrument._instrument_names` checks `isinstance(value, str)`, warns,
+  and falls back to `"HB2B"`. The gap is real; the docstring is what is wrong.
+- `extension` is unchecked and reaches `impose_extension` in three viewers, so a
+  non-string there is a user-visible filename failure.
+- `use_production_names` has **no Python consumer at all** — `grep` finds it only
+  in plan documents. Declared, documented, unvalidated and unread, so a typo in
+  it stays silently inert until spec 10 flips it.
+
+**Fixed — the validator now covers every key the file ships.** The keys live in
+`BOOL_KEYS` / `TEXT_KEYS` / `EXTENSION_KEYS` / `LIST_KEYS`, combined as
+`VALIDATED_KEYS`, and `validate_config` loops them. Listing them rather than
+checking them inline is the point: `TestEveryShippedKeyIsValidated` parses the
+shipped `application.yml` and asserts the two sets agree **in both directions**,
+so a key added to the YAML without being added here fails a test instead of
+shipping unchecked. That is what the docstring could not do on its own.
+
+The extension rule is new and not merely a type check: `with_suffix` raises
+`ValueError: Invalid suffix 'nxs'` on a suffix with no leading dot, and
+`with_suffix("")` **silently strips** the extension. Both measured.
+
+One behaviour change worth noting: a blank `instrument_name` is now rejected at
+import, where it previously warned and fell back to `"HB2B"` at the point of
+use. The fallback stays as a backstop for a config-read failure, but a blank name
+in a file written for another beamline is a typo, and silently writing `HB2B`
+into it is the outcome worth preventing.
+
+### Observations
+
+**O8 — `validate_config` is never re-run after a runtime override.** Deferred, as
+**DD-1** in [deferred-defects.md](deferred-defects.md): the gap is in
+`neutrons_standard.Config`, which offers no validation hook on `refresh`/
+`loadEnv` and whose `_Config.validate` is a documented no-op. Every PyRS-side
+workaround is worse than the gap — scattering `validate_config()` across
+consumers, wrapping `Config` in a second accessor the module docstring forbids,
+or re-validating some keys at some call sites, which reads as coverage and is
+not. Tolerable because the runtime-override path is test-only by decision (batch
+2); what is missing is that nothing says so.
+
+**O9 — the `discriminator_fields` comment was stale. Fixed.** It now states that
+a name matching a `HidraWorkspace` property must match a **restorable** one
+(`pyrs.utilities.restorable_property`), and why a plain read-only property is
+refused when the configuration is read: its value would be written to the file
+and silently lost on the way back, with the reconstructed workspace answering
+whatever its constructor defaulted to. It also records that a non-identifier
+name is legal and encoded reversibly — the premise D25 disproved, now stated
+where a user configuring the key will actually read it.
+
+### Verification
+
+520 unit (was 507) / 104 integration / 16 GUI; `ruff` and `mypy` clean.

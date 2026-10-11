@@ -24,6 +24,19 @@ nxstress:
   # the combined peak index. A value is taken from a matching `HidraWorkspace`
   # `@property` if one exists, otherwise from the sample log of that name -- which
   # must be constant across the workspace's scan points.
+  #
+  # A name that matches a `HidraWorkspace` property must match a *restorable* one
+  # -- a `pyrs.utilities.restorable_property.restorable_property`, which names the
+  # backing attribute an I/O reader may write. A plain read-only property is
+  # refused when the configuration is read, because its value would be written to
+  # the file and then silently lost on the way back: the reconstructed workspace
+  # would answer with whatever its constructor defaulted to, and nothing would
+  # raise. A name matching no property at all falls through to the sample log and
+  # is fine.
+  #
+  # A name needs no particular spelling: one that is not a Python identifier -- a
+  # PV log name such as `BL7:CS:Sample:Dir` -- is encoded reversibly for the
+  # on-disk column and recovered exactly on read.
   discriminator_fields: []
   # Only consulted when `discriminator_fields` is empty. False rejects a
   # multi-workspace write outright; true merges the workspaces indistinguishably,

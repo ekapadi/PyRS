@@ -27,39 +27,85 @@ neutrons_standard.init("pyrs")
 from neutrons_standard.config import Config  # noqa: E402  (import must follow init())
 
 
-def validate_config() -> None:
-    """Raise RuntimeError unless every typed key holds the type it declares, then
-    raise ValueError unless at least one output format is enabled.
+#: Keys whose value must be a real YAML boolean.
+BOOL_KEYS = (
+    "nxstress.enable",
+    "nxstress.use_production_names",
+    "nxstress.merge_workspaces",
+    "legacy_io.enable",
+)
 
-    `neutrons_standard.Config` performs no schema validation of its own -- a
-    malformed override (e.g. `enable: "false"`, a YAML string rather than a real
-    boolean) would otherwise be silently truthy and pass the check below undetected.
-    The same applies to `nxstress.discriminator_fields`: a bare
-    `discriminator_fields: direction` is a string, and a string is iterable, so an
-    unchecked value would be read one character at a time as five field names.
+#: Keys whose value must be a non-blank string.
+TEXT_KEYS = (
+    "nxstress.instrument_name",
+    "nxstress.instrument_short_name",
+)
+
+#: Keys whose value must be a filename suffix -- non-blank and leading-dot.
+EXTENSION_KEYS = (
+    "nxstress.extension",
+    "legacy_io.extension",
+)
+
+#: Keys whose value must be a list of distinct non-blank strings.
+LIST_KEYS = ("nxstress.discriminator_fields",)
+
+#: Every key `validate_config` checks. `test_config.py` asserts this covers every
+#: key `application.yml` ships, so adding one there without adding it here fails a
+#: test rather than shipping an unchecked key.
+VALIDATED_KEYS = BOOL_KEYS + TEXT_KEYS + EXTENSION_KEYS + LIST_KEYS
+
+
+def validate_config() -> None:
+    """Raise unless every key in `application.yml` holds the type it declares.
+
+    `neutrons_standard.Config` performs no schema validation of its own
+    (`_Config.validate` is a no-op), so nothing else will. A malformed override
+    is not inert: `enable: "false"` is a YAML *string* and therefore truthy; a
+    bare `discriminator_fields: direction` is a string, and a string is
+    iterable, so it would be read one character at a time as five field names;
+    and an `extension` without its leading dot reaches
+    `pathlib.Path.with_suffix`, which raises `ValueError: Invalid suffix` from
+    inside a save dialog.
+
+    The keys are listed in `VALIDATED_KEYS` rather than checked inline so that a
+    test can compare them against what `application.yml` actually ships -- the
+    previous version checked four of nine while its docstring claimed all of
+    them, which is the kind of gap prose cannot keep closed.
 
     Raises:
-        RuntimeError: If `nxstress.enable`, `legacy_io.enable` or
-            `nxstress.merge_workspaces` is not a bool; if
-            `nxstress.discriminator_fields` is not a list of non-blank strings; or
-            if it names the same field twice.
+        RuntimeError: If any key holds the wrong type -- a non-bool for a
+            boolean key, a blank or non-string for a text key, an extension that
+            is blank or lacks its leading dot, or a `discriminator_fields` that
+            is not a list of distinct non-blank strings.
         ValueError: If both `nxstress.enable` and `legacy_io.enable` are false --
             PyRS must be able to write at least one output format.
     """
-    nxstress_enable = Config["nxstress.enable"]
-    legacy_io_enable = Config["legacy_io.enable"]
-    for key, value in (
-        ("nxstress.enable", nxstress_enable),
-        ("legacy_io.enable", legacy_io_enable),
-        ("nxstress.merge_workspaces", Config["nxstress.merge_workspaces"]),
-    ):
+    for key in BOOL_KEYS:
+        value = Config[key]
         if not isinstance(value, bool):
-            raise RuntimeError('Config["{}"] must be a bool, got {} ({})'.format(key, value, type(value).__name__))
+            raise RuntimeError('Config["{}"] must be a bool, got {!r} ({})'.format(key, value, type(value).__name__))
+
+    for key in TEXT_KEYS:
+        value = Config[key]
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(
+                'Config["{}"] must be a non-blank string, got {!r} ({})'.format(key, value, type(value).__name__)
+            )
+
+    for key in EXTENSION_KEYS:
+        value = Config[key]
+        if not isinstance(value, str) or not value.startswith("."):
+            raise RuntimeError(
+                'Config["{}"] must be a filename suffix beginning with ".", got {!r}.\n'
+                "  It is passed to `pathlib.Path.with_suffix`, which raises on a suffix without "
+                "one, and silently strips the extension when given an empty string.".format(key, value)
+            )
 
     fields = Config["nxstress.discriminator_fields"]
     if not isinstance(fields, list):
         raise RuntimeError(
-            'Config["nxstress.discriminator_fields"] must be a list of field names, got {} ({})'.format(
+            'Config["nxstress.discriminator_fields"] must be a list of field names, got {!r} ({})'.format(
                 fields, type(fields).__name__
             )
         )
@@ -75,7 +121,7 @@ def validate_config() -> None:
             'Config["nxstress.discriminator_fields"] names the same field more than once: {}'.format(fields)
         )
 
-    if not (nxstress_enable or legacy_io_enable):
+    if not (Config["nxstress.enable"] or Config["legacy_io.enable"]):
         raise ValueError("At least one of nxstress.enable or legacy_io.enable must be true")
 
 

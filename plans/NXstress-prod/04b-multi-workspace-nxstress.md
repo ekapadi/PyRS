@@ -1360,3 +1360,117 @@ working because the loop never entered.
 
 507 unit (was 443 at the start of batch 6) / 104 integration / 16 GUI; `ruff` and
 `mypy` clean; probe sweep 19 OK, 1 SKIPPED (retired), 0 FAIL.
+
+---
+
+## Follow-up 9 — 2026-10-10 (PR review, batch 7: an unresolvable discriminator field is a configuration error and must read as one)
+
+Batch 7 covered `pyrs/resources/application.yml` and `pyrs/utilities/config.py`
+([plans/PR_review/04b-comments.md](../PR_review/04b-comments.md)). It closes the
+open defect carried since batch 2 — by disproving it.
+
+### F9.1 — the open "whitespace" defect was neither about whitespace nor about identifiers
+
+Batch 2 recorded that a configured discriminator field name containing stray
+whitespace is accepted and produces a column that will not match once the typo is
+corrected, and proposed either rejecting a name differing from its own `.strip()`
+or normalising it.
+
+Re-measured, the encoding is not the problem:
+
+```console
+field_names()  : (' direction ',)
+column_name()  : '__20direction__20'
+write          : ValueError: Sample log name  direction  is not found in
+                 allowed value list ['vx', 'vy', 'vz', ...]
+```
+
+The encoding worked exactly as designed; the lookup failed because **no property
+or sample log of that name exists**. `direciton` — a plain misspelling, and a
+perfectly good identifier — fails identically.
+
+**A non-identifier name is legitimate and works today**, which rules out the
+stricter proposal raised during review (require `column_name(n) == n`):
+
+```console
+encode/decode round trip: True -> BL7__3ACS__3ASample__3ADir
+on-disk column(s)       : ['BL7__3ACS__3ASample__3ADir']
+read back               : 2 workspace(s), ['11', '22']
+```
+
+`BL7:CS:Sample:Dir` writes, splits and recovers. Rejecting escaped columns would
+undo what Decisions row 23's `__` escape introducer was added for, and would make
+a PV log usable as a retained log in `logs/*` but not as a discriminator.
+
+### F9.2 — it cannot be caught at configuration time, so the fix is the message
+
+Whether a field resolves depends on the workspace, which does not exist when the
+configuration is read. `field_names()` already performs every check that *is*
+available there — blank, duplicate, reserved-column collision, and (Follow-up 3
+F3.1) an unrestorable property. Nothing further can be added without data.
+
+`_discriminator.resolve` is therefore where this belongs, and it now names the
+`nxstress.discriminator_fields` key, quotes the configured name with `repr` so
+whitespace is visible without anyone having to guess at it, states which of the
+two lookups were tried, notes when the name matches a *method* rather than a
+property, and lists the logs present.
+
+It tests `name in ws.sample_log_names` rather than catching
+`get_sample_log_value`'s `ValueError`: the other failure that method raises, a
+log varying across scan points, is an `AssertionError` that must keep
+propagating, and re-describing one of two failures by catching an exception type
+means depending on which is which — the same reasoning as Follow-up 8 F8.4's
+assertion-message finding.
+
+A "did you mean" suggestion was considered and **rejected by the stakeholder**:
+*"Every time I've seen that attempted, the developers get it wrong, so it ends up
+being extra code that isn't helping anyway."* Quoting the name exactly covers the
+whitespace case without inferring intent.
+
+Pinned by `test_discriminator.py::TestUnresolvableFieldIsReportedAgainstTheConfiguration`,
+whose docstring records that a non-identifier name is legal — so the disproved
+premise is not re-adopted by a later reader.
+
+### F9.3 — `validate_config` checked four of the nine keys it claimed to
+
+Its docstring said it raises "unless **every typed key** holds the type it
+declares". `use_production_names`, `instrument_name`, `instrument_short_name`
+and both `extension` keys went unchecked:
+
+```console
+instrument_name       : 123     -> validate_config() ACCEPTED
+use_production_names  : 'yes'   -> validate_config() ACCEPTED
+```
+
+Now driven by `VALIDATED_KEYS`, and `test_config.py::TestEveryShippedKeyIsValidated`
+parses the shipped `application.yml` and compares the two sets **in both
+directions**. A key added to the YAML without being added to the validator now
+fails a test — which is the part a docstring cannot do, and the reason the claim
+had decayed in the first place.
+
+The extension rule is new and not merely a type check: `Path.with_suffix` raises
+`ValueError: Invalid suffix 'nxs'` without a leading dot, and `with_suffix("")`
+**silently strips** the extension.
+
+A blank `instrument_name` is now rejected at import rather than warned about and
+replaced with `"HB2B"` at the point of use. The fallback remains as a backstop
+for a config-read failure; silently writing `HB2B` into a file prepared for
+another beamline is the outcome worth preventing.
+
+**Also recorded:** `nxstress.use_production_names` has no Python consumer at all
+-- `grep` finds it only in plan documents. It is now at least type-checked, so a
+typo in it fails loudly rather than sitting inert until spec 10 flips it.
+
+### Deferred from this batch
+
+`validate_config` runs once, at import, and nothing re-validates after
+`Config.loadEnv(...)`. The gap belongs to `neutrons_standard.Config`, which
+offers no validation hook and whose `_Config.validate` is a no-op, so it is
+recorded as **DD-1** in
+[plans/PR_review/deferred-defects.md](../PR_review/deferred-defects.md) rather
+than worked around here. The runtime-override path is test-only by decision
+(Follow-up 3 F3.2-F3.3), which is what makes deferring it safe.
+
+### Verification
+
+520 unit (was 507) / 104 integration / 16 GUI; `ruff` and `mypy` clean.

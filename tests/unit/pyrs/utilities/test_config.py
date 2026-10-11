@@ -12,6 +12,8 @@ a chance to redirect `HOME` to a `tmp_path`.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 if TYPE_CHECKING:
     # Only for type-checking -- see tests/unit/pyrs/utilities/conftest.py's
     # `default_config` fixture for why a real runtime import here is unsafe.
@@ -260,3 +262,101 @@ class TestConfigOverrideReachesBoundNames:
         # Assert
         assert Config["nxstress.instrument_name"] == "OVERRIDDEN"
         assert Config["nxstress.enable"] == enabled
+
+
+class TestEveryShippedKeyIsValidated:
+    """`validate_config` must check every key `application.yml` ships.
+
+    Its docstring used to claim it checked "every typed key" while checking four
+    of nine: `use_production_names`, `instrument_name`, `instrument_short_name`
+    and both `extension` keys went unchecked. That gap is exactly what prose
+    cannot keep closed -- a key added to the YAML is not a change to the
+    docstring, so the claim decays silently.
+
+    Stated against the shipped file rather than against a second list, so adding
+    a key to `application.yml` and forgetting `VALIDATED_KEYS` fails here instead
+    of shipping an unchecked key.
+    """
+
+    @staticmethod
+    def _shipped_keys() -> set:
+        """Dotted leaf keys of the shipped default configuration."""
+        import yaml
+
+        import pyrs.resources
+
+        text = (Path(pyrs.resources.__file__).parent / "application.yml").read_text()
+        document = yaml.safe_load(text)
+
+        def leaves(node, prefix=""):
+            for key, value in node.items():
+                path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    yield from leaves(value, path)
+                else:
+                    yield path
+
+        return set(leaves(document))
+
+    def test_every_shipped_key_is_checked(self, default_config):
+        # Arrange
+        from pyrs.utilities.config import VALIDATED_KEYS
+
+        # Act
+        unchecked = self._shipped_keys() - set(VALIDATED_KEYS)
+
+        # Assert
+        assert not unchecked, (
+            f"key(s) in application.yml that `validate_config` does not check: {sorted(unchecked)}. "
+            "Add each to the matching tuple in `pyrs/utilities/config.py`."
+        )
+
+    def test_no_checked_key_is_absent_from_the_file(self, default_config):
+        """The other direction: a checked key that no longer ships would raise on import."""
+        # Arrange
+        from pyrs.utilities.config import VALIDATED_KEYS
+
+        # Act
+        missing = set(VALIDATED_KEYS) - self._shipped_keys()
+
+        # Assert
+        assert not missing, f"`VALIDATED_KEYS` names key(s) `application.yml` does not ship: {sorted(missing)}"
+
+
+class TestValidateConfigRejectsMalformedValues:
+    """One case per rule, since each rule exists for a different silent failure."""
+
+    @staticmethod
+    def _validate(config_override, override: dict):
+        from pyrs.utilities.config import validate_config
+
+        config_override(override)
+        validate_config()
+
+    def test_a_yaml_string_for_a_boolean_raises(self, config_override):
+        """`enable: "false"` is a string, and a string is truthy."""
+        with pytest.raises(RuntimeError, match=r"must be a bool"):
+            self._validate(config_override, {"nxstress": {"use_production_names": "false"}})
+
+    def test_a_non_string_instrument_name_raises(self, config_override):
+        with pytest.raises(RuntimeError, match=r"must be a non-blank string"):
+            self._validate(config_override, {"nxstress": {"instrument_name": 123}})
+
+    def test_a_blank_instrument_name_raises(self, config_override):
+        with pytest.raises(RuntimeError, match=r"must be a non-blank string"):
+            self._validate(config_override, {"nxstress": {"instrument_short_name": "   "}})
+
+    def test_an_extension_without_its_leading_dot_raises(self, config_override):
+        """`Path.with_suffix` raises `ValueError: Invalid suffix` on one."""
+        with pytest.raises(RuntimeError, match=r'must be a filename suffix beginning with "\."'):
+            self._validate(config_override, {"nxstress": {"extension": "nxs"}})
+
+    def test_an_empty_extension_raises(self, config_override):
+        """`with_suffix("")` silently strips the extension instead of raising."""
+        with pytest.raises(RuntimeError, match=r"must be a filename suffix"):
+            self._validate(config_override, {"legacy_io": {"extension": ""}})
+
+    def test_the_shipped_defaults_validate(self, default_config):
+        from pyrs.utilities.config import validate_config
+
+        validate_config()

@@ -132,8 +132,64 @@ class TestResolve:
     def test_name_in_neither_place_raises(self):
         ws = workspace_with_logs(direction=np.array(["11"] * 3))
 
-        with pytest.raises(ValueError, match="not found in allowed value list"):
+        with pytest.raises(ValueError, match=r"matches neither"):
             _discriminator.resolve(ws, "absent_field")
+
+
+class TestUnresolvableFieldIsReportedAgainstTheConfiguration:
+    """A field that resolves to nothing is a configuration error, and must read as one.
+
+    Whether a discriminator field resolves depends on the *workspace*, so
+    `field_names` cannot check it when the configuration is read -- this is the
+    only place it can be detected. The failure used to surface as
+    `get_sample_log_value`'s "Sample log name X is not found in allowed value
+    list [...]", which names neither the configuration key nor the fact that a
+    property was tried first, so a reader had no reason to look at their config.
+
+    Note what is *not* the problem here. A non-identifier name is perfectly
+    legal: `BL7:CS:Sample:Dir` encodes to `BL7__3ACS__3ASample__3ADir` via the
+    `__` escape introducer and round-trips through a write and read, which is
+    what that encoding exists for. A misspelling fails the same way whether or
+    not it is an identifier.
+    """
+
+    @staticmethod
+    def _message(name):
+        ws = workspace_with_logs(direction=np.array(["11"] * 3))
+        with pytest.raises(ValueError) as caught:
+            _discriminator.resolve(ws, name)
+        return str(caught.value)
+
+    def test_it_names_the_configuration_key(self):
+        assert "nxstress.discriminator_fields" in self._message("absent_field")
+
+    def test_it_quotes_the_name_so_whitespace_is_visible(self):
+        """The whole of the original report: ' direction ' vs 'direction'."""
+        # Act
+        message = self._message(" direction ")
+
+        # Assert -- `repr`, not bare interpolation, or the spaces are invisible
+        assert "' direction '" in message
+
+    def test_it_lists_the_logs_that_are_present(self):
+        assert "direction" in self._message("direciton")
+
+    def test_it_says_when_the_name_is_a_method_not_a_property(self):
+        """`getattr` would return a bound method, which is why `resolve` tests for `property`."""
+        # Act
+        message = self._message("save_experimental_data")
+
+        # Assert
+        assert "not a property" in message
+
+    def test_a_constancy_failure_still_raises_assertion_error(self):
+        """The other failure `resolve` can meet must not be re-described as a typo."""
+        # Arrange -- a log that varies across scan points
+        ws = workspace_with_logs(direction=np.array(["11", "22", "33"]))
+
+        # Act / Assert
+        with pytest.raises(AssertionError):
+            _discriminator.resolve(ws, "direction")
 
 
 class TestApply:

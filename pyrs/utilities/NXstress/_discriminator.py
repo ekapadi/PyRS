@@ -224,14 +224,43 @@ def resolve(ws: HidraWorkspace, name: str) -> Any:
         The single value this workspace carries for the field.
 
     Raises:
-        ValueError: If `name` matches neither a property nor a sample log.
+        ValueError: If `name` matches neither a property nor a sample log. The
+            message names the configuration key, because this is where a typo in
+            it first becomes visible and the workspace is the only place it
+            *can* be detected: whether a field resolves depends on the data, so
+            `field_names` cannot check it when the configuration is read.
         AssertionError: If the sample log is not constant across the
             workspace's scan points -- raised by `get_sample_log_value`, which
             already performs that check, so no constancy test is repeated here.
     """
-    if name.isidentifier() and isinstance(getattr(type(ws), name, None), property):
+    attribute = getattr(type(ws), name, None) if name.isidentifier() else None
+    if isinstance(attribute, property):
         return _as_text(getattr(ws, name))
-    return _as_text(ws.get_sample_log_value(name))
+
+    # Membership rather than catching `get_sample_log_value`'s `ValueError`: the
+    # constancy failure it raises for a varying log is an `AssertionError` that
+    # must keep propagating, and catching by exception type to re-describe one
+    # of two failures means depending on which is which.
+    if name in ws.sample_log_names:
+        return _as_text(ws.get_sample_log_value(name))
+
+    tried = "a sample log" if attribute is None and not name.isidentifier() else "a property, then a sample log"
+    detail = ""
+    if attribute is not None:
+        # An identifier that names a method rather than a property -- `getattr`
+        # would return a bound method, which is why `resolve` tests for
+        # `property` rather than using `hasattr`.
+        detail = (
+            f"\n  '{name}' names a {type(attribute).__name__} on `HidraWorkspace`, not a property, "
+            "so it cannot carry a value."
+        )
+    raise ValueError(
+        f"NXstress: discriminator field {name!r} matches neither {tried} of this workspace.\n"
+        f"  It comes from the 'nxstress.discriminator_fields' configuration key; check it for a "
+        f"typo, including leading or trailing spaces -- the name is quoted above exactly as "
+        f"configured.{detail}\n"
+        f"  Sample logs present: {sorted(ws.sample_log_names)}"
+    )
 
 
 def _as_text(value: Any) -> Any:
