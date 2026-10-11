@@ -27,10 +27,10 @@ def test_default_config_loads_shipped_defaults(default_config: "_Config") -> Non
 
     # Assert
     assert config["nxstress.enable"] is True
-    assert config["nxstress.extension"] == ".nxs"
+    assert config["nxstress.extension"] == "nxs"
     assert config["nxstress.use_production_names"] is False
     assert config["legacy_io.enable"] is True
-    assert config["legacy_io.extension"] == ".h5"
+    assert config["legacy_io.extension"] == "h5"
 
 
 def test_default_config_env_override_merges_on_top_of_default(default_config: "_Config", tmp_path: Path) -> None:
@@ -93,7 +93,7 @@ def test_validate_nxstress_enable_not_bool(default_config: "_Config", tmp_path: 
     default_config.loadEnv(str(override_file))
 
     # Act / Assert
-    with pytest.raises(RuntimeError, match='Config\\["nxstress.enable"\\] must be a bool'):
+    with pytest.raises(RuntimeError, match=r"nxstress\.enable: Input should be a valid boolean"):
         config_module.validate_config()
 
 
@@ -109,7 +109,7 @@ def test_validate_legacy_io_enable_not_bool(default_config: "_Config", tmp_path:
     default_config.loadEnv(str(override_file))
 
     # Act / Assert
-    with pytest.raises(RuntimeError, match='Config\\["legacy_io.enable"\\] must be a bool'):
+    with pytest.raises(RuntimeError, match=r"legacy_io\.enable: Input should be a valid boolean"):
         config_module.validate_config()
 
 
@@ -135,7 +135,7 @@ class TestDiscriminatorConfigKeys:
         override_file.write_text("nxstress:\n  discriminator_fields: direction\n")
         default_config.loadEnv(str(override_file))
 
-        with pytest.raises(RuntimeError, match="must be a list of field names"):
+        with pytest.raises(RuntimeError, match=r"discriminator_fields: Input should be a valid list"):
             config_module.validate_config()
 
     def test_validate_config_rejects_a_blank_entry(self, default_config: "_Config", tmp_path: Path) -> None:
@@ -147,7 +147,7 @@ class TestDiscriminatorConfigKeys:
         override_file.write_text("nxstress:\n  discriminator_fields: ['direction', '  ']\n")
         default_config.loadEnv(str(override_file))
 
-        with pytest.raises(RuntimeError, match="non-blank strings"):
+        with pytest.raises(RuntimeError, match=r"discriminator_fields\.\d+: .*must not be blank"):
             config_module.validate_config()
 
     def test_validate_config_rejects_a_repeated_field(self, default_config: "_Config", tmp_path: Path) -> None:
@@ -173,7 +173,7 @@ class TestDiscriminatorConfigKeys:
         override_file.write_text('nxstress:\n  merge_workspaces: "true"\n')
         default_config.loadEnv(str(override_file))
 
-        with pytest.raises(RuntimeError, match="must be a bool"):
+        with pytest.raises(RuntimeError, match=r"merge_workspaces: Input should be a valid boolean"):
             config_module.validate_config()
 
     def test_validate_config_accepts_a_well_formed_field_list(self, default_config: "_Config", tmp_path: Path) -> None:
@@ -265,17 +265,19 @@ class TestConfigOverrideReachesBoundNames:
 
 
 class TestEveryShippedKeyIsValidated:
-    """`validate_config` must check every key `application.yml` ships.
+    """`ConfigSchema` must describe every key `application.yml` ships.
 
-    Its docstring used to claim it checked "every typed key" while checking four
-    of nine: `use_production_names`, `instrument_name`, `instrument_short_name`
-    and both `extension` keys went unchecked. That gap is exactly what prose
-    cannot keep closed -- a key added to the YAML is not a change to the
-    docstring, so the claim decays silently.
+    `validate_config`'s docstring once claimed it checked "every typed key"
+    while checking four of nine. A key list maintained beside the thing it
+    describes decays, because adding a key to the YAML is not a change to the
+    list -- so `VALIDATED_KEYS` is now *derived* from `ConfigSchema`, and this
+    compares the schema against the shipped file in both directions.
 
-    Stated against the shipped file rather than against a second list, so adding
-    a key to `application.yml` and forgetting `VALIDATED_KEYS` fails here instead
-    of shipping an unchecked key.
+    It also guards a failure mode the schema introduces: a `BaseModel` with no
+    fields validates anything at all. `ConfigSchema` was briefly written with
+    only a docstring, which made `VALIDATED_KEYS` empty and `validate_config()`
+    pass vacuously -- the assertion that the key set is non-empty is what turns
+    that into a failure.
     """
 
     @staticmethod
@@ -298,6 +300,14 @@ class TestEveryShippedKeyIsValidated:
 
         return set(leaves(document))
 
+    def test_the_schema_describes_some_keys_at_all(self, default_config):
+        """A `BaseModel` with no fields accepts anything, silently."""
+        # Arrange
+        from pyrs.utilities.config import VALIDATED_KEYS
+
+        # Assert
+        assert VALIDATED_KEYS, "`ConfigSchema` declares no fields, so `validate_config` checks nothing"
+
     def test_every_shipped_key_is_checked(self, default_config):
         # Arrange
         from pyrs.utilities.config import VALIDATED_KEYS
@@ -307,8 +317,8 @@ class TestEveryShippedKeyIsValidated:
 
         # Assert
         assert not unchecked, (
-            f"key(s) in application.yml that `validate_config` does not check: {sorted(unchecked)}. "
-            "Add each to the matching tuple in `pyrs/utilities/config.py`."
+            f"key(s) in application.yml that `ConfigSchema` does not describe: {sorted(unchecked)}. "
+            "Add each to the matching section model in `pyrs/utilities/config.py`."
         )
 
     def test_no_checked_key_is_absent_from_the_file(self, default_config):
@@ -320,7 +330,7 @@ class TestEveryShippedKeyIsValidated:
         missing = set(VALIDATED_KEYS) - self._shipped_keys()
 
         # Assert
-        assert not missing, f"`VALIDATED_KEYS` names key(s) `application.yml` does not ship: {sorted(missing)}"
+        assert not missing, f"`ConfigSchema` names key(s) `application.yml` does not ship: {sorted(missing)}"
 
 
 class TestValidateConfigRejectsMalformedValues:
@@ -333,28 +343,56 @@ class TestValidateConfigRejectsMalformedValues:
         config_override(override)
         validate_config()
 
-    def test_a_yaml_string_for_a_boolean_raises(self, config_override):
-        """`enable: "false"` is a string, and a string is truthy."""
-        with pytest.raises(RuntimeError, match=r"must be a bool"):
-            self._validate(config_override, {"nxstress": {"use_production_names": "false"}})
+    @pytest.mark.parametrize("value", ["false", "yes", 1], ids=["false", "yes", "one"])
+    def test_a_non_boolean_for_a_boolean_key_raises(self, config_override, value):
+        """Pydantic's *default* accepts all three, which is why the schema is strict.
+
+        `enable: "false"` is a YAML string and therefore truthy, and a permissive
+        schema would validate it as `False` -- turning the check into a
+        conversion. Measured on pydantic 2.13.5.
+        """
+        with pytest.raises(RuntimeError, match=r"use_production_names: Input should be a valid boolean"):
+            self._validate(config_override, {"nxstress": {"use_production_names": value}})
 
     def test_a_non_string_instrument_name_raises(self, config_override):
-        with pytest.raises(RuntimeError, match=r"must be a non-blank string"):
+        with pytest.raises(RuntimeError, match=r"instrument_name: Input should be a valid string"):
             self._validate(config_override, {"nxstress": {"instrument_name": 123}})
 
     def test_a_blank_instrument_name_raises(self, config_override):
-        with pytest.raises(RuntimeError, match=r"must be a non-blank string"):
+        with pytest.raises(RuntimeError, match=r"instrument_short_name: .*must not be blank"):
             self._validate(config_override, {"nxstress": {"instrument_short_name": "   "}})
 
-    def test_an_extension_without_its_leading_dot_raises(self, config_override):
-        """`Path.with_suffix` raises `ValueError: Invalid suffix` on one."""
-        with pytest.raises(RuntimeError, match=r'must be a filename suffix beginning with "\."'):
-            self._validate(config_override, {"nxstress": {"extension": "nxs"}})
+    def test_an_extension_carrying_its_dot_raises(self, config_override):
+        """The dot is a `pathlib` separator, supplied by `impose_extension`."""
+        with pytest.raises(RuntimeError, match=r"extension: .*must not begin with"):
+            self._validate(config_override, {"nxstress": {"extension": ".nxs"}})
 
     def test_an_empty_extension_raises(self, config_override):
-        """`with_suffix("")` silently strips the extension instead of raising."""
-        with pytest.raises(RuntimeError, match=r"must be a filename suffix"):
+        with pytest.raises(RuntimeError, match=r"extension: .*must not be blank"):
             self._validate(config_override, {"legacy_io": {"extension": ""}})
+
+    def test_a_bare_string_for_the_field_list_raises(self, config_override):
+        """A string is iterable, so it would be read one character at a time."""
+        with pytest.raises(RuntimeError, match=r"discriminator_fields: Input should be a valid list"):
+            self._validate(config_override, {"nxstress": {"discriminator_fields": "direction"}})
+
+    def test_a_repeated_discriminator_field_raises(self, config_override):
+        with pytest.raises(RuntimeError, match=r"names the same field more than once"):
+            self._validate(config_override, {"nxstress": {"discriminator_fields": ["a", "a"]}})
+
+    def test_every_offending_key_is_named_at_once(self, config_override):
+        """A config with two mistakes should report two, not just the first."""
+        # Act
+        with pytest.raises(RuntimeError) as caught:
+            self._validate(
+                config_override,
+                {"nxstress": {"enable": "false", "instrument_name": 7}},
+            )
+
+        # Assert
+        message = str(caught.value)
+        assert "nxstress.enable" in message
+        assert "nxstress.instrument_name" in message
 
     def test_the_shipped_defaults_validate(self, default_config):
         from pyrs.utilities.config import validate_config

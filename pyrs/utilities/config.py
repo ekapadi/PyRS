@@ -21,105 +21,141 @@ mechanics.
 is a no-op) -- `validate_config` below is PyRS's own rule.
 """
 
+from typing import Annotated, Any, Iterator
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, ValidationError
+
 import neutrons_standard
 
 neutrons_standard.init("pyrs")
 from neutrons_standard.config import Config  # noqa: E402  (import must follow init())
 
 
-#: Keys whose value must be a real YAML boolean.
-BOOL_KEYS = (
-    "nxstress.enable",
-    "nxstress.use_production_names",
-    "nxstress.merge_workspaces",
-    "legacy_io.enable",
-)
+def _non_blank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("must not be blank")
+    return value
 
-#: Keys whose value must be a non-blank string.
-TEXT_KEYS = (
-    "nxstress.instrument_name",
-    "nxstress.instrument_short_name",
-)
 
-#: Keys whose value must be a filename suffix -- non-blank and leading-dot.
-EXTENSION_KEYS = (
-    "nxstress.extension",
-    "legacy_io.extension",
-)
+def _bare_suffix(value: str) -> str:
+    """A filename extension **without** its leading dot.
 
-#: Keys whose value must be a list of distinct non-blank strings.
-LIST_KEYS = ("nxstress.discriminator_fields",)
+    The dot belongs to `pathlib`, not to the configuration: `impose_extension`
+    adds it. Writing `.nxs` here would make the separator part of the value, so
+    a reader could not tell whether it was configured or implied.
+    """
+    if value.startswith("."):
+        raise ValueError(f"must not begin with '.' -- write {value.lstrip('.')!r}, the dot is implied")
+    if not value.strip():
+        raise ValueError("must not be blank")
+    return value
 
-#: Every key `validate_config` checks. `test_config.py` asserts this covers every
-#: key `application.yml` ships, so adding one there without adding it here fails a
-#: test rather than shipping an unchecked key.
-VALIDATED_KEYS = BOOL_KEYS + TEXT_KEYS + EXTENSION_KEYS + LIST_KEYS
+
+def _distinct(value: list) -> list:
+    if len(set(value)) != len(value):
+        raise ValueError(f"names the same field more than once: {value}")
+    return value
+
+
+NonBlankText = Annotated[str, AfterValidator(_non_blank)]
+BareSuffix = Annotated[str, AfterValidator(_bare_suffix)]
+DiscriminatorFields = Annotated[list[NonBlankText], AfterValidator(_distinct)]
+
+
+class _Section(BaseModel):
+    # `strict` is load-bearing, not tidiness. Pydantic's default is permissive
+    # enough to accept exactly the malformed values this schema exists to reject:
+    # `enable: "false"` validates as `False`, and `use_production_names: "yes"`
+    # as `True`. Measured on pydantic 2.13.5.
+    model_config = ConfigDict(strict=True)
+
+
+class _NXstress(_Section):
+    enable: bool
+    extension: BareSuffix
+    use_production_names: bool
+    instrument_name: NonBlankText
+    instrument_short_name: NonBlankText
+    discriminator_fields: DiscriminatorFields
+    merge_workspaces: bool
+
+
+class _LegacyIO(_Section):
+    enable: bool
+    extension: BareSuffix
+
+
+class ConfigSchema(_Section):
+    """Schema for `pyrs/resources/application.yml`, one field per shipped key.
+
+    `neutrons_standard.Config` performs no schema validation of its own
+    (`_Config.validate` is a no-op), so without this nothing checks the file at
+    all -- and a malformed override is not inert. `enable: "false"` is a YAML
+    *string* and therefore truthy; a bare `discriminator_fields: direction` is a
+    string, and a string is iterable, so it would be read one character at a
+    time as five field names.
+
+    Declared as a schema rather than as a list of keys and a pile of `isinstance`
+    checks so that `VALIDATED_KEYS` is *derived* from it. The previous version
+    kept four hand-maintained tuples whose docstring claimed to cover every key
+    while covering four of nine: a key list beside the thing it describes decays,
+    and only deriving one from the other stops it.
+    """
+
+    nxstress: _NXstress
+    legacy_io: _LegacyIO
+
+
+def _dotted_keys(model: type[BaseModel], prefix: str = "") -> Iterator[str]:
+    """Every leaf key of `model`, dotted, in declaration order."""
+    for name, field in model.model_fields.items():
+        path = f"{prefix}.{name}" if prefix else name
+        annotation = field.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            yield from _dotted_keys(annotation, path)
+        else:
+            yield path
+
+
+#: Every key `validate_config` checks, derived from `ConfigSchema`.
+#: `test_config.py` asserts this matches what `application.yml` ships, in both
+#: directions, so a key added to one and not the other fails a test.
+VALIDATED_KEYS: tuple[str, ...] = tuple(_dotted_keys(ConfigSchema))
+
+
+def _as_nested(keys: tuple[str, ...]) -> dict:
+    """The configured values for `keys`, shaped like the YAML document.
+
+    Read one key at a time through `Config[...]` rather than from the merged
+    document: the document lives in `Config._config`, which is module-private and
+    reserved for test fixtures (see this module's docstring).
+    """
+    document: dict[str, Any] = {}
+    for key in keys:
+        section, _, leaf = key.rpartition(".")
+        document.setdefault(section, {})[leaf] = Config[key]
+    return document
 
 
 def validate_config() -> None:
-    """Raise unless every key in `application.yml` holds the type it declares.
-
-    `neutrons_standard.Config` performs no schema validation of its own
-    (`_Config.validate` is a no-op), so nothing else will. A malformed override
-    is not inert: `enable: "false"` is a YAML *string* and therefore truthy; a
-    bare `discriminator_fields: direction` is a string, and a string is
-    iterable, so it would be read one character at a time as five field names;
-    and an `extension` without its leading dot reaches
-    `pathlib.Path.with_suffix`, which raises `ValueError: Invalid suffix` from
-    inside a save dialog.
-
-    The keys are listed in `VALIDATED_KEYS` rather than checked inline so that a
-    test can compare them against what `application.yml` actually ships -- the
-    previous version checked four of nine while its docstring claimed all of
-    them, which is the kind of gap prose cannot keep closed.
+    """Raise unless `application.yml` matches `ConfigSchema`.
 
     Raises:
-        RuntimeError: If any key holds the wrong type -- a non-bool for a
-            boolean key, a blank or non-string for a text key, an extension that
-            is blank or lacks its leading dot, or a `discriminator_fields` that
-            is not a list of distinct non-blank strings.
+        RuntimeError: If any key is missing or holds the wrong type or shape.
+            The message names each offending key and what was wrong with it.
         ValueError: If both `nxstress.enable` and `legacy_io.enable` are false --
-            PyRS must be able to write at least one output format.
+            PyRS must be able to write at least one output format. Kept outside
+            the schema because it is a rule *between* sections, and because a
+            caller catching it should not have to reach into a `ValidationError`
+            to find out which rule failed.
     """
-    for key in BOOL_KEYS:
-        value = Config[key]
-        if not isinstance(value, bool):
-            raise RuntimeError('Config["{}"] must be a bool, got {!r} ({})'.format(key, value, type(value).__name__))
-
-    for key in TEXT_KEYS:
-        value = Config[key]
-        if not isinstance(value, str) or not value.strip():
-            raise RuntimeError(
-                'Config["{}"] must be a non-blank string, got {!r} ({})'.format(key, value, type(value).__name__)
-            )
-
-    for key in EXTENSION_KEYS:
-        value = Config[key]
-        if not isinstance(value, str) or not value.startswith("."):
-            raise RuntimeError(
-                'Config["{}"] must be a filename suffix beginning with ".", got {!r}.\n'
-                "  It is passed to `pathlib.Path.with_suffix`, which raises on a suffix without "
-                "one, and silently strips the extension when given an empty string.".format(key, value)
-            )
-
-    fields = Config["nxstress.discriminator_fields"]
-    if not isinstance(fields, list):
-        raise RuntimeError(
-            'Config["nxstress.discriminator_fields"] must be a list of field names, got {!r} ({})'.format(
-                fields, type(fields).__name__
-            )
+    try:
+        ConfigSchema(**_as_nested(VALIDATED_KEYS))
+    except ValidationError as error:
+        problems = "\n".join(
+            "  {}: {}".format(".".join(str(part) for part in item["loc"]), item["msg"]) for item in error.errors()
         )
-    for field in fields:
-        if not isinstance(field, str) or not field.strip():
-            raise RuntimeError(
-                'Config["nxstress.discriminator_fields"] entries must be non-blank strings, got {!r} in {}'.format(
-                    field, fields
-                )
-            )
-    if len(set(fields)) != len(fields):
-        raise RuntimeError(
-            'Config["nxstress.discriminator_fields"] names the same field more than once: {}'.format(fields)
-        )
+        raise RuntimeError(f"Invalid PyRS configuration:\n{problems}") from error
 
     if not (Config["nxstress.enable"] or Config["legacy_io.enable"]):
         raise ValueError("At least one of nxstress.enable or legacy_io.enable must be true")

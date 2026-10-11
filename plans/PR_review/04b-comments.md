@@ -738,25 +738,77 @@ Severity differs per key, which is the useful part:
   in plan documents. Declared, documented, unvalidated and unread, so a typo in
   it stays silently inert until spec 10 flips it.
 
-**Fixed — the validator now covers every key the file ships.** The keys live in
-`BOOL_KEYS` / `TEXT_KEYS` / `EXTENSION_KEYS` / `LIST_KEYS`, combined as
-`VALIDATED_KEYS`, and `validate_config` loops them. Listing them rather than
-checking them inline is the point: `TestEveryShippedKeyIsValidated` parses the
-shipped `application.yml` and asserts the two sets agree **in both directions**,
-so a key added to the YAML without being added here fails a test instead of
-shipping unchecked. That is what the docstring could not do on its own.
+**Fixed — the validator now covers every key the file ships, from a schema.**
 
-The extension rule is new and not merely a type check: `with_suffix` raises
-`ValueError: Invalid suffix 'nxs'` on a suffix with no leading dot, and
-`with_suffix("")` **silently strips** the extension. Both measured.
+First attempt used four hand-maintained tuples (`BOOL_KEYS`, `TEXT_KEYS`,
+`EXTENSION_KEYS`, `LIST_KEYS`) combined into `VALIDATED_KEYS`.
 
-One behaviour change worth noting: a blank `instrument_name` is now rejected at
-import, where it previously warned and fell back to `"HB2B"` at the point of
-use. The fallback stays as a backstop for a config-read failure, but a blank name
-in a file written for another beamline is a typo, and silently writing `HB2B`
-into it is the outcome worth preventing.
+**Reviewer:** *"As it stands, 'VALIDATED_KEYS' is a bit messy. Could
+'VALIDATED_KEYS' be specified somehow using a schema for the YAML config file?"*
+
+It can, and it should: a key list maintained *beside* the thing it describes is
+what decayed in the first place. `ConfigSchema` is now a pydantic model
+mirroring `application.yml` -- one section model per top-level section, one
+field per key -- and `VALIDATED_KEYS` is **derived** from it by walking
+`model_fields`.
+
+**`strict=True` is load-bearing, not tidiness.** Pydantic's default would have
+made this worse than the hand-rolled checks:
+
+```console
+  Lax     flag='false' -> False      <-- the exact defect, now a silent conversion
+  Lax     flag='yes'   -> True
+  Lax     flag=1       -> True
+  Strict  flag='false' -> rejected
+```
+
+A permissive schema would have turned the check into a coercion. Measured on
+pydantic 2.13.5 and recorded in the model's comment.
+
+Errors are rendered from `ValidationError.errors()` into one `RuntimeError`
+naming each offending key, so a config with two mistakes reports both -- pinned
+by `test_every_offending_key_is_named_at_once`. The cross-section rule ("at
+least one output enabled") stays outside the schema: it is a rule *between*
+sections, and a caller catching it should not have to dig through a
+`ValidationError` to learn which rule failed.
+
+**A schema introduces its own silent-pass mode, and it bit immediately.**
+`ConfigSchema` was first written with only a docstring and no fields. A pydantic
+model with no fields validates anything, so `VALIDATED_KEYS` came back empty and
+`validate_config()` passed vacuously -- caught only because the measurement
+printed the key list rather than just the verdict. Now asserted directly by
+`test_the_schema_describes_some_keys_at_all`.
+
+**A blank `instrument_name` is now rejected at import**, where it previously
+warned and fell back to `"HB2B"` at the point of use. The fallback stays as a
+backstop for a config-read failure; silently writing `HB2B` into a file prepared
+for another beamline is the outcome worth preventing.
 
 ### Observations
+
+### D27 — the configured extension carried its separator
+
+`application.yml` shipped `extension: ".nxs"`, and the first version of the
+schema *required* the leading dot, on the grounds that `Path.with_suffix` raises
+`ValueError: Invalid suffix 'nxs'` without one.
+
+**Reviewer:** *"Please do not put '.' in the extension; this needs to be
+implicit."*
+
+Right -- the dot is a `pathlib` separator, not part of the extension, and
+leaving it in the value means a reader cannot tell which. The configuration now
+reads `extension: "nxs"` / `"h5"`, the schema **rejects** a value that carries a
+dot (naming the value to write instead), and `impose_extension` supplies it:
+
+```console
+  impose_extension("run.dat", 'nxs' ) -> 'run.nxs'
+  impose_extension("run.dat", '.nxs') -> 'run.nxs'
+```
+
+It still tolerates a dotted argument, because it is also called with literals
+elsewhere; only the *configured* value is constrained. All five call sites pass
+`Config[...extension]`, and every other `.nxs`/`.h5` in the viewers is a
+hard-coded literal unaffected by the change.
 
 **O8 — `validate_config` is never re-run after a runtime override.** Deferred, as
 **DD-1** in [deferred-defects.md](deferred-defects.md): the gap is in
@@ -779,4 +831,4 @@ where a user configuring the key will actually read it.
 
 ### Verification
 
-520 unit (was 507) / 104 integration / 16 GUI; `ruff` and `mypy` clean.
+526 unit (was 507) / 104 integration / 16 GUI; `ruff` and `mypy` clean.

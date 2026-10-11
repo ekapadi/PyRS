@@ -1442,20 +1442,51 @@ instrument_name       : 123     -> validate_config() ACCEPTED
 use_production_names  : 'yes'   -> validate_config() ACCEPTED
 ```
 
-Now driven by `VALIDATED_KEYS`, and `test_config.py::TestEveryShippedKeyIsValidated`
-parses the shipped `application.yml` and compares the two sets **in both
-directions**. A key added to the YAML without being added to the validator now
-fails a test — which is the part a docstring cannot do, and the reason the claim
-had decayed in the first place.
+The replacement is a **schema**, at the stakeholder's direction: a first pass
+used four hand-maintained key tuples, and *"could `VALIDATED_KEYS` be specified
+somehow using a schema for the YAML config file?"* is the better shape, because a
+key list maintained beside the thing it describes is what decayed to begin with.
+`ConfigSchema` is a pydantic model mirroring `application.yml` -- one section
+model per section, one field per key -- and `VALIDATED_KEYS` is **derived** from
+it. `test_config.py::TestEveryShippedKeyIsValidated` compares the schema against
+the shipped file in both directions.
 
-The extension rule is new and not merely a type check: `Path.with_suffix` raises
-`ValueError: Invalid suffix 'nxs'` without a leading dot, and `with_suffix("")`
-**silently strips** the extension.
+**`strict=True` is load-bearing.** Pydantic's default would have made the schema
+*worse* than the hand-rolled checks it replaced, by converting rather than
+rejecting the exact values at issue:
+
+```console
+  Lax     flag='false' -> False
+  Lax     flag='yes'   -> True
+  Strict  flag='false' -> rejected
+```
+
+**And a schema has its own silent-pass mode.** `ConfigSchema` was first written
+with only a docstring; a pydantic model with no fields validates anything, so
+`VALIDATED_KEYS` came back empty and `validate_config()` passed vacuously. Caught
+because the measurement printed the derived key list rather than only the
+verdict, and now asserted by `test_the_schema_describes_some_keys_at_all`.
 
 A blank `instrument_name` is now rejected at import rather than warned about and
 replaced with `"HB2B"` at the point of use. The fallback remains as a backstop
 for a config-read failure; silently writing `HB2B` into a file prepared for
 another beamline is the outcome worth preventing.
+
+### F9.4 — the configured extension carried its own separator
+
+`application.yml` shipped `extension: ".nxs"`, and the first version of the
+schema required the dot because `Path.with_suffix` raises
+`ValueError: Invalid suffix 'nxs'` without one. The stakeholder's correction --
+*"please do not put '.' in the extension; this needs to be implicit"* -- is the
+right call: the dot is a `pathlib` separator rather than part of the extension,
+and keeping it in the value leaves a reader unable to tell which.
+
+The configuration now reads `"nxs"` / `"h5"`, the schema rejects a value
+carrying a dot and names the value to write instead, and `impose_extension`
+supplies the separator. It still tolerates a dotted *argument*, since it is also
+called with literals; only the configured value is constrained. All five call
+sites pass `Config[...extension]`, and every other `.nxs`/`.h5` in the viewers is
+a hard-coded literal unaffected by this.
 
 **Also recorded:** `nxstress.use_production_names` has no Python consumer at all
 -- `grep` finds it only in plan documents. It is now at least type-checked, so a
@@ -1473,4 +1504,4 @@ than worked around here. The runtime-override path is test-only by decision
 
 ### Verification
 
-520 unit (was 507) / 104 integration / 16 GUI; `ruff` and `mypy` clean.
+526 unit (was 507) / 104 integration / 16 GUI; `ruff` and `mypy` clean.
