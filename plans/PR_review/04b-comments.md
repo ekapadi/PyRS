@@ -1087,3 +1087,90 @@ series, and is called out in the commit message accordingly.
 
 526 unit / 112 integration / 16 GUI; `ruff` and `mypy` clean; probe sweep 19 OK,
 1 SKIPPED (retired), 0 FAIL.
+
+---
+
+## Batch 11 — `tests/util/peak_collection_helpers.py`
+
+The other shared helper. 14 insertions, 1 deletion: `createPeakCollection` gains
+`sub_runs` (overriding the default `1..N`, for the same disjoint-coverage reason
+as batch 10) and `mask`, exposing `PeakCollection`'s own argument — which is what
+let batch 5's texture tests build a collection keyed to an eta reduction.
+
+### No defects in the change
+
+It is the sibling of batch 10's, and it got the contested case **right**: it
+raises when `sub_runs` and `N_subrun` disagree, where `minimal_HidraWorkspace`
+silently discarded `n_subruns`. Two helpers, one PR, same conflict, opposite
+handling — D33 brought the workspace one into line with this one rather than the
+reverse.
+
+Two things checked rather than eyeballed:
+
+- **`HidraConstants.DEFAULT_MASK` and NXstress's `DEFAULT_TAG`** are both
+  `'_DEFAULT_'`, but not duplicated: `_definitions.py:336` is
+  `DEFAULT_TAG = HidraConstants.DEFAULT_MASK`. Derived, so no drift — worth
+  confirming, since batch 5's whole mask-namespace separation turns on that
+  string.
+- **What the parameter accepts.** The guards are tighter than the explicit check
+  suggests, because `SubRuns` catches the rest, and *names the real problem*:
+
+```console
+ascending  [1,3,5]   -> [1, 3, 5]
+descending [5,3,1]   -> RuntimeError: subruns are not sorted in increasing order
+duplicates [1,1,1]   -> RuntimeError: subruns are not sorted in increasing order
+length mismatch      -> ValueError: sub_runs has 2 entries but N_subrun is 3
+```
+
+Contrast O10, where the same class of input produced *"Cannot change subruns when
+non-empty"*. Identical underlying guard; legible here only because nothing
+pre-empts it by assigning a sorted copy first.
+
+### The abandoned `permutations` block — deleted
+
+A triple-quoted **string literal** (not `#` comments, which is why `islice` and
+`permutations` appear in no import and `ruff` said nothing) sat above the new
+code:
+
+```python
+all_runs = [n for n in range(3 * N_subrun)]
+subruns = next(islice(permutations(...), 2 * N_subrun, 2 * N_subrun + 1))
+```
+
+Asked whether it was a preserved alternative. It is not — it is an **earlier
+attempt at exactly what the new parameter does**, abandoned at the point of
+hitting the increasing-order constraint, with the author's note directly beneath
+it: *"Assume subruns are supposed to be in order. Why would that be the case?"*
+
+It would have run, but only by luck. At the chosen index it is increasing for
+every realistic `N` — because `2*N` is still near the start of the lexicographic
+sequence, where only the last element varies — and one step further it is not:
+
+```console
+N=3 ... N=8 at index 2*N : increasing? True   (always)
+index 6: (0, 1, 8)       : increasing? True
+index 7: (0, 2, 1)       : increasing? False  <-- SubRuns.set would raise
+```
+
+It also yields one deterministic value per `N` despite the comment saying
+"random", and `all_runs` is assigned and never used. Deleted.
+
+**The author's question now has an answer, recorded in its place:** sub-runs must
+be strictly increasing because `SubRuns.set` enforces it — duplicates included,
+since it tests `value[:-1] < value[1:]` — and the reason *that* rule exists is
+that every per-scan-point array is paired with the axis positionally, so a
+different order reattributes values silently rather than failing (measured in
+O10). The comment points at where it is enforced, and says why no check is
+repeated in the helper.
+
+### O11 — mixed annotation style, fixed
+
+`peak_tag: str` and `N_subrun: int` were annotated; `sub_runs` and `exclude_list`
+were bare. Not an implicit `Optional` — `mypy` has nothing to object to without
+an annotation — but `sub_runs` is the parameter D32 had just annotated in the
+sibling fixture, so the two differed for no reason. Both are now
+`Sequence[int] | None`.
+
+### Verification
+
+526 unit / 112 integration / 16 GUI; `ruff` and `mypy` clean.

@@ -1,4 +1,4 @@
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 import numpy as np
 
 from pyrs.core.peak_profile_utility import get_parameter_dtype
@@ -34,9 +34,9 @@ def createPeakCollection() -> Generator[Callable[..., PeakCollection]]:
         projectfilename: str,
         runnumber: int,
         N_subrun: int,
-        sub_runs=None,
+        sub_runs: Sequence[int] | None = None,
         mask: str = HidraConstants.DEFAULT_MASK,
-        exclude_list=None,
+        exclude_list: Sequence[int] | None = None,
         N_counts=1000,  # range for random counts
         N_span=10000.0,  # domain for random axes
         error_fraction_min=0.005,  # minimum fractional error (0.5%), as a fraction of the value drawn
@@ -59,14 +59,16 @@ def createPeakCollection() -> Generator[Callable[..., PeakCollection]]:
             mask=mask,
         )
 
-        """
-        # Grab some random indices from somewhere in the middle of the permutations sequence.
-        all_runs = [n for n in range(3 * N_subrun)]
-        subruns = next(islice(permutations((n for n in range(3 * N_subrun)), N_subrun), 2 * N_subrun, 2 * N_subrun + 1))
-        """
-        # Assume subruns are supposed to be in order. Why would that be the case?
         # `sub_runs` overrides the default 1..N: a multi-workspace NXstress entry
         # needs its inputs to cover *disjoint* scan points, which 1..N cannot express.
+        #
+        # They must be strictly increasing, and that is not this helper's rule to
+        # relax: `SubRuns.set` (pyrs/dataobjects/sample_logs.py) rejects anything
+        # else outright -- duplicates included, since it tests `value[:-1] < value[1:]`.
+        # The reason is that every per-scan-point array is paired with this axis
+        # *positionally*, so a different order silently reattributes values rather
+        # than failing. No check is repeated here: `SubRuns.set` names the real
+        # problem, and the length check below is the one thing it cannot see.
         if sub_runs is not None:
             subruns = [int(n) for n in sub_runs]
             if len(subruns) != N_subrun:
