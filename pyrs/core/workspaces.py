@@ -529,8 +529,11 @@ class HidraWorkspace:
         checkdatatypes.check_type("HIDRA project file", hidra_file, HidraProjectFile)
         self._project_file_name = hidra_file.name
 
-        # create the spectrum map - must exist before loading the counts array
-        self._sample_logs.subruns = hidra_file.read_sub_runs()
+        # create the spectrum map - must exist before loading the counts array.
+        # NOT sorted: a file's axis is already in increasing order, and one that
+        # is not is a corrupt file rather than something to quietly repair --
+        # every array read after this is positionally paired with it.
+        self._set_subruns(hidra_file.read_sub_runs(), sort=False)
 
         # load raw detector counts
         if load_raw_counts:
@@ -1075,10 +1078,45 @@ class HidraWorkspace:
         if len(self._sample_logs) > 0:
             self._sample_logs.matching_subruns(sub_runs)
         else:
-            self._sample_logs.subruns = np.atleast_1d(sub_runs)
+            # NOT sorted: `log_value_array` is paired with `sub_runs` positionally,
+            # so reordering the axis alone would reattribute every value. See
+            # `_set_subruns`.
+            self._set_subruns(sub_runs, sort=False)
 
         # Set sub runs and log value, units to dictionary
         self._sample_logs[log_name, units] = np.atleast_1d(log_value_array)
+
+    def _set_subruns(self, sub_runs, *, sort: bool) -> None:
+        """The one place this workspace's sub-run axis is assigned.
+
+        Two callers need it and they need different things, which is why `sort`
+        is a required keyword rather than a default: writing it out at each call
+        site is the point.
+
+        `set_sub_runs` sets the axis alone and sorts, because there is nothing
+        for a reordering to misalign. `set_sample_log` must **not**, because the
+        values it stores are paired with `sub_runs` *positionally* -- sorting the
+        axis while leaving the values alone silently reattributes every one of
+        them:
+
+            axis as given    : sub-runs [3, 1, 2] <-> vx [30.0, 10.0, 20.0]
+            axis sorted only : sub-run 1 -> 30.0, which was measured at sub-run 3
+
+        and nothing raises, because the lengths still agree. Unsorted input there
+        is refused by `SubRuns.set` instead, which is the layer that owns the
+        increasing-order invariant and states it in its own words.
+
+        Args:
+            sub_runs: The sub-run numbers.
+            sort: Whether to order them first. False leaves the caller's order,
+                and a non-increasing one is then rejected downstream.
+
+        Raises:
+            RuntimeError: From `SubRuns.set`, if the axis is already set to
+                different values, or if `sort` is False and the input is not in
+                increasing order.
+        """
+        self._sample_logs.subruns = sorted(sub_runs) if sort else np.atleast_1d(sub_runs)
 
     def set_sub_runs(self, sub_runs):
         """Set sub runs to this workspace
@@ -1093,7 +1131,9 @@ class HidraWorkspace:
         -------
 
         """
-        self._sample_logs.subruns = sorted(sub_runs)
+        # Sorted: this method sets the axis alone, with no values to be
+        # reattributed by reordering it. See `_set_subruns`.
+        self._set_subruns(sub_runs, sort=True)
 
     def save_experimental_data(self, hidra_project, sub_runs=None, ignore_raw_counts=False):
         """Save experimental data including raw counts and sample logs to HiDRA project file

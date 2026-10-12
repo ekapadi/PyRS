@@ -995,3 +995,95 @@ seven new integration tests are `test_nxstress_load.py` (4) and
 `test_strainstress_direction.py` (3); both are integration by `CLAUDE.md`'s
 dividing line — interface code driving a second component — despite synthetic
 fixtures under `tmp_path`.
+
+---
+
+## Batch 10 — `tests/unit/pyrs/utilities/NXstress/conftest.py`
+
+The fixtures everything else uses. 18 insertions, 4 deletions; the second hunk is
+pure reformatting of `minimal_PeakCollection`'s signature, no behaviour.
+
+`minimal_HidraWorkspace` gains a `sub_runs` parameter overriding the default
+`1..N`, for a stated reason: two workspaces sharing one entry must cover disjoint
+scan points, and the interesting case — values that *interleave*, `[1,3,5]`
+against `[2,4,6]` — cannot be built from `1..N` at all. That is the shape probe
+`a5_subruns_nonmonotonic.py` and Decisions row 31 rest on.
+
+### D32 — the last implicit `Optional` in the repository
+
+`sub_runs: np.ndarray = None`. Same defect class as 04b's Follow-up 6 F6.2
+(`_peaks.indexed`'s `logs: SampleLogs = None`). `mypy` sees it perfectly well
+when pointed at the file — nothing runs `mypy` over `tests/`. Swept: this was the
+**only** remaining instance across `pyrs/` and `tests/`. Now
+`np.ndarray | None = None`.
+
+### D33 — an explicitly passed `n_subruns` was silently discarded
+
+```console
+n_subruns=6 AND sub_runs=[1,2,3] -> [1, 2, 3]
+```
+
+The comment said `sub_runs` "overrides the default `1..N`", which is true of the
+*default*; it also overrode an explicit `n_subruns`, with no indication, in a
+fixture used by essentially every NXstress test. A test reading
+`minimal_HidraWorkspace(n_subruns=6, sub_runs=(1, 2, 3))` asked for six and got
+three.
+
+Now refused. `_DEFAULT_N_SUBRUNS` is a named constant so the fixture can tell
+"passed 3 explicitly" from "did not pass it":
+
+```console
+sub_runs only        -> [1, 3, 5]
+n_subruns only       -> [1, 2, 3, 4]
+both, agreeing       -> [2, 4, 6]
+both, disagreeing    -> ValueError: n_subruns=6 disagrees with sub_runs=[1, 2, 3] (3 values).
+```
+
+### O10 — the sub-run axis was assigned in three places **(outside this PR's scope)**
+
+Found via the new parameter: a non-monotonic `sub_runs` produced
+`"Cannot change subruns when non-empty (previous=[1 2 3], new=[3 1 2])"` on a
+freshly built workspace, which is not what went wrong.
+
+Three sites assigned `self._sample_logs.subruns`, disagreeing about sorting:
+
+| site | assigned | effect |
+|---|---|---|
+| `HidraWorkspace.set_sub_runs` | `sorted(sub_runs)` | silently reorders |
+| `HidraWorkspace.set_sample_log` | `np.atleast_1d(sub_runs)` | caller's order |
+| `HidraWorkspace.load_hidra_project` | `hidra_file.read_sub_runs()` | file's order |
+
+with `SubRuns.set` beneath them *refusing* non-increasing input. One caller
+pre-empted that guard by sorting, the others did not, and the disagreement
+surfaced as the wrong error — by the time the second assignment ran, the first
+had already happened, so it reported an attempted *change*.
+
+**Two options were weighed.** Deleting the sort would centralise on `SubRuns.set`,
+the layer that owns the invariant and states it in its own words — but would
+raise for any caller currently relying on the sort, and such callers are exactly
+the ones a test suite might not reach. **The stakeholder chose the safer option:**
+*"It doesn't completely fix the issue, but it's less likely to break code that we
+might not see."*
+
+**And the sort cannot be unconditional**, which is what shaped the helper.
+`set_sample_log` pairs its values with `sub_runs` **positionally**, so sorting the
+axis alone reattributes every one of them, silently, because the lengths still
+agree:
+
+```console
+axis as given    : sub-runs [3, 1, 2] <-> vx [30.0, 10.0, 20.0]
+axis sorted only : sub-run 1 -> 30.0, which was measured at sub-run 3
+```
+
+So `_set_subruns(sub_runs, *, sort: bool)` is the single assignment point, and
+`sort` is a **required keyword with no default** — writing it out at each call
+site is the point, since the three callers genuinely differ. The measurement
+above is in its docstring, as the reason.
+
+This touches `pyrs/core/workspaces.py`, a core data class outside the plan
+series, and is called out in the commit message accordingly.
+
+### Verification
+
+526 unit / 112 integration / 16 GUI; `ruff` and `mypy` clean; probe sweep 19 OK,
+1 SKIPPED (retired), 0 FAIL.
