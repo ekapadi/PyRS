@@ -275,6 +275,10 @@ class PeakFittingViewer(QMainWindow):
             pop_message(
                 self, "Unable to load {}".format(hidra_file_name), detailed_message=str(run_err), message_type="error"
             )
+            # Return rather than fall through: everything below assumes a loaded
+            # workspace, so continuing turns a reported failure into a second,
+            # unreported one against whatever was loaded previously.
+            return
 
         # --- set up sub-run range, comboboxes and 1D-plot widgets ---
         sub_run_list = self._model.get_subruns_limit()

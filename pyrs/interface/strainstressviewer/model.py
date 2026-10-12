@@ -8,6 +8,7 @@ from pyrs.core.summary_generator_stress import SummaryGeneratorStress
 from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ignore
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.restorable_property import restore
+from pyrs.utilities.convertdatatypes import to_text
 from qtpy.QtCore import Signal, QObject  # type:ignore
 
 
@@ -287,6 +288,20 @@ class Model(QObject):
             # `direction` property too, which is what NXstress reads and restores.
             restore(ws, "direction", direction)
             ws.load_hidra_project(source_project, False, False)
+            # The direction is the user's assertion about which file is which, made
+            # in the file-selection UI. If the project itself records one and the two
+            # disagree, one of them is wrong and neither this model nor the viewer
+            # can tell which -- so say so rather than silently preferring either.
+            # `ws.direction` would answer with the restored value above, so the log
+            # is read directly.
+            if "direction" in ws.sample_log_names:
+                recorded = to_text(ws.get_sample_log_value("direction"))
+                if recorded != direction:
+                    raise ValueError(
+                        f"This file records direction '{recorded}', but it was selected as the "
+                        f"'{direction}' direction.\n"
+                        "  Load it under the direction it records, or correct the file."
+                    )
             peaks = dict()
             for peak in source_project.read_peak_tags():
                 peaks[peak] = source_project.read_peak_parameters(peak)

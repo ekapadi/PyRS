@@ -178,10 +178,12 @@ class NXstress:
             ValueError: If the inputs are inconsistent (mismatched list lengths,
                 a missing required log, overlapping scan points between inputs),
                 or if `entry_number` skips past the next free entry.
-            RuntimeError: On an append, for a violated invariant -- a duplicate
-                row, an unmet precondition, or a disagreement with the target
-                entry. **Invalidates this instance**: a later `write` on it
-                raises rather than proceeding.
+            RuntimeError: If called outside the context manager, where there is
+                no open root to write to; if this instance was already
+                invalidated; or, on an append, for a violated invariant -- a
+                duplicate row, an unmet precondition, or a disagreement with the
+                target entry. The last **invalidates this instance**: a later
+                `write` on it raises rather than proceeding.
             NotImplementedError: On an append, for Case B -- extending a
                 compound key the entry already holds with further scan points.
                 That needs a mid-array insertion rather than a tail-append and
@@ -280,6 +282,63 @@ class NXstress:
 
         self._append(self._root[entry_name], wss, peakss)
 
+    def entry_numbers(self) -> tuple[int, ...]:
+        """The 1-based numbers of the `NXentry` groups this file holds, ascending.
+
+        Derived from the names actually present, not from a count: the count is
+        the highest number only when the numbering has no gaps, and a file this
+        code did not write is not obliged to oblige. `suffix_from_group_name` is
+        the declared inverse of `group_naming_scheme`, so this stays correct if
+        the naming changes. Entry 1 is handled separately because its name
+        carries no suffix for that inverse to find.
+
+        Public because `read`/`write` take an `entry_number` and nothing else
+        exposes which numbers are valid: a caller that can present only *one*
+        entry has to be able to ask how many there are before it reads. See
+        `pyrs.interface.nxstress_load`.
+
+        Like every other operation on this class, it is only usable **inside the
+        context manager** -- it reads the open root, not the path.
+
+        A method rather than a property, deliberately: the answer is a live query
+        against the open file and changes within one instance's lifetime, so
+        attribute syntax would imply a stability it does not have.
+
+            >>> with NXstress(path, "a") as nxs:     # doctest: +SKIP
+            ...     nxs.entry_numbers()              # (1,)
+            ...     nxs.write([ws], [peaks], entry_number=2)
+            ...     nxs.entry_numbers()              # (1, 2)
+
+        It also raises outside the context, and a property that raises makes an
+        object awkward to inspect in a debugger or a `repr`.
+
+        Returns:
+            Ascending entry numbers; empty for a file with no entries.
+
+        Raises:
+            RuntimeError: If called outside the context manager, where there is
+                no open root to inspect.
+
+        Example:
+            >>> with NXstress(path, "r") as nxs:      # doctest: +SKIP
+            ...     if len(nxs.entry_numbers()) == 1:
+            ...         workspaces, peakss = nxs.read()
+        """
+        root = self._root
+        if root is None:
+            raise RuntimeError("Usage error: only usage as context manager is supported!")
+
+        numbers = {1} if GROUP_NAME.ENTRY in root else set()
+        for name in root:
+            if not str(name).startswith(f"{GROUP_NAME.ENTRY}_"):
+                # A root may hold things that are not entries; `suffix_from_group_name`
+                # raises rather than returning for those.
+                continue
+            suffix = suffix_from_group_name(str(name), GROUP_NAME.ENTRY)
+            if suffix.isdigit():
+                numbers.add(int(suffix))
+        return tuple(sorted(numbers))
+
     @staticmethod
     def _validateEntryNumber(entry_number: int) -> None:
         if entry_number < 1:
@@ -306,19 +365,9 @@ class NXstress:
         # the declared inverse of `group_naming_scheme`, so this stays correct if
         # the naming changes. Entry 1 is handled separately because its name
         # carries no suffix for that inverse to find.
+        numbers = set(self.entry_numbers())
         root = self._root
-        if root is None:
-            raise RuntimeError("Usage error: only usage as context manager is supported!")
-
-        numbers = {1} if GROUP_NAME.ENTRY in root else set()
-        for name in root:
-            if not str(name).startswith(f"{GROUP_NAME.ENTRY}_"):
-                # A root may hold things that are not entries; `suffix_from_group_name`
-                # raises rather than returning for those.
-                continue
-            suffix = suffix_from_group_name(str(name), GROUP_NAME.ENTRY)
-            if suffix.isdigit():
-                numbers.add(int(suffix))
+        assert root is not None, "`entry_numbers` raises when there is no open root"
         highest = max(numbers) if numbers else 0
 
         requested = entry_number if entry_number is not None else self._entry_number
@@ -727,8 +776,9 @@ class NXstress:
         Raises
         ------
         RuntimeError
-            If the entry's discriminator columns disagree with
-            `nxstress.discriminator_fields`, or if the recovered scan-point
+            If called outside the context manager, where there is no open root
+            to read; if the entry's discriminator columns disagree with
+            `nxstress.discriminator_fields`; or if the recovered scan-point
             sets do not partition the entry's scan-point axis.
         """
         # Verify context manager is active

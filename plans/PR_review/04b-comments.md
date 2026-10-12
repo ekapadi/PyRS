@@ -832,3 +832,166 @@ where a user configuring the key will actually read it.
 ### Verification
 
 526 unit (was 507) / 104 integration / 16 GUI; `ruff` and `mypy` clean.
+
+---
+
+## Batch 8 — the model classes
+
+Four files, not the three Appendix A names: `strainstressviewer/model.py` joined
+during batch 2. 14 insertions, 5 deletions — the smallest batch in the walk, and
+the only one that touches what a user clicks.
+
+Three of the four are purely 04b's signature change. The defects are in what that
+change had to assume.
+
+### D28 — both reading viewers silently discarded everything but the first workspace
+
+```python
+# A viewer holds one workspace; an entry written by this viewer holds one.
+wss, peakss = nx.read()
+ws, peaks = wss[0], peakss[0]
+```
+
+The comment's second clause is true of files *this viewer wrote*, and a user may
+open any file. Measured:
+
+```console
+entry holds 2 workspace(s): ['11', '22']
+the viewer takes wss[0] -> '11'; the rest are discarded silently
+```
+
+A multi-workspace entry — what 04b exists to produce, and what every append
+creates — loaded with no error and part of its content missing. The next save
+would have made that permanent.
+
+### D29 — and the same for entries
+
+Neither reader passed `entry_number`, so `read()` took entry 1:
+
+```console
+file holds entries: ['entry', 'entry_2']
+the viewer calls read() with no entry_number -> entry 1 only
+```
+
+Same silent truncation, one level up, and 04c made multi-entry files routine to
+write.
+
+### Resolution — refuse by name, and leave the application usable
+
+**Reviewer:** *"Hopefully for all of these changes we have the option to make the
+user aware of what's going on, without terminating their action possibilities
+(i.e. allowing them to continue)?"*
+
+New `pyrs/interface/nxstress_load.py`: `read_single_workspace(path)` and
+`UnsupportedNXstressFile`. It checks the entry count *before* reading and the
+workspace count after, and the message names what the file actually holds and
+states that nothing was loaded.
+
+Refusing rather than loading part of the file is the deliberate half: a partial
+load can be fitted and saved back, and the remainder would be gone. Nothing is
+loaded, so nothing is lost, and the user can pick another file.
+
+`UnsupportedNXstressFile` subclasses `RuntimeError` specifically so it lands in
+the viewers' existing "unable to load" handling — pinned by a test, since that
+inheritance is load-bearing and not obvious.
+
+**Two things had to be fixed for "aware but not terminated" to be true:**
+
+- `peak_fitting_viewer.load_and_plot` caught the failure, popped a dialog, and
+  then **fell through** to code assuming a loaded workspace — turning a reported
+  failure into a second, unreported one against whatever was loaded before. It
+  now returns. Pre-existing, and reachable far more often now.
+- `texture_fitting`'s load path had **no error handling at all**: a raise escaped
+  into Qt, leaving a traceback on stderr and a window that looked as though
+  nothing had happened. It now pops the same dialog and returns, matching
+  `loadRunNumber` directly above it.
+
+`NXstress.entry_numbers()` is new and public, extracted from the scan
+`_resolveTarget` was doing inline: a caller that can present only one entry has
+to be able to ask how many there are.
+
+### Observation 3 — direction mismatch now raises
+
+`strainstressviewer` records the user's direction choice on the workspace, and
+the project file may record one of its own. If they disagree, one is wrong and
+neither the model nor the viewer can tell which, so it is reported instead of
+silently preferring either. The log is read directly rather than through
+`ws.direction`, which would answer with the value just restored.
+
+This model already had the shape the other two needed — `except` →
+`failureMsg.emit(...)` → return `(None, {})` — so raising gets the user a message
+and leaves the viewer usable, with no new handling.
+
+Three tests cover it: disagreeing, agreeing, and **no `direction` log at all**,
+which is the ordinary case for a Hidra project file and must keep working.
+
+### Stale comment — fixed
+
+`combine_runs_model.py` justified its empty peak list by citing
+`_Peaks.init_group([], ...)` and `_Fit.init_group(ws, [], ...)`, both pre-04b
+signatures. The reasoning held; the symbols did not. It now describes what
+actually happens, including that such an entry records the `UNDEFINED_PEAK_TAG`
+sentinel and therefore cannot be appended to — the branch batch 6 found in
+`_rejectFitModelMismatch`.
+
+
+### `entry_numbers()` — why a method, and why both refusals sit inside the `with`
+
+Raised by the reviewer after the fix landed, as a design-consistency question:
+*"How does the following method work, design-consistency wise, with the NXstress
+interface, which is generally accessed solely in terms of its context manager?"*
+
+It is not an exception to that interface. It reads `self._root`, which only
+`__enter__` sets, and carries the same guard and message as `read` and `write`:
+
+```console
+inside the context : (1, 2)
+outside it         : RuntimeError: Usage error: only usage as context manager is supported!
+```
+
+It exists because `read`/`write` already *take* an `entry_number` and nothing
+exposed which numbers are valid — so it completes an existing parameter rather
+than introducing an idiom. The scan was already there, inline in `_resolveTarget`.
+
+**Not a property**, on the measurement rather than on taste: the answer changes
+within one instance's lifetime, so attribute syntax would imply a stability it
+does not have.
+
+```console
+entry_numbers before write: (1,)
+entry_numbers after  write: (1, 2)
+```
+
+Two lesser reasons point the same way — it raises outside the context, and a
+property that raises makes an object awkward to inspect in a debugger or `repr`;
+and `read`/`write` are methods, so a property would read as a different category
+of thing.
+
+**The question also exposed a documentation gap.** `entry_numbers` had `Returns:`
+and no `Raises:`, so nothing stated the context requirement — and `read()` and
+`write()` had the **same omission**, both raising that `RuntimeError` first thing
+and documenting neither it nor (for `write`) the already-invalidated case. All
+three now state it.
+
+**And one about access.** Only the first of the helper's two refusals needs the
+open file: everything `read` returns is detached, because every read path ends in
+`.nxdata`, which materialises into numpy — measured by reading sub-runs, raw
+counts, diffraction and peak parameters after the close.
+
+**Reviewer:** *"Accessing within the with block is more consistent in any case,
+regardless of whether or not we actually need to do that."* Taken as the rule:
+the access *pattern* is the thing to be consistent about, not whether an
+individual statement strictly requires the file. Both refusals sit inside.
+
+`TestReadReturnsObjectsDetachedFromTheFile` pins the detachment anyway, since
+the helper and both viewers depend on it and `NXstress` nowhere states it — and
+the read path does index `NXfield`s lazily before materialising, so the
+assumption is not idle.
+
+### Verification
+
+526 unit / **112 integration** (was 104) / 16 GUI; `ruff` and `mypy` clean. The
+seven new integration tests are `test_nxstress_load.py` (4) and
+`test_strainstress_direction.py` (3); both are integration by `CLAUDE.md`'s
+dividing line — interface code driving a second component — despite synthetic
+fixtures under `tmp_path`.
