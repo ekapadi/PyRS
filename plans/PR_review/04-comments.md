@@ -161,3 +161,70 @@ returns a bare `str` rather than a 1-element list when exactly one mask exists �
 so `names.append(...)` would raise `AttributeError`. Unreachable today
 (`_Instrument.init_group` never passes `masks=`), and left standing rather than
 fixed blind, since the append semantics for masks are not otherwise specified.
+
+---
+
+## Batch 12 — `tests/unit/pyrs/utilities/NXstress/test_definitions.py`
+
+Pairs with batch 1. 146 insertions: the identifier-policy tests (Decisions row
+23) and `TestDiffractogramKeysAreNotMaskNames` (batch 5).
+
+### No defects in the code under test
+
+Every boundary probed behaves correctly. The identifier tests replace one that
+pinned the *previous* behaviour — "replaces `:` with `_`, leaves other chars
+unchanged" — and the file records why: that conversion was many-to-one, so
+`HB2B:CS:X` and `HB2B_CS_X` both became `HB2B_CS_X` and one log silently
+overwrote the other, `local_name` included.
+
+The round-trip inputs are well chosen rather than decorative: `"a_3Ab"` (shaped
+like a single-underscore escape), `"__"`, `"a___b"` are the adversarial cases for
+an escape introducer.
+
+### O12 — an assertion that could not fail
+
+`test_allowed_identifier_output_matches_rule` asserted
+`len(encoded) <= MAX_IDENTIFIER_LENGTH` over ~765 three-character names. Measured,
+the longest encoding those produce is **14**, against a cap of **63** — the
+assertion was unreachable, reading as length coverage while providing none.
+Removed, and replaced by O13 and O14 below, which cover what it appeared to.
+
+### O13 — the length boundary was untested
+
+The only length test passed 32 colons, overshooting the cap several times over.
+The edge itself was correct and unpinned:
+
+```console
+62 legal chars -> ok (len 62)
+63 legal chars -> ok (len 63)
+64 legal chars -> ValueError
+```
+
+Now `test_allowed_identifier_at_the_length_cap_is_accepted` (parametrised at
+`MAX-1` and `MAX`) and `..._one_past_the_length_cap_raises`. **Confirmed able to
+fail** by mutation — shifting the cap by `+1` and re-running breaks the `[64]`
+case, which is what the assertion it replaced could not do.
+
+Deliberately kept alongside `test_allowed_identifier_too_long_raises`: that one
+passes a *short* name whose **encoding** overruns the cap, so the two pin
+different paths. Said so in the docstring, since the pair otherwise reads as a
+duplicate.
+
+### O14 — round-trip coverage was far narrower than rule coverage
+
+The rule test ran 765 generated names; round-trip ran 13 hand-picked ones.
+Injectivity is the property the whole policy rests on, and the broad input set
+was already built. The generator is now a `_every_byte_value_name` helper used by
+both, so round-trip covers ~770 names:
+
+```console
+765 names, 0 fail to round-trip
+```
+
+`test_allowed_identifier_round_trip`'s dozen hand-picked inputs stay, because
+they are *chosen* — escape-shaped strings and real HB2B log names — and would be
+diluted by generation.
+
+### Verification
+
+530 unit (was 526) / 112 integration / 16 GUI; `ruff` clean.

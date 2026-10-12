@@ -115,20 +115,58 @@ class TestDefinitions:
     # 'HB2B_CS_X' both became 'HB2B_CS_X', so one log silently overwrote the other,
     # including the local_name attribute meant to preserve the original.
 
-    def test_allowed_identifier_output_matches_rule(self):
-        """Every character, at every position, encodes into the NeXus alphabet."""
-        # Arrange: one name per byte value, exercising lead, interior and trail.
-        rule = re.compile(f"^{VALID_ITEM_NAME}$")
+    @staticmethod
+    def _every_byte_value_name() -> list[str]:
+        """One name per byte value, exercising lead, interior and trail positions."""
         names = [f"a{chr(c)}b" for c in range(1, 256)]
         names += [f"{chr(c)}ab" for c in range(1, 256)]
         names += [f"ab{chr(c)}" for c in range(1, 256)]
-        names += ["2theta", "2thetaSetpoint", "ü", "日本", "_", "."]
+        return names + ["2theta", "2thetaSetpoint", "ü", "日本", "_", "."]
+
+    def test_allowed_identifier_output_matches_rule(self):
+        """Every character, at every position, encodes into the NeXus alphabet."""
+        # Arrange
+        rule = re.compile(f"^{VALID_ITEM_NAME}$")
 
         # Act / Assert
-        for name in names:
+        for name in self._every_byte_value_name():
             encoded = allowed_identifier(name)
             assert rule.match(encoded), f"{name!r} -> {encoded!r} violates VALID_ITEM_NAME"
-            assert len(encoded) <= MAX_IDENTIFIER_LENGTH
+
+    def test_allowed_identifier_round_trips_every_byte_value(self):
+        """Reversibility over the same broad input set, not a hand-picked few.
+
+        This asserts the property the identifier policy rests on across ~770
+        names rather than the dozen in `test_allowed_identifier_round_trip`
+        below, which stays because its inputs are *chosen* -- escape-shaped
+        strings and real HB2B log names -- and would be diluted by generation.
+
+        It replaces a `len(encoded) <= MAX_IDENTIFIER_LENGTH` assertion that sat
+        in `test_allowed_identifier_output_matches_rule` and could never fail:
+        these inputs are three characters, and the longest encoding they produce
+        is 14 against a cap of 63. The cap is exercised by the two boundary tests
+        below instead.
+        """
+        # Act / Assert
+        for name in self._every_byte_value_name():
+            assert decode_identifier(allowed_identifier(name)) == name
+
+    @pytest.mark.parametrize("length", [MAX_IDENTIFIER_LENGTH - 1, MAX_IDENTIFIER_LENGTH])
+    def test_allowed_identifier_at_the_length_cap_is_accepted(self, length: int):
+        """A name *at* the cap is legal. The edge is what an off-by-one moves."""
+        name = "a" * length
+
+        assert allowed_identifier(name) == name
+
+    def test_allowed_identifier_one_past_the_length_cap_raises(self):
+        """And one character further raises, rather than truncating silently.
+
+        Distinct from `test_allowed_identifier_too_long_raises` below, which
+        passes a *short* name whose **encoding** overruns the cap. This pair
+        pins the input-length edge; that one pins the encoded-length path.
+        """
+        with pytest.raises(ValueError, match=r".*exceeds the NeXus limit.*"):
+            allowed_identifier("a" * (MAX_IDENTIFIER_LENGTH + 1))
 
     def test_allowed_identifier_round_trip(self):
         """Encoding is reversible, including for inputs shaped like escapes."""
