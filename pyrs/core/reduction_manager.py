@@ -172,10 +172,10 @@ class HB2BReductionManager:
 
         # PyRS HDF5
         # Opened READONLY unconditionally: this method only ever reads, and it
-        # closes the handle before returning, so no caller can write through it
-        # -- every save path (`ReductionApp.save_diffraction_data`,
-        # `TextureFittingModel.save_fit_result`, `powder_pattern`) opens its own
-        # READWRITE handle by filename.
+        # closes the handle before returning, so no caller can write through it.
+        # Every save path opens its own READWRITE handle by filename --
+        # `ReductionApp.save_diffraction_data` (in `powder_pattern.py`),
+        # `TextureFittingModel.save_fit_result` and `PeakFittingModel.save_fit_result`.
         #
         # It previously chose the mode from `os.access(..., os.W_OK)`, i.e. from
         # the file's permissions rather than from what the operation needed, so

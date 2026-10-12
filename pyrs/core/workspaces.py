@@ -51,9 +51,10 @@ class HidraWorkspace:
         # sample logs
         self._sample_logs = SampleLogs()  # sample logs: [log name, sub run] = value
 
-        # raw Hidra project file
+        # Name only, not the `HidraProjectFile` itself: the loader closes its handle
+        # before returning, and nothing ever read the object back. See
+        # `hidra_project_file`, which answers from this name.
         self._project_file_name = None
-        self._project_file = None
 
         # Strain direction ('11', '22', '33'), when this workspace represents one.
         # `None` until set: see the `direction` property for where the value comes from.
@@ -527,7 +528,6 @@ class HidraWorkspace:
         # Check input
         checkdatatypes.check_type("HIDRA project file", hidra_file, HidraProjectFile)
         self._project_file_name = hidra_file.name
-        self._project_file = hidra_file
 
         # create the spectrum map - must exist before loading the counts array
         self._sample_logs.subruns = hidra_file.read_sub_runs()
@@ -579,7 +579,6 @@ class HidraWorkspace:
         # Check input
         checkdatatypes.check_type("HIDRA project file", hidra_file, HidraProjectFile)
         self._project_file_name = hidra_file.name
-        self._project_file = hidra_file
 
         # create the spectrum map - must exist before loading the counts array
         append_list = np.arange(len(hidra_file.read_sub_runs())) + 1 + self._sample_logs.subruns.size
