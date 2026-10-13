@@ -11,7 +11,6 @@ from nexusformat.nexus import NXcollection, NXinstrument, NXdetector_module
 import pytest
 
 from pyrs.core.workspaces import HidraWorkspace
-from pyrs.utilities.NXstress import _instrument as _instrument_module
 from pyrs.utilities.NXstress._instrument import _Instrument, _Masks
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG
 from pyrs.utilities.NXstress.NXstress import NXstress
@@ -186,18 +185,29 @@ class TestInstrument:
     # project format records no instrument name anywhere. Overriding it is what lets
     # this writer serve a beamline other than HB2B without a code change.
 
+    # These go through `config_override`, not `monkeypatch.setattr(module, "Config", {...})`.
+    # A dict stub makes `Config[key]` an ordinary dict lookup, so the real
+    # `Config.__getitem__` and the real deep-merge are never exercised; and a stub has
+    # no "unset" state, which is why `test_Instrument_name_defaults_when_not_overridden`
+    # below cannot be written against one at all. Together the three show the value
+    # *tracks* configuration, which no one of them shows alone.
+    #
+    # Measured, so the claim is not larger than it is: this does **not** catch
+    # `_instrument.py` reverting to the forbidden `from neutrons_standard.config import
+    # Config`. Both names reach the same singleton once `init("pyrs")` has run, and
+    # `config_override` mutates that instance, so these pass either way. That import is
+    # a load-*order* hazard -- it raises `ModuleNotFoundError: No module named 'None'`
+    # only when it runs before `init()` -- and is guarded by `config.py`'s docstring and
+    # by import order, not by these tests.
+
     def test_Instrument_name_from_config(
         self,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
-        monkeypatch: pytest.MonkeyPatch,
+        config_override: Callable[[dict], None],
     ):
         """Verify instrument name and short_name are taken from configuration"""
         # Arrange
-        monkeypatch.setattr(
-            _instrument_module,
-            "Config",
-            {"nxstress.instrument_name": "HB2A", "nxstress.instrument_short_name": "PG3"},
-        )
+        config_override({"nxstress": {"instrument_name": "HB2A", "instrument_short_name": "PG3"}})
         ws = minimal_HidraWorkspace(with_instrument=True)
 
         # Act
@@ -207,19 +217,39 @@ class TestInstrument:
         assert str(inst["name"].nxvalue) == "HB2A"
         assert inst["name"].attrs["short_name"] == "PG3"
 
+    def test_Instrument_name_defaults_when_not_overridden(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        default_config,
+    ):
+        """And the shipped default is what arrives when nothing overrides it.
+
+        The companion to the test above: together they show the value *tracks*
+        configuration, which neither shows alone. A dict stub could not express
+        this case at all -- there is no "unset" in a stub, only whatever the stub
+        was given.
+        """
+        # Act
+        inst = _Instrument.init_group([minimal_HidraWorkspace(with_instrument=True)])
+
+        # Assert
+        assert str(inst["name"].nxvalue) == "HB2B"
+
     def test_Instrument_name_blank_falls_back(
         self,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
-        monkeypatch: pytest.MonkeyPatch,
+        config_override: Callable[[dict], None],
         caplog: pytest.LogCaptureFixture,
     ):
-        """Verify a blank configured name falls back to HB2B, and says so"""
+        """Verify a blank configured name falls back to HB2B, and says so.
+
+        Note this is reachable only by bypassing `validate_config`, which rejects
+        a blank `instrument_name` at import. `_instrument_names` keeps the
+        fallback as a backstop for a config that could not be read at all, and
+        this covers that path.
+        """
         # Arrange
-        monkeypatch.setattr(
-            _instrument_module,
-            "Config",
-            {"nxstress.instrument_name": "   ", "nxstress.instrument_short_name": ""},
-        )
+        config_override({"nxstress": {"instrument_name": "   ", "instrument_short_name": ""}})
         ws = minimal_HidraWorkspace(with_instrument=True)
 
         # Act

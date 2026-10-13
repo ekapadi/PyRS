@@ -1381,3 +1381,66 @@ PR) was converted with them, so nothing in the suite now reaches into `_mask`.
 ### Verification
 
 533 unit / 112 integration / 16 GUI; `ruff` and `mypy` clean.
+
+---
+
+## Batch 16 — `test_input_data.py`, `test_instrument.py`, `test_sample.py`
+
+Pairs with batch 5. The diff against the PR base is 593 lines, but **375 of
+those were added by this review** in batches 5, 10 and 11 and were reviewed as
+they were written. The PR's own contribution is 219 lines, and that is what was
+walked (`git diff eb5457b1 cda22352`).
+
+### Two judgement calls that were already right
+
+`test_instrument.py` corrects an assertion that was wrong in an instructive way.
+`detector["depends_on"]` was expected to be `translation_x`, the **first** link;
+traversal follows each field's own `depends_on` back to `"."`, so the entry point
+must be the **last**. As written, the chain terminated immediately and seven
+transformations were written but unreachable -- with the test asserting that
+state was correct.
+
+`test_sample.py`'s identifier expectation is spelled out as the literal
+`HB2B__3ACS__3ACustomValue` rather than computed from `allowed_identifier`, with
+the reason given: the test should fail if the encoding changes rather than
+silently track it. Same reasoning as `expected_block_count` in batch 14.
+
+### D36 — two tests stubbed `Config` with a dict
+
+```python
+monkeypatch.setattr(
+    _instrument_module, "Config",
+    {"nxstress.instrument_name": "HB2A", "nxstress.instrument_short_name": "PG3"},
+)
+```
+
+The only two such monkeypatches in the suite. They replace the module's `Config`
+binding with a plain dict, so `Config[key]` becomes a dict lookup: the real
+`__getitem__` and the real deep-merge are never exercised, and a stub has no
+"unset" state to test against.
+
+Both now use `config_override`, and a third test --
+`test_Instrument_name_defaults_when_not_overridden` -- becomes expressible.
+Together the three show the value *tracks* configuration, which no one of them
+shows alone. `_instrument.py` imports `Config` the documented way, and a real
+override reaches it:
+
+```console
+a REAL config override reaches _instrument.py -> ('HB2A', 'PG3')
+```
+
+**A correction to my own justification, recorded because the overstatement was
+in a comment that shipped before it was checked.** I claimed this would catch
+`_instrument.py` reverting to the forbidden `from neutrons_standard.config
+import Config`. Mutation says otherwise: the mutant **passed**. Both names reach
+the same singleton once `init("pyrs")` has run, and `config_override` mutates
+that instance, so the tests are blind to the import path. Probing it directly
+reproduced the hazard the module docstring describes --
+`ModuleNotFoundError: No module named 'None'` -- which is the point: that import
+is a load-*order* fault, raising only when it runs before `init()`. It is
+guarded by import order and by `config.py`'s docstring, not by these tests. The
+comment in the test now says so.
+
+### Verification
+
+534 unit (was 533) / 112 integration / 16 GUI; `ruff` clean.
