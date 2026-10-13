@@ -1316,3 +1316,68 @@ class in the same file already did it this way.
 ### Verification
 
 533 unit (was 532) / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 15 — `tests/unit/pyrs/utilities/NXstress/test_fit.py`
+
+Pairs with batch 4. 336 insertions: `TestFitTailAppend` (per-family append
+coverage for the two parameter groups and the diffractogram),
+`TestReducedDataRowCountIsGuarded` (batch 4's D9) and
+`TestTextureWorkspaceRoundTrip` (batch 5's D13).
+
+### D35 — the "five paths" claim is wrong, in two places
+
+The docstring whose whole job is to justify **why two guards are needed** says
+`set_reduced_diffraction_data_set` "is only one of five paths that write
+`_2theta_matrix`; the other four bypass it", and lists a fourth bullet: *direct
+assignment to `_2theta_matrix`*.
+
+The first three check out — `workspaces.py` lines 204, 271 and 983/1051, with
+real callers in `reduction_manager` (x2) and `mantid_peakfit_calibration`. The
+fourth does not: **no production code outside `workspaces.py` writes that
+attribute at all**, and `_fit.py` only reads it. The sole direct assignments are
+in `test_fit.py` itself (lines 265 and 742) -- the helper that simulates the
+bypass.
+
+So it is four writers and three bypass paths. The same wrong count is duplicated
+in production, at `_fit.py:449`.
+
+The argument survives: three bypass paths still make the second guard necessary.
+But a count stated twice and wrong twice, in the text justifying a duplicated
+guard, is how the guard gets removed later. Both corrected, and the test
+docstring now says explicitly that `_inconsistent` assigning the attribute is
+*the test*, not a fifth production path.
+
+### O20 — an assertion that cannot fail
+
+```python
+indexed = _Peaks.indexed([], ws._sample_logs)
+with pytest.raises(RuntimeError, match=r"... has reduced data for 5 scan"):
+    _Diffractogram._concatenated_diffraction([ws], DEFAULT_TAG)
+assert indexed == []
+```
+
+`indexed` is never passed to the call under test, and `_Peaks.indexed([], ...)`
+returns `[]` by construction -- the assertion tests the fixture. Third instance
+of this shape in the review, after O12 and the `argsort` text scan. Removed,
+along with an unused `createPeakCollection` fixture in the same signature.
+
+### O21 — a private attribute poked where a public parameter now exists
+
+Both texture tests did `peaks._mask = "eta_0.0"`. Batch 11 added `mask` to
+`createPeakCollection` -- partly for this -- and `minimal_PeakCollection`
+forwards `**kwargs`, so the supported route gives the same result:
+
+```console
+createPeakCollection(mask=...) -> 'eta_0.0'
+pc._mask = ...                 -> 'eta_0.0'
+```
+
+Equivalent today, but the assignment bypasses whatever `PeakCollection.__init__`
+may later do with the argument. A third instance at line 497 (pre-dating this
+PR) was converted with them, so nothing in the suite now reaches into `_mask`.
+
+### Verification
+
+533 unit / 112 integration / 16 GUI; `ruff` and `mypy` clean.

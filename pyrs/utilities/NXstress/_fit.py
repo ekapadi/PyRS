@@ -446,10 +446,11 @@ class _Diffractogram:
 
             # The write boundary, and the only chokepoint every path funnels through.
             # `HidraWorkspace.set_reduced_diffraction_data_set` guards the same
-            # invariant at its own end, but four other paths reach `_2theta_matrix`
-            # without it -- `_load_reduced_diffraction_data`,
-            # `_append_reduced_diffraction_data`, the row-wise
-            # `set_reduced_diffraction_data`, and direct assignment. Unchecked, the
+            # invariant at its own end, but it is one of four writers of
+            # `_2theta_matrix` and the other three bypass it:
+            # `_load_reduced_diffraction_data`, `_append_reduced_diffraction_data`
+            # and the row-wise `set_reduced_diffraction_data` (called by
+            # `reduction_manager` and `mantid_peakfit_calibration`). Unchecked, the
             # rows written here do not correspond to the `scan_point` axis, which is
             # built from the sub-runs; and with several inputs the damage is not
             # local, because one short input shifts every later one.

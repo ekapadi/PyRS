@@ -491,10 +491,8 @@ class TestFit:
             projectfilename="/does/not/exist.h5",
             runnumber=12345,
             N_subrun=N_subrun,
+            mask="non_existent_mask",  # names a diffractogram the workspace never reduced
         )
-
-        # Set a mask that doesn't exist in the workspace
-        peak0._mask = "non_existent_mask"
 
         with pytest.raises(ValueError, match=r".*not present in the workspace.*"):
             _Fit.validateWorkspaceAndPeaksData(ws, [peak0])
@@ -723,13 +721,17 @@ class TestReducedDataRowCountIsGuarded:
     **The invariant is guarded in two places, and both are needed.**
 
     `HidraWorkspace.set_reduced_diffraction_data_set` guards its own end, but it is
-    only one of five paths that write `_2theta_matrix`; the other four bypass it:
+    one of **four** writers of `_2theta_matrix`, and the other three bypass it:
 
     - `_load_reduced_diffraction_data`    (reading a HidraProjectFile)
     - `_append_reduced_diffraction_data`  (`append_hidra_project`)
     - `set_reduced_diffraction_data`      (row-wise; `reduction_manager`,
                                            `mantid_peakfit_calibration`)
-    - direct assignment to `_2theta_matrix`
+
+    All four live in `workspaces.py`; nothing outside the class assigns the
+    attribute, and `_fit.py` only reads it. `_inconsistent` below does assign it
+    directly, which is how these tests reach the state the three bypass paths can
+    produce -- but that is the test, not a fifth production path.
 
     `_Diffractogram._concatenated_diffraction` is therefore the second guard, at the
     write boundary every one of those paths funnels through. Removing either leaves
@@ -768,18 +770,16 @@ class TestReducedDataRowCountIsGuarded:
             ws.set_reduced_diffraction_data_set(two_theta, {None: np.ones((3, 25))}, {None: np.ones((3, 25))})
 
     def test_write_boundary_rejects_a_mismatch_the_setter_never_saw(
-        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace], createPeakCollection
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
     ):
-        """The case that matters: the mismatch arrived by one of the four other paths."""
+        """The case that matters: the mismatch arrived by one of the three other paths."""
         # Arrange
         ws = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
         self._inconsistent(ws, n_rows=5)  # bypasses the setter, as production paths do
-        indexed = _Peaks.indexed([], ws._sample_logs)
 
         # Act / Assert
         with pytest.raises(RuntimeError, match=r"input workspace \[0\] has reduced data for 5 scan"):
             _Diffractogram._concatenated_diffraction([ws], DEFAULT_TAG)
-        assert indexed == []
 
     def test_the_offending_input_is_named_when_several_are_written(
         self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
@@ -826,8 +826,9 @@ class TestTextureWorkspaceRoundTrip:
         sub_runs = np.array([1, 2, 3])
         keys = ("eta_-5.0", "eta_0.0", "eta_5.0")
         ws = self._texture_workspace(minimal_HidraWorkspace, sub_runs, keys)
-        peaks = minimal_PeakCollection(N_subrun=3, sub_runs=sub_runs)
-        peaks._mask = "eta_0.0"  # the diffractogram it was fitted on
+        # `mask` is the diffractogram this collection was fitted on, set through the
+        # fixture rather than by assigning `_mask`: the argument exists for this.
+        peaks = minimal_PeakCollection(N_subrun=3, sub_runs=sub_runs, mask="eta_0.0")
         path = tmp_path / "texture.nxs"
 
         # Act
@@ -850,8 +851,7 @@ class TestTextureWorkspaceRoundTrip:
         # Arrange
         sub_runs = np.array([1, 2, 3])
         ws = self._texture_workspace(minimal_HidraWorkspace, sub_runs, ("eta_0.0",))
-        peaks = minimal_PeakCollection(N_subrun=3, sub_runs=sub_runs)
-        peaks._mask = "eta_99.0"  # never reduced
+        peaks = minimal_PeakCollection(N_subrun=3, sub_runs=sub_runs, mask="eta_99.0")  # never reduced
 
         # Act / Assert
         with pytest.raises(ValueError, match=r"Reduced data for diffractogram 'eta_99.0'"):
