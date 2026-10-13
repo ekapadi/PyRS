@@ -1174,3 +1174,66 @@ sibling fixture, so the two differed for no reason. Both are now
 ### Verification
 
 526 unit / 112 integration / 16 GUI; `ruff` and `mypy` clean.
+
+---
+
+## Batch 13 — `tests/unit/pyrs/utilities/NXstress/test_discriminator.py`
+
+Pairs with batch 2. Entirely new: 315 lines, nothing deleted.
+
+Three things in it are better than routine, and worth naming because they are
+the shapes this review has been asking for elsewhere.
+`test_reserved_columns_matches_peaks_init` asserts the guard's reserved set
+equals what `_Peaks._init` actually writes, by iterating the real group rather
+than keeping a second list. `test_only_a_reserved_name_encodes_onto_a_reserved_column`
+pins *why* checking the encoded name suffices — it only catches everything
+because the encoding is injective. And `TestEveryPropertyRoundTripsOrIsRefused`
+sweeps `vars(HidraWorkspace)` with a guard against a vacuous pass.
+
+### D34 — a docstring naming the same fixture twice
+
+```python
+"""Goes through `config_override` rather than `config_override`: the latter swaps
+the `Config` singleton, ..."""
+```
+
+Both halves say `config_override`, so the sentence conveys nothing — and what it
+is warning about is the batch 2 finding that cost real time to diagnose: a module
+binding `Config` the documented way keeps reading the previous instance after a
+*reload*. "The latter" is `default_config`. Corrected, and the mechanism spelled
+out rather than left to "see that fixture's docstring".
+
+### O15 — the partition was claimed exhaustive and not asserted
+
+The class docstring said *"The partition is exhaustive: every property must be in
+exactly one branch."* It was not quite: the refusal branch excludes a property
+whose **encoded** name collides with a reserved `NXreflections` column, because
+`field_names` checks that collision first and raises a differently-worded error:
+
+```console
+'mask'   Discriminator field 'mask' collides with the reserved `NXreflections` column
+'name'   Discriminator field 'name' is a read-only `HidraWorkspace` property, so its...
+```
+
+Both are refusals; only the wording differs. But the exclusion is a third bucket
+that no test covered, and measured it is **currently empty only by luck** — all
+seven properties classify cleanly today.
+
+Now three shared classifiers (`_accepted`, `_refused`, `_reserved_named`) with
+`test_the_partition_covers_every_property` asserting they account for every
+property with none counted twice, and `test_no_property_is_named_like_a_reserved_column`
+asserting the third stays empty — with a message telling a future reader to add
+a case rather than widen the exclusion. The two existing branch tests now use the
+same classifiers, so the partition cannot drift from what they test.
+
+**Confirmed able to fail**, by subclassing the test with a `ghost` property the
+branches do not classify: the partition assertion breaks, as it must.
+
+### O16 — six unused `tmp_path` parameters
+
+`test_default_is_empty(self, config_override, tmp_path)` and five others never
+used it, implying a filesystem dependency that is not there. Removed.
+
+### Verification
+
+532 unit (was 530) / 112 integration / 16 GUI; `ruff` clean.

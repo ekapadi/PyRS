@@ -20,9 +20,11 @@ from pyrs.utilities.NXstress._peaks import _Peaks
 def configure(config_override, yaml_text: str) -> None:
     """Apply an `nxstress` config override that production modules can actually see.
 
-    Goes through `config_override` rather than `config_override`: the latter swaps
-    the `Config` singleton, leaving every module that bound it the documented way
-    reading the previous instance. See that fixture's docstring.
+    Goes through `config_override` rather than `default_config.loadEnv(...)`:
+    `default_config` *reloads* the singleton, so a module that bound `Config` the
+    documented way keeps reading the previous instance and never sees the
+    override. `config_override` deep-merges into the live one instead. See that
+    fixture's docstring.
     """
     config_override(yaml.safe_load(yaml_text))
 
@@ -51,7 +53,7 @@ class TestReservedColumns:
 
         assert written == set(_discriminator.RESERVED_PEAK_COLUMNS)
 
-    def test_field_colliding_with_reserved_column_raises(self, config_override, tmp_path):
+    def test_field_colliding_with_reserved_column_raises(self, config_override):
         configure(config_override, "nxstress:\n  discriminator_fields: ['mask']\n")
 
         with pytest.raises(ValueError, match="collides with the reserved"):
@@ -79,28 +81,28 @@ class TestReservedColumns:
 
 
 class TestFieldNames:
-    def test_default_is_empty(self, config_override, tmp_path):
+    def test_default_is_empty(self, config_override):
         assert _discriminator.field_names() == ()
         assert _discriminator.merge_workspaces() is False
 
-    def test_configured_names_are_returned_in_order(self, config_override, tmp_path):
+    def test_configured_names_are_returned_in_order(self, config_override):
         configure(config_override, "nxstress:\n  discriminator_fields: ['b_field', 'a_field']\n")
 
         assert _discriminator.field_names() == ("b_field", "a_field")
 
-    def test_blank_name_raises(self, config_override, tmp_path):
+    def test_blank_name_raises(self, config_override):
         configure(config_override, "nxstress:\n  discriminator_fields: ['  ']\n")
 
         with pytest.raises(ValueError, match="non-blank strings"):
             _discriminator.field_names()
 
-    def test_repeated_name_raises(self, config_override, tmp_path):
+    def test_repeated_name_raises(self, config_override):
         configure(config_override, "nxstress:\n  discriminator_fields: ['direction', 'direction']\n")
 
         with pytest.raises(ValueError, match="more than once"):
             _discriminator.field_names()
 
-    def test_merge_workspaces_override(self, config_override, tmp_path):
+    def test_merge_workspaces_override(self, config_override):
         configure(config_override, "nxstress:\n  merge_workspaces: true\n")
 
         assert _discriminator.merge_workspaces() is True
@@ -264,16 +266,75 @@ class TestEveryPropertyRoundTripsOrIsRefused:
     This sweeps `vars(HidraWorkspace)` rather than naming properties, so a
     property added later is covered without editing this test -- which is the
     whole point, since the original defect was a property nobody thought about.
-    The partition is exhaustive: every property must be in exactly one branch.
+
+    Every property must land in exactly one branch, and
+    `test_the_partition_covers_every_property` asserts that rather than leaving
+    it to be believed: the refusal branch below has to exclude a name whose
+    *encoded* form collides with a reserved `NXreflections` column, because
+    `field_names` checks that first and raises a differently-worded error. That
+    exclusion is a third bucket, and it is currently empty only by luck.
     """
 
     @staticmethod
     def _properties():
         return {name: prop for name, prop in vars(HidraWorkspace).items() if isinstance(prop, property)}
 
+    @classmethod
+    def _accepted(cls) -> list[str]:
+        """Settable or restorable: `apply` can put a value back."""
+        return [n for n, p in cls._properties().items() if p.fset is not None or is_restorable(HidraWorkspace, n)]
+
+    @classmethod
+    def _refused(cls) -> list[str]:
+        """Plain read-only: refused with the read-only message."""
+        return [
+            n
+            for n, p in cls._properties().items()
+            if p.fset is None
+            and not is_restorable(HidraWorkspace, n)
+            and _discriminator.column_name(n) not in _discriminator.RESERVED_PEAK_COLUMNS
+        ]
+
+    @classmethod
+    def _reserved_named(cls) -> list[str]:
+        """Read-only *and* named like a reserved column: refused, worded differently."""
+        return [
+            n
+            for n, p in cls._properties().items()
+            if p.fset is None
+            and not is_restorable(HidraWorkspace, n)
+            and _discriminator.column_name(n) in _discriminator.RESERVED_PEAK_COLUMNS
+        ]
+
     def test_the_sweep_finds_properties(self):
-        """A sweep that matched nothing would pass both branches vacuously."""
+        """A sweep that matched nothing would pass every branch vacuously."""
         assert self._properties(), "no properties found; the sweep's heuristic has drifted"
+
+    def test_the_partition_covers_every_property(self):
+        """The three branches must account for every property, with none counted twice."""
+        # Act
+        buckets = self._accepted() + self._refused() + self._reserved_named()
+
+        # Assert
+        assert sorted(buckets) == sorted(self._properties()), (
+            f"properties in no branch: {sorted(set(self._properties()) - set(buckets))}; "
+            f"in more than one: {sorted({n for n in buckets if buckets.count(n) > 1})}"
+        )
+
+    def test_no_property_is_named_like_a_reserved_column(self):
+        """The third bucket is empty, and the other two tests assume it stays that way.
+
+        A read-only property whose encoded name collides with a reserved
+        `NXreflections` column is still *refused* -- `field_names` checks the
+        collision first -- but with the collision message rather than the
+        read-only one, so `test_plain_read_only_properties_are_refused_as_fields`
+        excludes it. Nothing else would notice such a property appearing.
+        """
+        assert not self._reserved_named(), (
+            f"{self._reserved_named()} are read-only properties named like reserved columns. "
+            "They are refused with the collision message, not the read-only one, so add a case "
+            "for them rather than widening the exclusion in `_refused`."
+        )
 
     def test_restorable_properties_round_trip(self, minimal_HidraWorkspace):
         # Arrange
@@ -290,22 +351,14 @@ class TestEveryPropertyRoundTripsOrIsRefused:
             assert _discriminator.resolve(ws, name) == "sentinel-value", name
 
     def test_settable_or_restorable_properties_are_accepted_as_fields(self, config_override):
-        for name, prop in self._properties().items():
-            if prop.fset is None and not is_restorable(HidraWorkspace, name):
-                continue
+        for name in self._accepted():
             config_override({"nxstress": {"discriminator_fields": [name]}})
             assert _discriminator.field_names() == (name,), name
 
     def test_plain_read_only_properties_are_refused_as_fields(self, config_override):
         """Refused at configuration time, before any file exists to be written wrong."""
         # Arrange
-        refusable = [
-            n
-            for n, p in self._properties().items()
-            if p.fset is None
-            and not is_restorable(HidraWorkspace, n)
-            and _discriminator.column_name(n) not in _discriminator.RESERVED_PEAK_COLUMNS
-        ]
+        refusable = self._refused()
         assert refusable, "expected at least `name` to be a plain read-only property"
 
         for name in refusable:
