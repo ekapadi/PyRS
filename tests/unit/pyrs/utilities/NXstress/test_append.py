@@ -70,7 +70,7 @@ def scan_points(path: Path, group: str = "SAMPLE_DESCRIPTION", entry: str = "ent
 
 
 @pytest.fixture
-def discriminated(config_override, tmp_path):
+def discriminated(config_override):
     """Config with `direction` as the discriminator -- the precondition for any append."""
     configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
     return config_override
@@ -497,11 +497,16 @@ class TestEntryTargeting:
         """A gap is far likelier a typo than an intent, and the silent outcome is a stray entry."""
         # Arrange
         ws, peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6))
+        before = digest(written)
 
         # Act / Assert
         with pytest.raises(ValueError, match=r"skips past the next free entry"):
             with NXstress(written, "a", entry_number=12) as nx:
                 nx.write([ws], [peaks])
+        # Refused after the file was opened for append, so the no-op guarantee applies
+        # here as it does to every other refusal in this module. The two raising tests
+        # below do not assert it because they raise in `__init__`, before any open.
+        assert digest(written) == before
 
     def test_entry_number_is_rejected_for_a_read(self, written):
         with pytest.raises(ValueError, match=r"meaningless for a read"):

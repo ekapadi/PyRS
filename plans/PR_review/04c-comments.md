@@ -381,3 +381,91 @@ repo-wide change with its own fallout.
 
 **494 unit** (was 443) / 104 integration / 16 GUI; `ruff` and `mypy` clean; probe
 sweep 19 OK, 1 SKIPPED (retired), 0 FAIL.
+
+---
+
+## Batch 17 — `test_NXstress.py`, `test_append.py`, `test_multi_workspace.py`, `test_workspace_read.py`
+
+Pairs with batch 6. **1409 lines from the PR** -- the largest test batch -- plus
+388 added by earlier parts of this review and reviewed as written.
+
+`test_append.py` is 927 of those and the byte-neutrality discipline in it is
+real rather than decorative: **17 refusal tests assert the file's `sha256` is
+unchanged**, and the three that do not are about *instance* state, where file
+state is not the subject.
+
+### D37 — the one refusal that did not assert byte-neutrality
+
+```python
+with pytest.raises(ValueError, match=r"skips past the next free entry"):
+    with NXstress(written, "a", entry_number=12) as nx:
+        nx.write([ws], [peaks])
+```
+
+A refusal *after* the file is opened for append -- so 04c's no-op guarantee
+applies, exactly as it does to the seventeen siblings that check it. The other
+two raising tests in that class raise in `__init__`, before any open, which is
+why they legitimately do not.
+
+Worth closing rather than tolerating: this guarantee has broken twice already
+(04c Follow-up 3 F3.1), both times silently, with the right exception and a
+changed file.
+
+### D38 — an `autouse` fixture whose entire body was a string
+
+```python
+@pytest.fixture(autouse=True)
+def setUp(self, load_HidraWorkspace, createPeakCollection):
+    """
+    self.sampleLogs = self.ws._sample_logs
+    ...
+    self.peak0 = createPeakCollection(...)
+    """
+    yield
+```
+
+Found by the unused-fixture scan, which reported both parameters unused -- they
+are: every statement that would have used them is inside a triple-quoted string.
+The same shape as the `permutations` block in batch 11, and here it is
+`autouse`, so it ran for all 22 tests in the class.
+
+It could not be revived either: `self.ws` is assigned nowhere, so the first line
+would raise `AttributeError`. All five references to `self.ws` / `self.peak0` /
+`self.sampleLogs` in the file are inside that string; no live test uses them.
+
+Removed rather than repaired. Its one piece of real content -- a comment
+explaining that **no single available project file carries everything an
+NXstress entry needs**, which is why each test builds its own source -- is kept,
+promoted to the class docstring where it is read.
+
+### O22 — two unused `tmp_path` fixtures
+
+`test__Peaks_fields_and_subgroups`, and the `discriminated` fixture in
+`test_append.py` on which most of that module depends.
+
+Distinguished from the eleven other "unused" parameters the scan found:
+`discriminated` and `config_override` are **side-effecting** -- requesting them
+without naming them is how they take effect, and `config_override`'s teardown
+provides isolation even when never called. Those are correct and were left
+alone. So was `failing(field, values)`, a monkeypatch stand-in whose parameters
+must match the signature it replaces.
+
+### O23 — an unused unpacking target
+
+`roundtrip_named_masks` bound `peaks_readback` and yielded only the workspaces.
+Ruff's `F841` does not see tuple-unpacking targets, so it passed lint. Now `_`,
+with a note that the fixture is about mask naming.
+
+### What this file did not catch
+
+Both batch 6 defects trace to gaps here, and are recorded because *"the tests
+were thorough and still missed these two"* is the useful fact: every
+diffractogram in the module is keyed `{None: ...}`, where the mask and
+diffractogram namespaces agree, so **D17** was invisible; and `N_SCAN = 7` was
+chosen to dodge the length collision that **D18** turned out to be, under a
+comment reasoning about it. Both now have tests, with the reasons written into
+the module.
+
+### Verification
+
+534 unit / 112 integration / 16 GUI; `ruff` clean.

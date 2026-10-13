@@ -32,39 +32,20 @@ import pytest
 
 
 class TestNXstress:
-    @pytest.fixture(autouse=True)
-    def setUp(self, load_HidraWorkspace, createPeakCollection):
-        """
-        self.sampleLogs = self.ws._sample_logs
-        self.subruns = self.ws._sample_logs.subruns.raw_copy()
+    """End-to-end tests for `NXstress.py`, each building the workspace it needs.
 
-        N_subrun = len(self.subruns)
-        self.peak0 = createPeakCollection(
-            peak_tag="Al 251540",
-            peak_profile="Gaussian",
-            background_type="Quadratic",
-            wavelength=25.4,
-            projectfilename="/does/not/exist.h5",
-            runnumber=12345,
-            N_subrun=N_subrun
-        )
-        self.peak1 = createPeakCollection(
-            peak_tag="111 Si",
-            peak_profile="PseudoVoigt",
-            background_type="Linear",
-            wavelength=10.1,
-            projectfilename="/does/not/exist2.h5",
-            runnumber=12346,
-            N_subrun=N_subrun
-        )
-        """
-        # Unfortunately, no available project file actually includes
-        # all of the necessary data to initialize the NXstress file.
-        # The tests below, use different files to verify different sections.
-        yield
+    There is no shared setup. An `autouse` `setUp` fixture used to sit here,
+    requesting `load_HidraWorkspace` and `createPeakCollection` and using
+    neither: its whole body was a triple-quoted string, so it assigned nothing,
+    and the `self.ws` it referenced was never set -- reviving it would have
+    raised `AttributeError` on the first line. It was removed rather than
+    repaired, because the reason it was abandoned still holds and is worth
+    keeping:
 
-        # teardown follows ...
-        pass
+    **No single available project file carries everything an NXstress entry
+    needs**, so the tests below each use whichever source exercises the section
+    under test, and construct it locally.
+    """
 
     def test_NXstress_context_manager(
         self,
@@ -600,7 +581,6 @@ class TestNXstress:
 
     def test__Peaks_fields_and_subgroups(
         self,
-        tmp_path: Path,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
         createPeakCollection: Callable[..., PeakCollection],
     ):

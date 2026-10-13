@@ -415,8 +415,9 @@ def roundtrip_named_masks(minimal_HidraWorkspace, createPeakCollection, tmp_path
 
     with NXstress(nxstress_file, mode="r") as nxs:
         # `read` returns one entry's workspaces and their peak collections,
-        # parallel lists; this file was written from a single workspace.
-        (ws_readback,), (peaks_readback,) = nxs.read()
+        # parallel lists; this file was written from a single workspace. Only the
+        # workspaces are yielded -- this fixture is about mask naming.
+        (ws_readback,), _ = nxs.read()
 
     yield ws_original, ws_readback
 
