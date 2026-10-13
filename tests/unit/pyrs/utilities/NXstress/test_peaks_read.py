@@ -5,11 +5,13 @@ Tests for NXstress read functionality in pyrs/utilities/NXstress/_peaks.py and _
 
 import numpy as np
 from nexusformat.nexus import NXparameters, NXfield
+import ast
 import pytest
 from pathlib import Path
 import tempfile
 
-from pyrs.dataobjects.sample_logs import SubRuns
+from pyrs.dataobjects.constants import HidraConstants
+from pyrs.dataobjects.sample_logs import SampleLogs, SubRuns
 from pyrs.utilities.NXstress import _peaks as _peaks_module
 from pyrs.utilities.NXstress._peaks import _Peaks
 from pyrs.utilities.NXstress._fit import _PeakParameters, _BackgroundParameters
@@ -526,17 +528,33 @@ class TestSplitterEnforcesOnlyContiguityAndMonotonicity:
 
     @staticmethod
     def peaks_group(phase, h, k, l_, mask, scan_point):
-        """A minimal stand-in for the NXreflections group the reader indexes into.
+        """A real `NXreflections`, built by the writer and then filled by hand.
 
-        Real `NXfield`s, not bare arrays: the reader reaches through `.nxdata`.
+        Built through `_Peaks._init` rather than assembled as a dict of
+        `NXfield`s. A hand-built stand-in carried only the six columns the
+        splitter happens to read today, so it both diverged from the group it
+        stands for and would fail with a bare `KeyError` the moment the splitter
+        read a seventh -- "a test that reimplements its counterparty is testing
+        the reimplementation", as `probes/README.md` puts it about probes.
+
+        The row values are still set by hand, because the point is to present
+        orderings the writer would never emit.
         """
-        group = {}
-        group["phase_name"] = NXfield(np.array(phase))
-        group["h"] = NXfield(np.array(h, dtype=np.int32))
-        group["k"] = NXfield(np.array(k, dtype=np.int32))
-        group["l"] = NXfield(np.array(l_, dtype=np.int32))
-        group["mask"] = NXfield(np.array(mask))
-        group["scan_point"] = NXfield(np.array(scan_point, dtype=np.int32))
+        logs = SampleLogs()
+        logs[HidraConstants.SUB_RUNS] = np.arange(1, len(phase) + 1)
+        group = _Peaks._init(logs, {})
+
+        n = len(phase)
+        for name, values in (
+            ("phase_name", np.array(phase)),
+            ("h", np.array(h, dtype=np.int32)),
+            ("k", np.array(k, dtype=np.int32)),
+            ("l", np.array(l_, dtype=np.int32)),
+            ("mask", np.array(mask)),
+            ("scan_point", np.array(scan_point, dtype=np.int32)),
+        ):
+            group[name].resize((n,))
+            group[name][:] = values
         return group
 
     @staticmethod
@@ -593,18 +611,60 @@ class TestSplitterEnforcesOnlyContiguityAndMonotonicity:
 
         assert len(ranges) == self.expected_block_count(phase, h, k, l_, mask) == 2
 
+    #: Calls that would mean the splitter searches or reorders the **on-disk index**.
+    #: `sorted` is deliberately absent: `_peaks.init_group` sorts the incoming
+    #: batch in memory, which is not a search over the index and is what makes each
+    #: written block contiguous in the first place.
+    ORDERING_CALLS = frozenset({"searchsorted", "argsort", "sort", "bisect", "bisect_left", "bisect_right"})
+
     def test_no_global_ordering_machinery_in_the_module(self):
         """There is no search over the index, which is why global order is free.
 
-        A source scan rather than a behavioural check, because the claim is
-        about absence: a binary search introduced later would not fail any of
-        the cases above until a file happened to be globally unsorted.
+        A source scan rather than a behavioural check, because the claim is about
+        absence: a binary search introduced later would not fail any of the cases
+        above until a file happened to be globally unsorted.
+
+        Parsed rather than text-matched. `source.count("argsort")` would also fire
+        on a *comment* saying "deliberately no argsort over the index here" -- the
+        comment this test invites -- so it would punish the documentation written
+        because of it. `ast` sees calls only, which is what the claim is about, and
+        follows `tests/unit/pyrs/projectfile/test_file_object.py`'s idiom.
         """
-        source = Path(_peaks_module.__file__).read_text()
+        # Arrange
+        tree = ast.parse(Path(_peaks_module.__file__).read_text())
 
-        found = {name: source.count(name) for name in ("searchsorted", "argsort", "bisect", "np.sort")}
+        # Act -- `np.argsort(...)` is an Attribute; a bare `argsort(...)` is a Name.
+        called = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name in self.ORDERING_CALLS:
+                called.add(name)
 
-        assert found == {"searchsorted": 0, "argsort": 0, "bisect": 0, "np.sort": 0}
+        # Assert
+        assert not called, f"{sorted(called)} would search or reorder the on-disk index"
+
+    def test_the_scan_would_notice_such_a_call(self):
+        """The scan above is only worth having if it can fail.
+
+        Its subject is the *absence* of something, so a scan that silently
+        matched nothing would pass for the wrong reason -- a mis-spelled node
+        type, say, or a walk that never reaches a `Call`.
+        """
+        # Arrange -- a module shaped like `_peaks.py` with one offending call
+        tree = ast.parse("import numpy as np\n\ndef f(a):\n    return np.argsort(a)\n")
+
+        # Act
+        called = {
+            (node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None))
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+        }
+
+        # Assert
+        assert called & self.ORDERING_CALLS == {"argsort"}
 
     def test_monotonic_scan_points_are_guaranteed_upstream(self):
         """The invariant the reader enforces is one PyRS cannot violate anyway.

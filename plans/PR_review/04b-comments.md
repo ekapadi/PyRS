@@ -1237,3 +1237,82 @@ used it, implying a filesystem dependency that is not there. Removed.
 ### Verification
 
 532 unit (was 530) / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 14 — `test_peaks.py`, `test_peaks_read.py`
+
+Pairs with batch 3. 422 insertions across the two.
+
+### No defects in the code under test
+
+`test_peaks.py` replaces the `sx`/`sy`/`sz` tests that pinned **NaN
+placeholders** with ones asserting the fields carry `PointList.(vx, vy, vz)` and
+checking `local_name` provenance, plus a subset case covering the defect that
+kept the block commented out — reading the log wholesale gives one value per
+*workspace* scan point where the slice needs one per *collection* scan point.
+`TestPeaksTailAppend` adds per-family append coverage including that an appended
+`Al` block stays *after* `Fe` rather than re-sorting into it.
+
+`test_peaks_read.py` promotes `TestSplitterEnforcesOnlyContiguityAndMonotonicity`
+from probe `a5_peakcollection_ranges.py`, so the premise both 04b and 04c rest on
+is re-checked per commit rather than per audit, and adds
+`TestDiscriminatorNamesAreCheckedAgainstTheGroup` for the batch 3 defect where
+omitting the names returned 1 range where 2 were correct, **with no exception**.
+
+Two pieces of judgement worth recording as right: `expected_block_count` restates
+the block rule locally rather than importing it, with the reason given — a test
+that asks the module for its own rule agrees with whatever rule it later adopts.
+And the final test is careful that one range for an undiscriminated group is
+*not* "merging" in any NXstress sense, the distinction corrected during batch 3.
+
+### O17 — the source-scan test flagged its own explanatory comments
+
+`test_no_global_ordering_machinery_in_the_module` asserted
+`source.count(name) == 0` for four sort-related words. The claim holds, but raw
+text cannot tell code from prose:
+
+```console
+after adding a COMMENT containing the word: {'searchsorted': 0, 'argsort': 1, ...}
+```
+
+A maintainer writing *"deliberately no argsort over the index here"* — the
+comment this test invites — would break it, so it punished the documentation
+written because of it. Now `ast.parse` plus a walk over `ast.Call`, matching
+`tests/unit/pyrs/projectfile/test_file_object.py`, which already uses that idiom.
+Verified against all three cases:
+
+```console
+real module                    -> clean
++ a COMMENT mentioning argsort -> clean
++ a real np.argsort CALL       -> {'argsort'}
+```
+
+`test_the_scan_would_notice_such_a_call` was added alongside: the subject is the
+*absence* of something, so a walk that silently matched nothing would pass for
+the wrong reason.
+
+### O18 — `sorted()` omitted from the scan, deliberately but silently
+
+`_peaks.py` calls `sorted(` four times: `init_group` sorts the incoming batch,
+which is not a search over the on-disk index and is what makes each written block
+contiguous to begin with. Correct to exclude, but it read as an oversight beside
+four sort-related words that *are* listed. The call set is now a named constant
+with that reasoning attached.
+
+### O19 — the splitter stand-in was a bare `dict`
+
+`peaks_group()` assembled six `NXfield`s into a dict. It worked, because the
+splitter only subscripts and iterates — but it carried 6 of the group's 15
+columns, so it diverged from the thing it stood for and would fail with a bare
+`KeyError` the moment the splitter read a seventh. `probes/README.md`'s own
+warning applies: *a test that reimplements its counterparty is testing the
+reimplementation*.
+
+Now built through `_Peaks._init` — the real writer — and then filled by hand,
+since the point is to present orderings the writer would never emit. The sibling
+class in the same file already did it this way.
+
+### Verification
+
+533 unit (was 532) / 112 integration / 16 GUI; `ruff` clean.
