@@ -1494,3 +1494,52 @@ spelled out, and in `TestDiscriminatorConfigKeys` with the condition that makes
 ### Verification
 
 534 unit / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 21 — `tests/integration/test_nxstress_viewer_roundtrip.py`
+
+42 lines from the PR: one unpacking fix for 04b's list return, and one new test
+covering the CombineRuns call-site decision.
+
+### No defects
+
+The new test's docstring is the valuable part. It records **why** CombineRuns
+keeps its in-PyRS pre-merge rather than passing N workspaces to `write`:
+`append_hidra_project` already discards per-run boundaries exactly as
+`nxstress.merge_workspaces` would, and the unaffected `.h5` export path needs
+the single merged workspace regardless. That is the resolved Q3, written at the
+call site it governs.
+
+### O30 — the test could not see a dropped run
+
+Its stated point is *"three runs pre-merged into one workspace, not three"*, and
+its assertions were:
+
+```python
+assert len(workspaces) == 1, "three runs pre-merged into one workspace, not three"
+assert peakss == [[]]
+assert len(workspaces[0].get_sub_runs()) == len(model._hidra_ws.get_sub_runs())
+```
+
+The first two hold however many runs survived. The third compares the read-back
+count against **the model that produced it**, so dropping runs 2 and 3 leaves
+both sides reading 3 and the test green -- "one workspace out" being exactly
+what dropping two runs also produces.
+
+Now counted from the inputs: `expected_subruns = sum(len(ws.get_sub_runs()) for
+ws in runs)`, which is 9 for this fixture. **Confirmed able to fail** by
+mutating `combine_project_files` to `break` after the first run:
+
+```console
+FAILED ...::test_export_project_files_wraps_the_merged_workspace_in_a_length_one_list
+```
+
+### O31 — `model._hidra_ws` private access
+
+Reaching into the model's internals, and only needed because the expected count
+came from the model. Counting the inputs removed both at once.
+
+### Verification
+
+534 unit / 112 integration / 16 GUI; `ruff` clean.
