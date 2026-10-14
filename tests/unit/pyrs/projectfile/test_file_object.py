@@ -17,32 +17,60 @@ import re
 import pyrs.projectfile.file_object as file_object_module
 
 
+#: What a reintroduced legacy-log-name FIXME would mention.
+LEGACY_LOG_PATTERN = re.compile(r"legacy|2Theta|log[ _]name", re.IGNORECASE)
+
+
 def test_no_legacy_log_name_fixme():
     """Verify no legacy log-name FIXME remains in file_object.py.
 
     The legacy path silently accepted a capitalized "2Theta" key written by an
     older reduction. It is now an explicit error, so any reappearance of a FIXME
     naming a legacy log key means that regression is back.
+
+    Scanned by comment *block* rather than by line. A FIXME is a comment, so
+    `ast` cannot see it and a text scan is the only option -- but it has to be a
+    scan over the block, because the natural way to write the thing this guards
+    against spans two lines::
+
+        # FIXME: this fallback is wrong
+        #   it accepts the legacy 2Theta key
+
+    where neither line carries both halves and a line-at-a-time scan sees
+    neither.
     """
     # Arrange
     source = inspect.getsource(file_object_module)
 
-    # Act: a FIXME on a line that also mentions a log name or the legacy key
-    offenders = [
-        line.strip()
-        for line in source.splitlines()
-        if "FIXME" in line and re.search(r"legacy|2Theta|log[ _]name", line, re.IGNORECASE)
-    ]
+    # Act -- group consecutive comment lines, then test each group as a whole
+    offenders = []
+    block: list[str] = []
+    for line in source.splitlines() + [""]:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            block.append(stripped)
+            continue
+        if block:
+            text = " ".join(block)
+            if "FIXME" in text and LEGACY_LOG_PATTERN.search(text):
+                offenders.append(text)
+            block = []
 
     # Assert
     assert not offenders, f"legacy log-name FIXME(s) reintroduced: {offenders}"
 
 
-def test_two_theta_key_is_canonical():
-    """Verify the module reads two-theta through HidraConstants, not a literal.
+def test_no_capitalized_legacy_two_theta_key_in_code():
+    """Verify the capitalized legacy "2Theta" key appears in no executable code.
 
-    The legacy defect was a hard-coded capitalized key. Requiring the constant
-    keeps a second spelling from creeping back in.
+    Narrower than "reads two-theta through `HidraConstants`", which is what this
+    used to claim and does not check. The canonical value is **lowercase** --
+    `HidraConstants.TWO_THETA == "2theta"` -- and a literal of it does live in
+    this module, at `DiffractionUnit.TwoTheta = "2theta"`. That one is a unit
+    label rather than the HDF5 log key, and the key's nine real uses all go
+    through the constant, so the enum member is left alone and the claim is
+    scoped to the defect actually being guarded: the *capitalized* spelling an
+    older reduction wrote.
 
     Docstrings are excluded deliberately: the RuntimeError that *replaced* the
     legacy fallback names the old "2Theta" key in its own documentation, which is

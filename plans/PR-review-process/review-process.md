@@ -509,3 +509,21 @@ invocation), it is split — marked **→** below.
 | 32 | 5 | `docs/ground_truths.md` | |
 
 File counts per stage: 8 / 6 / 22 / 26 / 4 = 66.
+
+### Corrections found while walking it
+
+The plan was derived from the diff before the walk began, and two rows have
+turned out not to match it. Recorded here rather than silently edited, because a
+batch plan that is quietly corrected cannot be checked afterwards against what
+was actually reviewed.
+
+| Row | As planned | As found |
+|---|---|---|
+| 8 | "the three `interface/*_model.py`" | **Four.** `strainstressviewer/model.py` joined during batch 2, after this plan was written. All four were walked. |
+| 18 | `projectfile/__init__.py` + `projectfile/test_file_object.py` | **`__init__.py` was never changed by the PR** -- `git log eb5457b1..cda22352 -- pyrs/projectfile/__init__.py` is empty. Only the test file was walked. |
+
+Neither changes the batch *count* or the order. The lesson for the next series is
+that a file list drawn from a diff goes stale as soon as the review starts
+changing files, so the walk should re-derive each batch's membership from the
+range at the moment it opens the batch -- which is what `git difftool <base> --
+<paths>` does anyway, and is why both were caught.

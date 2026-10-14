@@ -228,3 +228,78 @@ diluted by generation.
 ### Verification
 
 530 unit (was 526) / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 18 — `tests/unit/pyrs/projectfile/test_file_object.py`
+
+76 lines, entirely new: two source-scan guarantees carrying 04's FIXME
+invariant. The module docstring justifies the unusual form well -- the plan
+series scheduled an audit of two "legacy log name" FIXMEs, and that work turned
+out to have been done upstream already. A planning cycle was spent
+re-discovering it; a test would have said so on the first commit after the fix.
+
+`test_two_theta_key_is_canonical` walks the AST and excludes docstrings, with
+the reason stated: the `RuntimeError` that *replaced* the legacy fallback names
+the old key in its own documentation, which is a description of the fix, not a
+recurrence of the defect. This is the idiom batch 14's `argsort` scan was
+changed to follow.
+
+### D39 — the stated invariant was broader than the check, and the file contradicts it
+
+> *"Verify the module reads two-theta through HidraConstants, not a literal."*
+
+It checks only for the **capitalized** `"2Theta"`. The canonical value is
+lowercase -- `HidraConstants.TWO_THETA == "2theta"` -- and a literal of exactly
+that string lives in executable code at `file_object.py:41`:
+
+```python
+class DiffractionUnit(Enum):
+    TwoTheta = "2theta"
+```
+
+So a literal two-theta key does exist and the test passes. The key's nine real
+uses all go through the constant, and the enum member is a *unit label* rather
+than the HDF5 log key, so the enum is left alone and the **claim** is narrowed
+to what is actually guarded: no capitalized legacy spelling in executable code.
+Renamed `test_no_capitalized_legacy_two_theta_key_in_code` to match.
+
+Same reasoning as D35's path count: an overstated invariant is what gets a guard
+deleted by the next person who checks it and finds a counter-example.
+
+### O24 — the FIXME scan could not see a two-line FIXME
+
+It required `FIXME` **and** one of `legacy|2Theta|log name` on the *same* line.
+The natural way to write the thing it guards against does not:
+
+```python
+# FIXME: this fallback is wrong
+#   it accepts the legacy 2Theta key
+```
+
+`ast` is no help -- a FIXME is a comment, which the parser discards -- so a text
+scan is right; it just has to be over the comment **block**. Measured against
+both shapes:
+
+```console
+two-line FIXME   old scan: 0 found   block scan: 1 found
+one-line FIXME   old scan: 1 found   block scan: 1 found
+```
+
+### O25 — the batch plan named a file the PR never touched
+
+Appendix A lists `projectfile/__init__.py` in this batch;
+`git log eb5457b1..cda22352 -- pyrs/projectfile/__init__.py` is empty. Second
+instance after batch 8's "three `interface/*_model.py`" that were four.
+
+Recorded in
+[the review process's Appendix A](../PR-review-process/review-process.md) rather
+than silently corrected, with the general lesson: a file list drawn from a diff
+goes stale as soon as the review starts changing files, so each batch's
+membership should be re-derived from the range when the batch opens -- which is
+what the per-batch `git difftool` command does anyway, and is why both were
+caught.
+
+### Verification
+
+534 unit / 112 integration / 16 GUI; `ruff` clean.
