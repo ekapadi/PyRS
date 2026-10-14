@@ -6,7 +6,25 @@ Every test here requests the `default_config` fixture (see
 *inside* the test body -- never at module level. A module-level import would run
 `pyrs.utilities.config`'s side effects (writing a backup file under `~/.pyrs/`)
 against the real home directory at test-collection time, before the fixture has had
-a chance to redirect `HOME` to a `tmp_path`.
+a chance to redirect `HOME` to a `tmp_path`. That rule is about
+`pyrs.utilities.config` specifically; `pytest` and the rest import normally.
+
+**Two ways to override configuration appear below, and choosing the wrong one
+fails silently rather than loudly.**
+
+`default_config.loadEnv(<path to a .yml>)` exercises the **documented production
+mechanism** -- the `env` OS variable naming a file whose contents are deep-merged
+onto the shipped default. Use it when the override path itself is the subject, as
+the `validate_config` tests here are. It reloads the singleton, so any module that
+bound `Config` the documented way still holds the *previous* instance and cannot
+see the override. These tests survive that only because the module under test is
+the module being reloaded.
+
+`config_override({...})` deep-merges into the live singleton without replacing it,
+so every binding sees the change. Use it whenever some *other* module has to read
+the override -- `_instrument.py`, `_discriminator.py`, the viewers. Pointing
+`loadEnv` at those reads the stale instance and the test passes against the
+shipped default, asserting nothing; that is a real defect this suite once had.
 """
 
 from pathlib import Path
@@ -65,8 +83,6 @@ def test_validate_config_passes_with_shipped_defaults(default_config: "_Config")
 def test_validate_config_raises_when_both_formats_disabled(default_config: "_Config", tmp_path: Path) -> None:
     """Test that `validate_config()` rejects a config with no output format enabled."""
     # Arrange
-    import pytest
-
     import pyrs.utilities.config as config_module
 
     override_file = tmp_path / "override.yml"
@@ -84,8 +100,6 @@ def test_validate_nxstress_enable_not_bool(default_config: "_Config", tmp_path: 
     `True` in Python).
     """
     # Arrange
-    import pytest
-
     import pyrs.utilities.config as config_module
 
     override_file = tmp_path / "override.yml"
@@ -100,8 +114,6 @@ def test_validate_nxstress_enable_not_bool(default_config: "_Config", tmp_path: 
 def test_validate_legacy_io_enable_not_bool(default_config: "_Config", tmp_path: Path) -> None:
     """Test that a non-bool `legacy_io.enable` (e.g. an int) is rejected up front."""
     # Arrange
-    import pytest
-
     import pyrs.utilities.config as config_module
 
     override_file = tmp_path / "override.yml"
@@ -120,6 +132,12 @@ class TestDiscriminatorConfigKeys:
     `discriminator_fields: direction` (no list) parses as a string, and a
     string is iterable, so an unchecked value would be read one character at a
     time as five one-letter field names.
+
+    These use `default_config.loadEnv`, not `config_override`, because the
+    override *file* is the subject: `validate_config` has to reject what a user
+    could actually write in a `.yml`. Nothing outside `pyrs.utilities.config`
+    reads the result, which is the condition that makes `loadEnv` safe here --
+    see this module's docstring.
     """
 
     def test_shipped_defaults(self, default_config: "_Config") -> None:
@@ -127,8 +145,6 @@ class TestDiscriminatorConfigKeys:
         assert default_config["nxstress.merge_workspaces"] is False
 
     def test_validate_config_rejects_a_bare_string(self, default_config: "_Config", tmp_path: Path) -> None:
-        import pytest
-
         import pyrs.utilities.config as config_module
 
         override_file = tmp_path / "override.yml"
@@ -139,8 +155,6 @@ class TestDiscriminatorConfigKeys:
             config_module.validate_config()
 
     def test_validate_config_rejects_a_blank_entry(self, default_config: "_Config", tmp_path: Path) -> None:
-        import pytest
-
         import pyrs.utilities.config as config_module
 
         override_file = tmp_path / "override.yml"
@@ -151,8 +165,6 @@ class TestDiscriminatorConfigKeys:
             config_module.validate_config()
 
     def test_validate_config_rejects_a_repeated_field(self, default_config: "_Config", tmp_path: Path) -> None:
-        import pytest
-
         import pyrs.utilities.config as config_module
 
         override_file = tmp_path / "override.yml"
@@ -165,8 +177,6 @@ class TestDiscriminatorConfigKeys:
     def test_validate_config_rejects_non_bool_merge_workspaces(
         self, default_config: "_Config", tmp_path: Path
     ) -> None:
-        import pytest
-
         import pyrs.utilities.config as config_module
 
         override_file = tmp_path / "override.yml"

@@ -1444,3 +1444,53 @@ comment in the test now says so.
 ### Verification
 
 534 unit (was 533) / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 19 — `tests/unit/pyrs/utilities/test_config.py`
+
+Pairs with batch 7. The PR added **74 lines**; the other 222 in the current diff
+were added by batches 2 and 7 of this review and reviewed as written.
+
+`TestDiscriminatorConfigKeys` covers the two 04b keys through the real `env`-file
+mechanism, and its docstring gives the reason the typing matters:
+`discriminator_fields: direction` parses as a *string*, and a string is iterable,
+so an unchecked value would be read one character at a time as five one-letter
+field names.
+
+### No defects
+
+### O26 — seven redundant local `import pytest`
+
+The module docstring states a local-import rule, but that rule is about
+`pyrs.utilities.config` specifically: importing it at module level runs its side
+effects (writing under `~/.pyrs/`) at collection time, before the fixture has
+redirected `HOME`. It does not apply to `pytest`, and repeating it seven times
+invites a reader to think everything in the file must be imported locally. The
+docstring now says which import the rule is about; the seven are gone.
+
+### O27 — two override mechanisms, both correct, with nothing saying when each applies
+
+The file uses both, a few hundred lines apart:
+
+| | reaches | use when |
+|---|---|---|
+| `default_config.loadEnv(path)` | `pyrs.utilities.config` only -- it **reloads** the singleton, so any module that bound `Config` the documented way still holds the previous instance | the override *file* is the subject |
+| `config_override({...})` | every binding -- deep-merges into the live singleton without replacing it | some *other* module must read the override |
+
+Both are right where they are used. The `validate_config` tests are correct to
+use `loadEnv`: what a user can write in a `.yml` is exactly what is being
+rejected, and `config_override` does not go through that path at all. They
+survive the reload only because the module under test *is* the module being
+reloaded.
+
+**Choosing wrongly fails silently.** Point `loadEnv` at a test of
+`_instrument.py` and it reads the stale instance, so the assertion runs against
+the shipped default and proves nothing -- which is the defect batch 2 measured
+and batch 16 fixed. Recorded in the module docstring with that consequence
+spelled out, and in `TestDiscriminatorConfigKeys` with the condition that makes
+`loadEnv` safe there.
+
+### Verification
+
+534 unit / 112 integration / 16 GUI; `ruff` clean.
