@@ -303,3 +303,113 @@ caught.
 ### Verification
 
 534 unit / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 20 — generator, consumer, binary
+
+`tests/scripts/make_nxstress_sample_position_fixture.py` (119),
+`tests/integration/test_nxstress_sample_position.py` (219), and the 2.7 MB
+`tests/data/HB2B_1327_with_instrument.h5`. Opened in that order per §3.
+
+### The provenance record still describes the artifact
+
+The one property a committed binary plus its generator must have, and the one
+that decays silently. Regenerated to a scratch path and compared:
+
+```console
+only in committed  : none
+only in regenerated: none
+value differences  : none
+size               : 2724084 vs 2724084
+```
+
+Byte-identical, re-checked after the O29 edit below.
+
+The generator documents what a reader needs: why the fixture must exist at all
+(writing NXstress needs geometry and a parseable peak tag; non-NaN positions
+need finite `vx`/`vy`/`vz`; those two sets of files were disjoint), what is real
+(the coordinates under test, copied verbatim), what was supplied and from where,
+and what was dropped and why.
+
+The consumer pins several things worth pinning: that the written positions are
+**not** the identically-named stage logs; that the z stage axis runs opposite to
+the z sample axis (`correlation < -0.999`, so the open question is re-raised if
+the frames ever coincide); and `assert escaped > 0`, guarding against the fixture
+ceasing to exercise escaped PV-log names.
+
+### D40 — the test ran only from the repository root
+
+`FIXTURE = "tests/data/HB2B_1327_with_instrument.h5"` -- a bare relative path,
+resolved against the process working directory. From anywhere else all seven
+errored:
+
+```console
+7 errors in 0.26s      (before)
+7 passed in 0.57s      (after)
+```
+
+Invisible under `pixi run test-integration`, which starts at the root; it bites
+anyone invoking pytest on the file directly or through an IDE runner. Now via
+`test_data_dir`, the session fixture built from `request.config.rootpath` that
+the NXstress unit conftest already uses, plus an `assert ... is_file()` naming
+the generator so a missing fixture says how to rebuild it.
+
+### O28 — `import h5py` inside the fixture body
+
+No side-effect reason, unlike `pyrs.utilities.config` in batch 19. Moved to the
+module imports.
+
+### O29 — the generator wrote `TARGET` before it knew the result was acceptable
+
+The 8 MB check ran *after* `h5py.File(TARGET, "w")` had already truncated the
+committed fixture, then printed to stderr and returned 1 -- leaving an oversized
+file in `tests/data/` where someone who did not read stderr can commit it.
+
+**My first fix was worse than the defect**, and the reviewer caught it:
+*"Where did the file come from in the first place? We have no business deleting
+files that we didn't create!"* Unlinking after the truncate turns a *modified*
+tracked 2.7 MB fixture into a *deleted* one -- the script destroying a file it
+did not create, having already destroyed its contents.
+
+The actual fix is not to touch `TARGET` until the result is acceptable. The
+build now goes to a `.staging` file beside it, the size is checked there, and
+only then is it moved into place. A `try/finally` removes the staging file on
+any failure, and that is the only file the script ever deletes -- one it made
+itself.
+
+Both paths measured:
+
+```console
+normal run : wrote .../HB2B_1327_with_instrument.h5 (2.72 MB)
+             byte-identical to the committed fixture; `git status` clean
+
+refusal    : refusing to install HB2B_1327_with_instrument.h5: 2.72 MB exceeds
+               pre-commit's 1 MB ceiling.
+               .../HB2B_1327_with_instrument.h5 is unchanged.
+             exit=1; fixture byte-identical; no staging file left; `git status` clean
+```
+
+(The refusal was exercised by forcing the ceiling down, which also exposed that
+the limit was two separate literals -- the comparison and the message -- and
+could drift. It is now the single `SIZE_CEILING_MB`.)
+
+### Also fixed — two pre-existing modules with the same cwd dependency **(outside this PR's scope)**
+
+`test_texture_reduction.py` (`DATA_DIR = "tests/data/"`) and
+`test_manual_reduction_ui.py` (ten inline `"tests/data/..."` literals) have the
+same fault, predating this PR. Both now resolve from `__file__`.
+
+They cannot use `test_data_dir`: the paths appear inside
+`@pytest.mark.parametrize`, which is evaluated at **collection** time, before any
+fixture exists. `Path(__file__).resolve().parents[2]` is the available
+equivalent, and is what the generator script itself already uses. Collection
+from another directory now succeeds for all three modules:
+
+```console
+16 tests collected in 0.08s
+```
+
+### Verification
+
+534 unit / 112 integration / 16 GUI; `ruff` clean.

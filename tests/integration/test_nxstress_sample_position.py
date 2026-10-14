@@ -15,6 +15,9 @@ See spec 04's Follow-up 7 (F7.8, F7.10) and Decisions Log rows 24 and 26 in
 `plans/NXstress-prod/README.md`.
 """
 
+from pathlib import Path
+
+import h5py
 import numpy as np
 import pytest
 
@@ -24,14 +27,22 @@ from pyrs.utilities.NXstress.NXstress import NXstress
 
 pytestmark = pytest.mark.integration
 
-FIXTURE = "tests/data/HB2B_1327_with_instrument.h5"
+#: Resolved against the repository root, not the process working directory. A bare
+#: `"tests/data/..."` works under `pixi run test-integration` -- which happens to
+#: start at the root -- and errors every test here when pytest is invoked on this
+#: file directly, or by an IDE runner with a different cwd.
+FIXTURE_NAME = "HB2B_1327_with_instrument.h5"
+GENERATOR = "tests/scripts/make_nxstress_sample_position_fixture.py"
 
 
 @pytest.fixture(scope="module")
-def nxstress_from_real_data(tmp_path_factory):
+def nxstress_from_real_data(tmp_path_factory, test_data_dir):
     """Write a `.nxs` from the real HB2B fixture and hand back both sides."""
-    project_file = HidraProjectFile(FIXTURE, HidraProjectFileMode.READONLY)
-    workspace = HidraWorkspace(FIXTURE)
+    fixture = Path(test_data_dir) / FIXTURE_NAME
+    assert fixture.is_file(), f"missing fixture {fixture}; rebuild it with {GENERATOR}"
+
+    project_file = HidraProjectFile(str(fixture), HidraProjectFileMode.READONLY)
+    workspace = HidraWorkspace(str(fixture))
     workspace.load_hidra_project(project_file, load_raw_counts=False, load_reduced_diffraction=True)
     peak_collections = [project_file.read_peak_parameters(tag) for tag in project_file.read_peak_tags()]
     project_file.close()
@@ -39,8 +50,6 @@ def nxstress_from_real_data(tmp_path_factory):
     nxs_path = tmp_path_factory.mktemp("nxstress") / "HB2B_1327_with_instrument.nxs"
     with NXstress(nxs_path, mode="w") as nxs:
         nxs.write([workspace], [peak_collections])
-
-    import h5py
 
     with h5py.File(nxs_path, "r") as handle:
         yield workspace, peak_collections, handle

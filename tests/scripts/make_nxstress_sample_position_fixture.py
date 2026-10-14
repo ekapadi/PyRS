@@ -62,12 +62,26 @@ SOURCE = REPO / "tests/data/HB2B_1327.h5"
 GEOMETRY_DONOR = REPO / "tests/data/HB2B_938_peak.h5"
 TARGET = REPO / "tests/data/HB2B_1327_with_instrument.h5"
 
+#: pre-commit's `check-added-large-files` ceiling. Named so the refusal message
+#: cannot drift from the comparison -- they were two separate literals.
+SIZE_CEILING_MB = 8.0
+
 GEOMETRY_PATH = "instrument/geometry setup/detector"
 SKIP_TOP_LEVEL = {"mask"}
 PEAK_TAG_RENAMES = {"peak0": "peak000", "peak1": "peak111"}
 
 
 def main() -> int:
+    try:
+        return _build()
+    finally:
+        # A failure anywhere between creating the staging file and moving it must
+        # not leave it in `tests/data`.
+        staging = TARGET.with_name(TARGET.name + ".staging")
+        staging.unlink(missing_ok=True)
+
+
+def _build() -> int:
     for path in (SOURCE, GEOMETRY_DONOR):
         if not path.is_file():
             print(f"missing input: {path}", file=sys.stderr)
@@ -80,7 +94,13 @@ def main() -> int:
         return 1
     print(f"geometry from {GEOMETRY_DONOR.name}: { {k: v.tolist() for k, v in geometry.items()} }")
 
-    with h5py.File(SOURCE, "r") as src, h5py.File(TARGET, "w") as dst:
+    # Built beside the target, then moved into place only once the size is
+    # acceptable. Writing `TARGET` directly would truncate the committed fixture
+    # before anything had been checked, so a refusal would leave the repository
+    # with a destroyed -- or, if the script then removed it, a deleted -- tracked
+    # file. Nothing here deletes a file it did not create.
+    staged = TARGET.with_name(TARGET.name + ".staging")
+    with h5py.File(SOURCE, "r") as src, h5py.File(staged, "w") as dst:
         for key, value in src.attrs.items():
             dst.attrs[key] = value
 
@@ -107,11 +127,20 @@ def main() -> int:
             detector.create_dataset(key, data=value)
         print(f"populated {GEOMETRY_PATH} with {sorted(geometry)}")
 
-    size_mb = TARGET.stat().st_size / 1e6
-    print(f"wrote {TARGET} ({size_mb:.2f} MB)")
-    if size_mb > 8.0:
-        print("WARNING: exceeds pre-commit's 8 MB ceiling", file=sys.stderr)
+    size_mb = staged.stat().st_size / 1e6
+    if size_mb > SIZE_CEILING_MB:
+        # Refused before `TARGET` is touched, so an existing fixture is left exactly
+        # as it was. Only the staging file -- which this script created -- is removed.
+        staged.unlink()
+        print(
+            f"refusing to install {TARGET.name}: {size_mb:.2f} MB exceeds pre-commit's "
+            f"{SIZE_CEILING_MB:.0f} MB ceiling.\n  {TARGET} is unchanged.",
+            file=sys.stderr,
+        )
         return 1
+
+    staged.replace(TARGET)
+    print(f"wrote {TARGET} ({size_mb:.2f} MB)")
     return 0
 
 
