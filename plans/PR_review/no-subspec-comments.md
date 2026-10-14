@@ -109,3 +109,79 @@ anything downstream poking at workspace internals would break.
 
 526 unit / 112 integration / 16 GUI; `ruff` and `mypy` clean; probe sweep 19 OK,
 1 SKIPPED (retired), 0 FAIL.
+
+---
+
+## Batch 22 — `tests/integration/test_pyrscore.py`
+
+68 lines from `61389b28`, the commit reviewed in batch 9. No subspec.
+
+`TestLoadDoesNotModifyTheFile` states the mechanism well and gets two things
+right: it covers **both** paths, noting that only one leaked; and it makes a
+writable copy first, with the reason -- *"the bug cannot reproduce on a
+read-only file, which is exactly why it went unnoticed on archive-mounted
+data."*
+
+### D41 — relative paths, the same fault as batch 20's D40
+
+`Path("tests/data/Hidra_16-1_cor_log.h5")` at line 38 (new) and a second at
+line 116 (pre-existing), both resolved against the process working directory in
+a module that already receives `test_data_dir` elsewhere. The new test now uses
+that fixture; `test_main`, being outside a test function's fixture scope for
+this purpose, resolves from `__file__`. The filename is a single
+`LEGACY_SCHEMA_FIXTURE` constant, so the `xfail` reason, `test_main` and this
+class cannot drift about which file they mean.
+
+### O32 — a bare `pytest.raises(RuntimeError)`
+
+Now `match=r'non-empty "reduced diffraction data" entry'`. The comment states
+why it matters: the closure assertion is only meaningful if the load reached
+the point where a handle is open, and a `RuntimeError` raised earlier would
+satisfy a bare `pytest.raises` while exercising none of it.
+
+### D42 — the regression test did not regress
+
+Adding that `match` prompted checking what the test caught. It caught nothing.
+Reverting `reduction_manager` to the **full pre-fix state** -- READWRITE *and*
+no `finally` -- left it green.
+
+The mechanism, measured on h5py 3.16.0 / HDF5 1.14.6:
+
+```console
+r+ open, handle OPEN : changed
+r+ after close       : unchanged
+r  open, handle OPEN : unchanged
+```
+
+`docs/ground_truths.md` is right that a read-write open changes the bytes -- but
+only **while the handle is open**; a clean close reverts the mark. By the time
+the test takes its digest the `HidraProjectFile` is unreferenced and CPython has
+closed it. The original symptom needed the handle held across the session, which
+a digest taken after the call can never observe.
+
+Same shape as O12 and O20 -- an assertion that cannot fail -- but worse: this is
+the designated guard for a defect that reached committed files, and it is named
+`test_..._leaves_the_file_unchanged`.
+
+**Resolved by asserting what the fix changed**, through a recording
+`HidraProjectFile` patched into `reduction_manager`: the **mode** each open uses,
+and that every handle is **closed** even when the load raises. The digests stay
+alongside, as the statement of intent -- they say what the code is for -- but
+they no longer carry the guarantee alone.
+
+Each half now fails independently:
+
+| mutation | before | after |
+|---|---|---|
+| `READONLY` -> `READWRITE` | passed | **2 failed** |
+| `try/finally` -> plain close | passed | **1 failed** |
+
+**Incidental, and evidence in its own right:** with the `finally` removed, the
+two tests run together *hung* rather than merely failing -- a leaked HDF5 handle
+has consequences past the superblock mark, which is consistent with this repo's
+"segfault at interpreter shutdown" ground truth. Run singly the mutant fails
+cleanly in 0.12s.
+
+### Verification
+
+534 unit / 112 integration / 16 GUI; `ruff` clean.
