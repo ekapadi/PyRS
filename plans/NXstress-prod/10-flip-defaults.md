@@ -4,6 +4,14 @@
 **Phase:** 6
 **Depends on:** [09 — Fit spectrum & calibration fidelity (NXstress)](09-fit-spectrum-nxstress.md)
 
+> **Read the `## Follow-up` sections before the body.** Corrections land there,
+> append-only, and the body is deliberately left as the record of what was
+> believed. **Where the two disagree, the Follow-up wins.** Sites in the body
+> that a Follow-up has superseded are marked inline, but the marker is a
+> convenience and not a guarantee — the Follow-ups are the authority. (Same rule
+> as `prompts/implementation-prompt.txt`, stated here for anyone reading the
+> document directly rather than starting an implementation pass.)
+
 ---
 
 ## Overview
@@ -59,6 +67,11 @@ flip; see Scope below.
 >    validator's known quirks, e.g. its `UPPERCASE`-group-name requirement
 >    — see `IO_prototype.rst`'s Overview section — so the schema doc and
 >    the validator note belong together there).
+>    **[Superseded: DONE. `NXstress.nxdl.xml` is vendored at that path, linked
+>    from `IO_prototype.rst` with its upstream commit and sha256, and excluded
+>    from pre-commit's whitespace hooks so it stays byte-identical. Landed by
+>    the subspec-04 pass. Item 1, the validator, is still outstanding. See
+>    Follow-up 2 F2.1.]**
 >
 > **Validator repository link:** _TODO — add once available; not guessed
 > at in this planning pass._
@@ -221,7 +234,9 @@ action by default. Only the deprecation-hint UI (status bars) above is new.
   `nexusformat`-org NXstress validator — no errors, **once that validator
   and the `NXstress.xml`/`.html` schema doc are added to the repo** (see
   the reminder in this spec's Overview — neither exists yet as of this
-  writing).
+  writing). **[Superseded in part: the schema doc now exists; only the
+  validator is outstanding, and it remains a separate repository that the
+  installed `nexusformat` 1.0.8 does not provide. See Follow-up 2 F2.1.]**
 - `tests/scripts/cis_tests/NXstress_demo_script.py` — runs cleanly.
 
 ---

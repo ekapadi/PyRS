@@ -4,6 +4,14 @@
 **Phase:** 4
 **Depends on:** — (none within this plan; see Overview)
 
+> **Read the `## Follow-up` sections before the body.** Corrections land there,
+> append-only, and the body is deliberately left as the record of what was
+> believed. **Where the two disagree, the Follow-up wins.** Sites in the body
+> that a Follow-up has superseded are marked inline, but the marker is a
+> convenience and not a guarantee — the Follow-ups are the authority. (Same rule
+> as `prompts/implementation-prompt.txt`, stated here for anyone reading the
+> document directly rather than starting an implementation pass.)
+
 ---
 
 ## Overview
@@ -64,7 +72,8 @@ raise — the extension(s) actually written are always exactly whichever of
   `reducer.save_diffraction_data`; `nxstress.enable` → `.nxs` via
   `NXstress(path, "w").write([hidra_ws], [])` — a length-1 list, per 04b's
   signature, which lands in the Phase 2/3 bridge, before this Phase 4
-  spec).
+  spec). **[Superseded: the second argument is `[[]]`, one `PeakCollection`
+  list per workspace. See Follow-up 3 F3.1.]**
 - Config validation reuse: `pyrs.utilities.config.validate_config()`'s
   existing "at least one format enabled" rule (spec 01) already guarantees
   this function always writes at least one file.
@@ -114,6 +123,9 @@ change — the edit lives entirely in the "NXstress Changes" section below.
       reducer.save_diffraction_data(base_path + Config["legacy_io.extension"])
   if Config["nxstress.enable"]:
       with NXstress(base_path + Config["nxstress.extension"], "w") as nxs:
+          # SUPERSEDED -- see Follow-up 3 F3.1. 04b resolved the second
+          # argument to one PeakCollection list PER WORKSPACE, so a workspace
+          # with no peak fits is `[[]]`, not `[]`. Do not copy the line below.
           nxs.write([hidra_ws], [])  # length-1 list, per 04b's signature
   ```
 

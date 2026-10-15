@@ -504,3 +504,74 @@ the content. All twelve targets re-asserted against current source.
 10 · `check_drift` 10 of 14 — all four load the new manifest key and report
 exactly as before. The two new `[exclude] dirs` behaviours tested directly. No
 PyRS code changed in this batch; tiers not re-run.
+
+---
+
+## Batch 29 — `03-combine-runs-nxstress.md`, `07-manual-reduction-nxstress.md`, `10-flip-defaults.md`
+
++74/−0: one `## Follow-up` each, all sibling-doc notes written when 04b/04
+changed something these downstream specs depend on.
+
+### Everything the three Follow-ups claim is true
+
+Worth stating, because the batches before this one were almost entirely
+corrections:
+
+- **03 F2.1** — the landed call really is `nx.write([self._hidra_ws], [[]])`
+  (`combine_runs_model.py:41`); the named regression test exists; the body
+  really does still spell it `[]`, so the Follow-up's premise holds.
+- **07 F3.1** — all three cited sites exist and all three say `[]`.
+- **10 Follow-up 2** — every concrete claim verifies. `NXstress.nxdl.xml` is
+  present; its sha256 is `bee46c0723720bc440570cc8f74be37cea6145b15b7e6f4c3ec00c421144b905`,
+  matching the recorded value exactly; commit `004da96e…` and the provenance
+  block are at `IO_prototype.rst:26-32`; `.pre-commit-config.yaml:5` excludes
+  it; `validItemName` is reproduced at `_definitions.py:385`. Its cross-spec
+  claim that spec 04's F1.3 "stands unchanged" holds —
+  `a4_nexusformat_validator.py` re-run, and `use_production_names: false` is
+  still the shipped default.
+- **03 F1.1** was the only citation the sweep flagged, and it is the documented
+  exception: a finding that *diagnoses* a wrong pointer. Its corrected value
+  `:21` is still correct.
+
+### D63 — the bodies are wrong at copy-paste sites, and nothing said so
+
+The Follow-ups correct the body rather than the body being corrected. That is
+the series convention and is not reopened here. The consequence in these three
+documents is sharper than usual, because the superseded text is not prose a
+reader weighs — it is **a call signature they would copy**, and in one case it
+sits inside a fenced code block annotated *"per 04b's signature"*, which makes
+it look checked rather than stale.
+
+Six live sites, now marked inline: `03:43`, `03:78` (a deliverables bullet, and
+wrong on *both* counts — bare workspace and `[]`), `03:105`, `07:73`, `07:129`
+(the code block) and 10's two artifact sites, where *"neither exists yet as of
+this writing"* is now half false — the schema doc landed, the validator did not.
+
+`03:50` is left unmarked deliberately: it says "**pre-04b** signature … a bare
+workspace, not a list", so it labels itself. Quotations inside Follow-ups are
+left alone, per the rule that a finding keeps what it diagnoses.
+
+### (b) existed, in the one place the reader at risk never looks
+
+`prompts/implementation-prompt.txt:90-98` already states the rule — *"the body
+is deliberately left as the record of what was believed. Where the two
+disagree, **the Follow-up wins.** So read your subspec's Follow-ups first."*
+
+**But that file is the prompt for an agent starting an implementation pass.** A
+human opening the spec directly, or an agent landing mid-document, never sees
+it. The rule was real and the delivery was wrong. Each of the three documents
+now carries it in a block quote above its Overview, in the prompt's own words so
+there is one formulation rather than two, and crediting the prompt as the
+source.
+
+The header note also says the inline markers are **a convenience and not a
+guarantee** — the Follow-ups remain the authority. Claiming the markers are
+exhaustive would be an assertion nothing checks, which is the failure this
+review has named repeatedly.
+
+### Verification
+
+`check_links` 0 across 25 documents; `check_citations` 3 of 502 (known
+`open-questions/06` residue). Every claim in the three Follow-ups re-verified
+against code, the vendored artifact's sha256 recomputed, and two probes re-run.
+No PyRS code changed; tiers not re-run.

@@ -4,6 +4,14 @@
 **Phase:** 1
 **Depends on:** [01 — Config infrastructure & test framework](01-config-and-test-infra-PR.md)
 
+> **Read the `## Follow-up` sections before the body.** Corrections land there,
+> append-only, and the body is deliberately left as the record of what was
+> believed. **Where the two disagree, the Follow-up wins.** Sites in the body
+> that a Follow-up has superseded are marked inline, but the marker is a
+> convenience and not a guarantee — the Follow-ups are the authority. (Same rule
+> as `prompts/implementation-prompt.txt`, stated here for anyone reading the
+> document directly rather than starting an implementation pass.)
+
 ---
 
 ## Overview
@@ -33,7 +41,8 @@ mean maintaining two separate data paths through `CombineRunsModel` for an
 identical resulting file. **Decided:** keep `combine_project_files`
 unchanged; the `.nxs` export branch passes the already-merged workspace as
 a **length-1 list** — `NXstress.write([self._hidra_ws], [])` — once 04b's
-signature lands. No `nxstress.discriminator_fields` or `merge_workspaces`
+signature lands. **[Superseded: the landed call is `write([self._hidra_ws],
+[[]])` — one `PeakCollection` list per workspace. See Follow-up 2 F2.1.]** No `nxstress.discriminator_fields` or `merge_workspaces`
 config is touched by this spec at all (`N == 1` bypasses that mechanism
 entirely, per 04b's own empty-config policy).
 
@@ -67,6 +76,10 @@ group rather than raising.
   `NXstress (*.nxs)` file-dialog filter.
 - New export path in `combine_runs_model.py` that calls
   `NXstress.write(self._hidra_ws, [])` when the destination is `*.nxs`.
+  **[Superseded on both counts: the landed call is
+  `write([self._hidra_ws], [[]])` — the workspace wrapped in a list (04b's
+  signature) and one `PeakCollection` list per workspace. See Follow-up 2
+  F2.1.]**
 - Round-trip integration test.
 
 **Out of scope:**
@@ -95,7 +108,8 @@ _None._
   suffix-dispatch branch — if `Path(fileout).suffix == ".nxs"`, write via
   `NXstress(fileout, "w").write(self._hidra_ws, [])` instead of the
   `HidraProjectFile` path (becomes `write([self._hidra_ws], [])` once 04b's
-  list-based signature lands — see above).
+  list-based signature lands — see above). **[Superseded: `write([self._hidra_ws],
+  [[]])`. See Follow-up 2 F2.1.]**
 - `combine_project_files` is unchanged. Note: it merges with
   `load_raw_counts=False` — `self._hidra_ws` never carries raw counts, so
   the `.nxs` export never populates the optional `input_data` group. This
