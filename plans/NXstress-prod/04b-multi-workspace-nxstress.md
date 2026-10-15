@@ -588,12 +588,12 @@ single `###` where only the first is path-qualified:
   directory or they read as unclaimed.
 - Action: recorded, not changed — the heading is unambiguous to a human reader.
 
-**Checked and accurate — no action.** `_peaks.py:313`/`:332` (both interleave
-checks), `_peaks.py:306`/`:326` (both monotonicity checks), all three
-`sorted(peakss, key=_Peaks.PeakIndex.sort_key)` sites (`_peaks.py:184`,
-`_fit.py:87`, `_fit.py:287`) — the "three calls" count is exactly right —
-`_peaks.py:44-45`, `_fit.py:410`, `_input_data.py:70-72`,
-`_definitions.py:221-231`, `_peaks.py:246-338`.
+**Checked and accurate — no action.** `_peaks.py:534`/`:553` (both interleave
+checks), `_peaks.py:528`/`:548` (both monotonicity checks), all three
+`sorted(peakss, key=_Peaks.PeakIndex.sort_key)` sites (`_peaks.py:325`,
+`_fit.py:109`, `_fit.py:309`) — the "three calls" count is exactly right —
+`_peaks.py:53-60`, `_fit.py:510`, `_input_data.py:170-172`,
+`_definitions.py:574-640`, `_peaks.py:446-559`.
 
 ---
 
@@ -623,7 +623,7 @@ citation drift from 04 landing. Probes are under
 **F2.2** (A3) — **`append_hidra_project` cannot be reused as this spec's merge.**
 The `init_group` bullet says to "reuse the merge logic
 `HidraWorkspace.append_hidra_project` already implements in-memory
-(`pyrs/core/workspaces.py:517`)".
+(`pyrs/core/workspaces.py:574`)".
 - Referent: `pyrs/core/workspaces.py`, probed by
   [`probes/a5_subruns_nonmonotonic.py`](probes/a5_subruns_nonmonotonic.py).
 - Verdict: **the pointer is right and the claim is wrong, twice.** It takes a
@@ -662,7 +662,7 @@ spec, and load-bearing for its own specified `[1,3,5]`/`[2,4,6]` test.
     CLAIM   the rejection is value-dependent, not intrinsic to concatenating
     RESULT  A ++ [7,8,9]: ACCEPTED -> [1, 3, 5, 7, 8, 9]
 
-    CLAIM   _sample.py:272's `logs.subruns = SubRuns(scan_point)` over an unsplit
+    CLAIM   _sample.py:733's `logs.subruns = SubRuns(scan_point)` over an unsplit
             axis (claim 3)
     RESULT  sampleLogsFromNexus shape: RAISED RuntimeError: subruns are not sorted
             in increasing order
@@ -781,7 +781,7 @@ subject until spec 05 adds `direction`.
   property wins on both halves.
 
 **F2.9** (A3) — **`get_sub_runs()` returns `SubRuns`, not an array**
-(`pyrs/core/workspaces.py:403-415`), so the Overview's
+(`pyrs/core/workspaces.py:458-471`), so the Overview's
 `concat(ws0.get_sub_runs(), …)` needs `.raw_copy()`. Cosmetic; noted because
 the sentence reads as if it were already array-valued.
 
@@ -840,28 +840,30 @@ All from 04 landing; every surrounding claim re-read and still true.
 
 | Claim | Superseded | Now |
 |---|---|---|
-| `peakCollectionRanges` | 246-338 | `_peaks.py:419-529` |
-| interleave raises | 313 / 332 | `_peaks.py:505` / `:524` |
-| monotonicity raises | 306 / 326 | `_peaks.py:499` / `:519` |
-| the three `sorted(...)` sites | 184, 87, 287 | `_peaks.py:303`, `_fit.py:98`, `_fit.py:298` |
-| the sort-order docstring | 44-45 | `_peaks.py:51-58` |
+| `peakCollectionRanges` | 246-338 | `_peaks.py:446-559` |
+| interleave raises | 313 / 332 | `_peaks.py:534` / `:553` |
+| monotonicity raises | 306 / 326 | `_peaks.py:528` / `:548` |
+| the three `sorted(...)` sites | 184, 87, 287 | `_peaks.py:325`, `_fit.py:109`, `_fit.py:309` |
+| the sort-order docstring | 44-45 | `_peaks.py:53-60` |
 | `_init` writes non-required columns | 100-172 | `_peaks.py:168-262` |
-| "only h/k/l/phase_name required" | 37-40 | `_peaks.py:30-37` |
-| `allowed_identifier` | 221-231 | `_definitions.py:326-390` |
-| `dg["scan_point"] = ...` | 410 | `_fit.py:466` |
+| "only h/k/l/phase_name required" | 37-40 | `_peaks.py:32-39` |
+| `allowed_identifier` | 221-231 | `_definitions.py:574-640` |
+| `dg["scan_point"] = ...` | 410 | `_fit.py:510` |
 | iterating `_raw_counts.keys()` | 37 | `_input_data.py:49` |
-| the exact-match check | 70-72 | `_input_data.py:95-97` |
-| `mono["wavelength"] = ...` | 104 (103 in open-questions) | `_instrument.py:205` |
+| the exact-match check | 70-72 | `_input_data.py:170-172` |
+| `mono["wavelength"] = ...` | 104 (103 in open-questions) | `_instrument.py:227` |
 
 Several of these moved again within this PR, since it rewrote the same
 functions; the values above are as of this Follow-up.
 
-**Follow-up 1's closing "Checked and accurate" list is left untouched**, and its
-pointers (`_peaks.py:184`, `:44-45`, `:246-338`) have since drifted. They were
-accurate when written, an earlier Follow-up is never edited, and the current
-values are in the table above. `landing_trigger.py` will keep surfacing them
-whenever `_peaks.py` moves; that is the expected cost of an append-only record,
-not an unfixed finding.
+**Superseded — see Decisions Log item 41 and Follow-up 12.** This paragraph
+originally left Follow-up 1's closing "Checked and accurate" list untouched on
+the grounds that an earlier Follow-up is never edited, and treated the resulting
+drift as the expected cost of an append-only record. The rule has since been
+narrowed: a citation *value* is a pointer, not a belief, so it is **not** covered
+by the append-only rule and is updated wherever it appears. Follow-up 1's
+pointers have been re-resolved along with everything else. Superseded values are
+recoverable from git history, which is the only place they are worth anything.
 
 ---
 
@@ -1708,3 +1710,44 @@ current source and asserted to contain the symbol or text its prose names — 21
 checks, all passing, including one off-by-one caught and fixed that way
 (`_peaks.py:195-197` → `:196-198`). No code changed in this batch, so no tiers
 were re-run.
+
+---
+
+## Follow-up 12 — 2026-10-15 (batch 26 ruling applied retroactively: Follow-up pointers re-resolved)
+
+Not a new audit of this document. Batch 25 (Follow-up 11) deliberately left this
+document's Follow-up 1 and Follow-up 2 pointers stale, citing the policy in
+Follow-up 2's closing paragraph. **That deferral was overturned during batch 26**
+by the reviewer's ruling, now **README Decisions Log item 41**: a citation value
+is a pointer, not a belief, and is updated wherever it appears.
+
+Follow-up 2's closing paragraph is marked superseded in place, since it *states*
+the retired policy rather than merely using it.
+
+Re-resolved, all by symbol rather than by diff position:
+
+- **Follow-up 1's "Checked and accurate" list** — interleave raises
+  `_peaks.py:534`/`:553`; monotonicity raises `:528`/`:548`; the three
+  `sorted(…)` sites `_peaks.py:325`, `_fit.py:109`, `_fit.py:309`; and
+  `_peaks.py:53-60`, `_fit.py:510`, `_input_data.py:170-172`,
+  `_definitions.py:574-640`, `_peaks.py:446-559`.
+- **Follow-up 2's correction table** — the `Now` column only. The `Superseded`
+  column is left exactly as written: there the old number *is* the content.
+- `workspaces.py:517` → `:574` where Follow-up 2 quotes the body bullet batch 25
+  corrected, so the quotation stays true to what it quotes.
+- `_sample.py:272` → `:733` (`logs.subruns = SubRuns(scan_point)`), and
+  `workspaces.py:403-415` → `:458-471` (`get_sub_runs`).
+
+**Left as written, deliberately.** F1.1's `sample_logs.py:164-166` is the
+pointer that finding *diagnoses* — its verdict is "the claim is true; the
+pointer lands on a different `RuntimeError` in the same method", which would be
+nonsense if the pointer were corrected. Likewise Follow-up 2's `_input_data.py:36`
+and `_instrument.py:103`, both introduced by the phrase "the bullet **gave** …".
+These are the exceptions Decisions item 41 names.
+
+### Verification
+
+`check_links` 0; `check_citations` 3 of 425 (known `open-questions/06` residue,
+none here). A sweep of all 72 citations in this document leaves three landing on
+structural lines, all three the `Was` column of Follow-up 11's own correction
+table — historical by design. No code changed; tiers not re-run.

@@ -469,3 +469,102 @@ the module.
 ### Verification
 
 534 unit / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 26 — `04c-nxstress-append.md`
+
+`open-questions/04c-nxstress-append.md` is untouched by the PR -- Appendix A
+row 26 is correct -- and was checked for A7 freshness anyway: all six questions
+are RESOLVED/OBSOLETE and none is falsified by what landed.
+
+### Coverage
+
+A1, A2, A3, A7. **A4/A5 satisfied, not exempt** -- 04c rests on
+`a4_h5py_nexusformat_append.py`, `a4_growable_string_fields.py`,
+`a4_nxfield_maxshape_introspection.py` and `a5_append_preconditions.py`, all
+committed with real output pasted.
+
+### The reviewer's ruling, which re-scoped the batch
+
+Asked whether citations inside append-only `## Follow-up` sections could be
+corrected:
+
+> it is OK to update the citations in a follow-up section; that is, the citation
+> specifics themselves are *not* subject to the "do not edit follow-up" rules.
+> Stale citation *values* are worthless because they will point to something
+> that makes no sense; when required, the actual previous values can be
+> recovered from the git history!
+
+Recorded as **README Decisions Log item 41**. It withdraws **O35** (batch 24's
+edits to 04c's Follow-ups were correct) and reverses batch 25's deferral on 04b,
+which has been applied retroactively as 04b's Follow-up 12.
+
+### D47 -- fixed: every 04c citation re-resolved by symbol
+
+33 citations, 30 assertions, all passing. Detail in 04c's **Follow-up 6**.
+
+The method is the finding. **Batch 24 remapped four of 04c's pointers by diff
+position, and positional remapping is only as good as the pointer it starts
+from.** `_sample.py:312` was cited for "the variable-length dtype" while landing
+on `_present_in_all`; the remap moved it to `:529`, where it landed on
+`_present_in_all` again. A positional remap preserves where the *text* went;
+only a symbol lookup preserves what the *claim* meant. This is the concrete
+answer to O34.
+
+Worst single case: `_instrument.py:317` was cited for the *mask* group's
+extend-by-name behaviour and had come to land on the **detector** `depends_on`
+assignment. Real, related, plausible -- and wrong.
+
+### Also fixed, found while sweeping
+
+The viewer call-site enumeration in Follow-up 2's verification was wrong in
+three of five entries, and omitted `nxstress_load.py:55` -- the only `"r"` in
+the set, and so the one the claim most depends on. The conclusion ("every call
+is `"w"` or `"r"`") survives; the evidence for it did not. Re-derived with
+`grep -rn "NXstress(" pyrs/interface/`, which is how it should have been taken:
+a hand-written enumeration goes stale silently, a command can be re-run.
+
+### D46 -- fixed: the family table omitted two of its own five members
+
+`## Scope: all position-aligned groups` is where the spec says what append
+covers, and its central promise -- "append never leaves one group's rows grown
+without the corresponding rows in every other group in its family" -- is
+quantified over that table. The table listed three members; the code grows five.
+Missing: `instrument/monochromator/wavelength` (04b had already established it
+is per-scan-point, and 04c then filed `_instrument.py` under *name-keyed, no
+insertion needed*, which is true of `_Masks` and false of the module),
+`SAMPLE_DESCRIPTION/transformations/*`, and `entry/start_time`/`end_time` --
+the section had no entry-level row at all.
+
+Fixed by enumerating the family exhaustively **and** naming the real authority
+beside it: each module's `appendableDatasets`, aggregated by
+`NXstress._appendableDatasets` and consumed by `_validateAppendableShapes`.
+A prose table is a restatement and goes stale; pointing at the code that is
+actually consulted means the next member shows up in one place rather than
+having to be remembered in two. Recorded as F6.4.
+
+### D48 -- fixed, and it released the last stuck pointer
+
+The Overview's "`NXstress.write` already supports ... each call adds a new,
+auto-numbered `NXentry` **today**" was true of the pre-04c starting point and
+false of the code this spec shipped: under Decisions Log item 33 an omitted
+`entry_number` now *appends* to the highest existing entry. Rewritten into the
+past tense, labelled as the starting point, with the current behaviour stated
+after it and pointed at `write()`'s own docstring table.
+
+Worth separating from ordinary drift: this also freed `NXstress.py:151-152`,
+the one pointer the D47 sweep had to leave alone. **A stale pointer attached to
+a stale claim cannot be fixed as a pointer** -- repointing it would have made
+the citation contradict the sentence citing it -- yet a mechanical sweep reports
+it as merely out of date, indistinguishable from the forty that were. Recorded
+as F6.5.
+
+### Verification
+
+`check_links` 0 across 25 documents; `check_citations` 3 of **504** (known
+`open-questions/06` residue; the total rose as the new Follow-ups added
+resolvable citations). 35 of 35 symbol assertions pass. A final sweep of all 69
+citations in 04c and 84 in 04b leaves none pointing at a blank or structural
+line except deliberate "was X" values inside correction records. No code
+changed; tiers not re-run.

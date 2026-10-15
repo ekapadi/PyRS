@@ -1577,9 +1577,13 @@ resolved onto `appendableDatasets` while described as the exact-match reader.
 **A citation that lands on something plausible is worse than one that lands on
 nothing**, because following it does not feel like a failed check.
 
-Follow-ups 1 and 2 were left untouched, per the policy this document already set
-at :860-864. That policy is what makes the body the only live register, which is
-why its drift is a defect and theirs is accepted cost.
+Follow-ups 1 and 2 were left untouched at the time, per the policy this
+document set at :860-864. **That deferral was overturned in batch 26**: the
+reviewer ruled that citation values are pointers, not beliefs, and so are not
+subject to the append-only rule -- a stale value is worthless because it points
+at something that makes no sense, and the previous value is in git history.
+Follow-ups 1 and 2 were re-resolved in batch 26. Recorded as Decisions Log
+item 41.
 
 ### D45 -- a claim that had come to assert the opposite of its referent
 

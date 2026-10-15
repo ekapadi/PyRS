@@ -11,15 +11,23 @@
 Add the ability to extend an **already-written** `NXentry` with more scan
 points, rather than requiring every write to create a fresh entry.
 
-This is a different capability than it may first appear: `NXstress.write`
-already supports accumulating multiple reductions into one `.nxs` file today
-— each call adds a new, auto-numbered `NXentry`
-([NXstress.py:149](../../pyrs/utilities/NXstress/NXstress.py#L149)), and the
-guard at [NXstress.py:151-152](../../pyrs/utilities/NXstress/NXstress.py#L151)
-only fires on an accidental name collision. What's missing is the ability to
-grow *one* `NXentry`'s data — e.g., a second reduction pass whose scan points
-belong to the same combined index as an earlier write, not a new
-data-reduction condition. Per the plan's own semantics
+This is a different capability than it may first appear. **Before this spec**,
+`NXstress.write` already accumulated multiple reductions into one `.nxs` file:
+each call added a new, auto-numbered `NXentry`, and its only guard fired on an
+accidental name collision. What was missing is the ability to grow *one*
+`NXentry`'s data — e.g., a second reduction pass whose scan points belong to the
+same combined index as an earlier write, not a new data-reduction condition.
+
+**That starting point no longer describes the code**, and the paragraph above is
+kept in the past tense for exactly that reason: under Decisions Log item 33 this
+spec made `write()` dispatch on whether the *resolved entry already exists*
+rather than always creating a new one, so an omitted `entry_number` now
+**appends to the highest existing entry**. The four cases are tabulated in
+`write()`'s own docstring
+([NXstress.py:156-164](../../pyrs/utilities/NXstress/NXstress.py#L156)) and
+restated under *Entry targeting* below; the collision guard survives as the
+backstop for the one case still unimplemented, overwriting an existing entry's
+contents ([NXstress.py:278](../../pyrs/utilities/NXstress/NXstress.py#L278)). Per the plan's own semantics
 (README.md §2.4, "Multi-NXentry semantics"), separate conditions still get
 separate `NXentry`s; append is for adding more of the *same* condition's data.
 
@@ -35,7 +43,7 @@ action) without a corresponding menu action anywhere in the GUI today.
 ### Relaxed sortedness: "locally sorted, globally segmented," not globally sorted
 
 04b established that the reader (`_Peaks.peakCollectionRanges`,
-`_peaks.py:425-535`) only ever required two invariants — each compound key
+`_peaks.py:446-559`) only ever required two invariants — each compound key
 occupies one contiguous run (R1), and `scan_point` increases within a run
 (R2, already guaranteed upstream by `SubRuns.set`,
 `sample_logs.py:167-168`) — never global lexicographic order. Sortedness
@@ -111,9 +119,29 @@ family that isn't position-sensitive at all:
 
 | Family | Groups | Aligned by |
 |---|---|---|
-| Peak-index family | `_peaks.py` (`PEAKS`/`NXreflections`), `_fit.py::_PeakParameters`, `_fit.py::_BackgroundParameters` (`peak_parameters`/`background_parameters` under `FIT`) | The compound `PeakIndex` sort key. `_PeakParameters.init_group`/`_BackgroundParameters.init_group` build their rows via `sorted(peakss, key=_Peaks.PeakIndex.sort_key)` ([_fit.py:87](../../pyrs/utilities/NXstress/_fit.py#L87)) — **the exact same order as the peaks index**, so their rows are positionally aligned with it, not independently keyed. |
-| Scan-point family | `_input_data.py` (`detector_counts`), `_sample.py` (`SAMPLE_DESCRIPTION` per-scan-point logs), `_fit.py::_Diffractogram` (`diffractogram`/`diffractogram_errors`) | `scan_point`. |
-| Name-keyed, no insertion needed | `_instrument.py::_Masks` | Mask *name*, not position — `init_group` already accepts an existing `masks` group and extends it by name ([_instrument.py:317](../../pyrs/utilities/NXstress/_instrument.py#L317)); no new work needed here. |
+| Peak-index family | `_peaks.py` (`PEAKS`/`NXreflections`), `_fit.py::_PeakParameters`, `_fit.py::_BackgroundParameters` (`peak_parameters`/`background_parameters` under `FIT`) | The compound `PeakIndex` sort key. `_PeakParameters.init_group`/`_BackgroundParameters.init_group` build their rows via `sorted(peakss, key=_Peaks.PeakIndex.sort_key)` ([_fit.py:109](../../pyrs/utilities/NXstress/_fit.py#L109)) — **the exact same order as the peaks index**, so their rows are positionally aligned with it, not independently keyed. |
+| Scan-point family | `_input_data.py` (`detector_counts`, `scan_point`), `_sample.py` (`SAMPLE_DESCRIPTION` per-scan-point logs **and** the `transformations` chain), `_fit.py::_Diffractogram` (`diffractogram`/`diffractogram_errors`), `_instrument.py::_Instrument` (`monochromator/wavelength`), `NXstress.py` (`entry/start_time`, `entry/end_time`) | `scan_point`. |
+| Name-keyed, no insertion needed | `_instrument.py::_Masks` | Mask *name*, not position — `init_group` already accepts an existing `masks` group and extends it by name ([_instrument.py:558-567](../../pyrs/utilities/NXstress/_instrument.py#L558)); no new work needed here. **`_Masks` only** — `_Instrument` itself owns a scan-point field, one row above. |
+
+The scan-point row above is the thing this spec's central guarantee is
+quantified over, so it is enumerated exhaustively rather than by example. The
+authority is each module's own `appendableDatasets`, which is what
+`NXstress._validateAppendableShapes` actually consults — not this table:
+
+| Member | Declared by |
+|---|---|
+| `input_data/detector_counts`, `input_data/scan_point` | [`_input_data.py:83`](../../pyrs/utilities/NXstress/_input_data.py#L83) |
+| `SAMPLE_DESCRIPTION/*`, `SAMPLE_DESCRIPTION/logs/*`, `SAMPLE_DESCRIPTION/transformations/*` | [`_sample.py:485`](../../pyrs/utilities/NXstress/_sample.py#L485) |
+| `FIT/DIFFRACTOGRAM/*` | [`_fit.py:544`](../../pyrs/utilities/NXstress/_fit.py#L544) |
+| `instrument/monochromator/wavelength` | [`_instrument.py:378`](../../pyrs/utilities/NXstress/_instrument.py#L378) |
+| `entry/start_time`, `entry/end_time` | [`NXstress.py:667`](../../pyrs/utilities/NXstress/NXstress.py#L667) |
+
+Three of these were absent from this section as first written, and each is a
+place the lockstep guarantee could have been violated silently: **wavelength**
+(04b had already established it is per-scan-point, not entry-wide),
+the **`transformations` chain** (added to `_sample.py` later in this work, and
+scan-point-aligned by construction), and the **entry-level times** (the section
+originally had no entry-level row at all). Recorded as Follow-up 6 F6.4.
 
 **Decided:** this spec covers the full peak-index family and the full
 scan-point family, coordinated so that append never leaves one group's rows
@@ -202,11 +230,11 @@ other, Case-A-only, append calls in the same session.
   `_fit.py::_PeakParameters.init_group` / `_BackgroundParameters.init_group` —
   all three grow by the same new-row count, appended after their current end.
 - Scan-point family: implement the tail-append path for
-  `_input_data.py:60-79` (`detector_counts`, on both write and read),
+  `_input_data.py:62-79` (`detector_counts`, on both write and read),
   `_sample.py`'s per-scan-point logs, and `_fit.py::_Diffractogram.init_group`
   — all three grow by the same new-row count, appended after their current
   end.
-- `NXstress.py`: remove the guard at `NXstress.py:232` for the append
+- `NXstress.py`: remove the guard at `NXstress.py:278` for the append
   case; add entry targeting (`entry_number`, defaulting to the last entry);
   dispatch `write()` to the tail-append path when opened with mode `"a"`.
 - Conflict/classification: compare new scan points / index rows against the
@@ -253,7 +281,7 @@ on-disk NXstress structures and the new data's `HidraWorkspace`/
 
 - `init_group` — implement the tail-append path described in the `# TODO`
   that stood at `_peaks.py` lines 180-181, reusing the existing `_append_peak`
-  (`_peaks.py:315-390`)
+  (`_peaks.py:331-404`)
   against an existing on-disk `PeakIndex` group instead of a freshly
   `_init`-ed one: read the existing on-disk `PeakIndex` arrays (via
   `.nxdata`, using 04b's name-keyed discriminator resolution to reconstruct
@@ -476,8 +504,8 @@ tail-append design does not do".
 `04b-multi-workspace-nxstress.md`'s Follow-up 1 F1.1 for the evidence.
 
 **Checked and accurate — no action.** `_peaks.py:180-181`,
-`_input_data.py:44-46,63-72`, `NXstress.py:151-152`, `_peaks.py:190-244`,
-`_peaks.py:246-338` all land exactly on their claimed targets. The premise at
+`_input_data.py:44-46,63-72`, `NXstress.py:278`, `_peaks.py:331-404`,
+`_peaks.py:446-559` all land exactly on their claimed targets. The premise at
 `:14-21` — that `write` already accumulates entries and the guard "only fires on
 an accidental name collision" — is confirmed against the landed library
 ([`probes/a5_nxstress_roundtrip.py`](probes/a5_nxstress_roundtrip.py)):
@@ -555,9 +583,9 @@ and cannot be extended by any mechanism.
 - Correction, and **why it is not read-merge-rewrite**: a new helper
   [`growable(rank)`](../../pyrs/utilities/NXstress/_definitions.py#L70) returns
   the `maxshape`/`chunks` kwargs, and is applied at every per-scan-point
-  `NXfield(...)` — `NXstress.py:801-802`, `_instrument.py:226`,
-  `_input_data.py:74`, `_sample.py:195`/`:209`/`:231`/`:252`,
-  `_fit.py:485`/`:490`/`:494`/`:498`. A matching
+  `NXfield(...)` — `NXstress.py:1093-1094`, `_instrument.py:227`,
+  `_input_data.py:74`, `_sample.py:234`/`:247`/`:266`/`:287`,
+  `_fit.py:510`/`:515`/`:519`/`:523`. A matching
   [`tail_append(field, values)`](../../pyrs/utilities/NXstress/_definitions.py#L109)
   carries the growth rule, and
   [`appendable(field)`](../../pyrs/utilities/NXstress/_definitions.py#L90) the
@@ -599,7 +627,7 @@ than that.
   `Filename`, `start_time` and `end_time` are all bytes logs, so this was reachable
   by appending a workspace whose project file has a longer name than the first's.
 - Action taken: `_writable` now coerces `|S` as well as `<U` to the
-  variable-length dtype ([`_sample.py:529`](../../pyrs/utilities/NXstress/_sample.py#L529)).
+  variable-length dtype ([`_sample.py:637`](../../pyrs/utilities/NXstress/_sample.py#L637)).
   The read-back property is unchanged — both dtypes return `bytes` — so no reader
   is affected. The same probe confirms all three forms the writer produces
   (`list[str]`, `|S`, vlen UTF-8) write, reopen and tail-append correctly with
@@ -634,7 +662,7 @@ comment (at lines 152-156 before this pass), with no spelling at all.
   append nor create, and stays unimplemented. Note what that means under this
   dispatch: no input selects it, so the former collision guard is **unreachable
   by construction** rather than, as this finding first said, "the backstop". It
-  is kept at `NXstress.py:232` regardless — the cost of that reasoning being
+  is kept at `NXstress.py:278` regardless — the cost of that reasoning being
   wrong is an entry silently replaced instead of grown. Caught by
   `check_citations.py` on the re-run, which flagged the stale pointer that led
   back to it.
@@ -662,7 +690,7 @@ error. Added to the pre-flight pass, each raising `RuntimeError`:
      `DIFFRACTOGRAM` for would need a new group with no rows for the scan points
      already on disk.
   3. **Retained sample-log set matches** (`_Sample.validateAppend`,
-     [`_sample.py:276`](../../pyrs/utilities/NXstress/_sample.py#L276)), compared
+     [`_sample.py:511`](../../pyrs/utilities/NXstress/_sample.py#L511)), compared
      by encoded column name rather than raw PV key, since that is what the file
      indexes by.
   4. **Optional sample fields match** — `temperature`, `stress_field`: an entry
@@ -671,7 +699,7 @@ error. Added to the pre-flight pass, each raising `RuntimeError`:
      [`_input_data.py:83`](../../pyrs/utilities/NXstress/_input_data.py#L83)).
   6. **Instrument geometry, detector shift and calibration agree**
      (`_Instrument.validateAppend`,
-     [`_instrument.py:377`](../../pyrs/utilities/NXstress/_instrument.py#L377)) —
+     [`_instrument.py:378`](../../pyrs/utilities/NXstress/_instrument.py#L378)) —
      one `NXentry` describes one instrument configuration.
   7. **Peak profile and background function match** the entry's `title` scalars.
      `_append_peak` already raises on a mismatch, but only after earlier groups
@@ -795,8 +823,9 @@ something other than the code under test.
 - `pixi run test-gui` — **16 passed**.
 - "Confirm by inspection that no GUI file calls `NXstress(..., "a")`" —
   confirmed: every call in `pyrs/interface/` is `"w"` or `"r"`
-  (`combine_runs_model.py:37`, `peak_fitting_model.py:97`/`:234`,
-  `texture_fitting_model.py:52`/`:197`).
+  (`combine_runs_model.py:40`, `peak_fitting_model.py:234`,
+  `texture_fitting_model.py:197`, and `nxstress_load.py:55`, which is the
+  one `"r"`).
 - "Manual check … confirm each group is locally sorted, globally segmented" —
   run as the last claim of `a5_append_preconditions.py` and pinned by
   `test_append.py::TestRoundTrip::test_file_is_locally_sorted_globally_segmented`,
@@ -810,18 +839,18 @@ to be appended / However, at present, appending data is not yet supported",
 and the Architecture, Scope and NXstress Changes sections each cite it as
 evidence that the mechanism is already half-built. It was, and the comment is
 now replaced by the `data=None` branch it predicted. The three body citations
-are repointed at `init_group` itself (`_peaks.py:289-312`) and reworded to the
+are repointed at `init_group` itself (`_peaks.py:305-329`) and reworded to the
 past tense, since a pointer to a deleted comment resolves to whatever happens to
 occupy those lines. Mentioned because this is the ordinary end-state of a `TODO`
 cited as evidence: the citation outlives its referent by exactly one PR.
 
 Other pointers corrected in place this pass, all pure drift with the claims
-around them unchanged: `_peaks.py:246-338` → `:425-535` (`peakCollectionRanges`),
-`_peaks.py:190-244` → `:315-390` (`_append_peak`), `_input_data.py:44-46,63-72`
-→ `:60-79`, and `NXstress.py:151-152` → `:232` (the overwrite guard, which this
-PR moved rather than removed — see F2.4). Follow-up 1's "Checked and accurate"
-list still quotes the superseded values and is left as written; it records what
-was true when it was written, which is the point of an append-only section.
+around them unchanged: `peakCollectionRanges`, `_append_peak`, the
+`detector_counts` write path, and the overwrite guard (which this PR moved
+rather than removed — see F2.4). The values they were given in *this* pass have
+since drifted again and were re-resolved by symbol in Follow-up 6; the
+superseded numbers this paragraph used to spell out are in git history, which is
+where Decisions Log item 41 says they belong.
 
 ---
 
@@ -899,7 +928,7 @@ therefore fired during mutation, after earlier groups had grown.
 comment said so: "a mismatch found mid-append would already have grown
 something" sat *below* a `tail_append` of `scan_point` and the three coordinate
 axes. Same class as F2.5's two, missed in the same pass. The call is now the
-first statement ([`_sample.py:497`](../../pyrs/utilities/NXstress/_sample.py#L497)),
+first statement ([`_sample.py:594`](../../pyrs/utilities/NXstress/_sample.py#L594)),
 and the coordinate arrays are built and shape-checked before anything is
 resized rather than appended as they are computed.
 
@@ -1305,3 +1334,142 @@ Unreachable under the new policy; left for its own change.
 
 **494 unit** (was 443) / 104 integration / 16 GUI; `ruff` and `mypy` clean; probe
 sweep 19 OK, 1 SKIPPED (retired), 0 FAIL.
+
+---
+
+## Follow-up 6 — 2026-10-15 (PR review, batch 26: citations re-resolved by symbol, not by position)
+
+Raised in the human PR review of 04 + 04b + 04c (batch 26,
+[plans/PR_review/04c-comments.md](../PR_review/04c-comments.md)).
+
+### F6.1 — the append-only rule does not cover citation values
+
+Decided by the reviewer during this batch, recorded as **README Decisions Log
+item 41**:
+
+> it is OK to update the citations in a follow-up section; that is, the citation
+> specifics themselves are *not* subject to the "do not edit follow-up" rules.
+> Stale citation *values* are worthless because they will point to something
+> that makes no sense; when required, the actual previous values can be
+> recovered from the git history!
+
+This narrows rather than overturns "an earlier Follow-up is never edited". A
+Follow-up's **claims and verdicts** stay frozen, because those are the record of
+what was believed. A **pointer** is not a belief. Two exceptions survive, both
+because there the old number *is* the content: a correction record of the form
+`was X → now Y` keeps its `X`, and a finding that diagnoses a wrong pointer
+keeps the pointer it diagnoses (F1.1 in 04b is one).
+
+Line numbers are expected to be replaced by semantic-id XREF keys in a later
+pass, which removes the problem at its source rather than re-fixing it per PR.
+
+### F6.2 — every citation in this document re-resolved, by symbol
+
+Thirty-three citations, each re-resolved by looking up the **symbol or text the
+prose names** and asserting the target line contains it — then checked
+mechanically, 30 of 30 passing. The method matters, and is the finding:
+
+**Batch 24 remapped four of this document's pointers by diff position**, and
+positional remapping is only as good as the pointer it starts from. It
+faithfully carried one that was already wrong: `_sample.py:312` was cited for
+"the variable-length dtype" while landing on `_present_in_all`, and the remap
+dutifully moved it to `:529`, where it landed on `_present_in_all` again. It now
+reads `_sample.py:637`, which is `_writable`, the function the claim is about.
+A positional remap preserves *where the text went*; only a symbol lookup
+preserves *what the claim meant*.
+
+Corrected here, grouped by what moved them:
+
+| Claim | Now |
+|---|---|
+| `peakCollectionRanges` | `_peaks.py:446-559` |
+| `_append_peak` | `_peaks.py:331-404` |
+| `_Peaks.init_group` | `_peaks.py:305-329` |
+| the `sorted(…)` site | `_fit.py:109` |
+| `_Masks.init_group` extends by name | `_instrument.py:558-567` |
+| the overwrite guard | `NXstress.py:278` |
+| `growable` field sites | `NXstress.py:1093-1094`, `_instrument.py:227`, `_sample.py:234`/`:247`/`:266`/`:287`, `_fit.py:510`/`:515`/`:519`/`:523` |
+| `_Sample._writable` | `_sample.py:637` |
+| `_Sample.validateAppend` | `_sample.py:511`, called first at `:594` |
+| `_Instrument.appendableDatasets` | `_instrument.py:378` |
+
+`_instrument.py:317` deserves separate mention: it had come to land on the
+**detector** `depends_on` assignment while being cited for the *mask* group's
+extend-by-name behaviour. A citation that resolves to real, related,
+plausible-looking code is worse than one that resolves to nothing, because
+following it does not feel like a failed check.
+
+### F6.3 — the viewer call-site enumeration was wrong in three of five
+
+Follow-up 2's verification recorded *"every call in `pyrs/interface/` is `"w"` or
+`"r"` (`combine_runs_model.py:37`, `peak_fitting_model.py:97`/`:234`,
+`texture_fitting_model.py:52`/`:197`)"*. The **conclusion is still true**, and
+the enumeration backing it was not: there are four `NXstress(...)` constructor
+calls under `pyrs/interface/`, not five. `combine_runs_model.py:37` is off by
+three; `peak_fitting_model.py:97` and `texture_fitting_model.py:52` are not
+constructor calls at all; and `nxstress_load.py:55` — the only `"r"` in the set,
+and therefore the one most load-bearing for the claim — was missing entirely,
+having been added later in this review.
+
+Now reads `combine_runs_model.py:40`, `peak_fitting_model.py:234`,
+`texture_fitting_model.py:197`, `nxstress_load.py:55`. Re-confirmed by
+`grep -rn "NXstress(" pyrs/interface/`, which is how the count should have been
+taken in the first place: an enumeration written out by hand goes stale
+silently, while the command that produced it can be re-run.
+
+### F6.4 — the scan-point family table omitted three of its own members
+
+`## Scope: all position-aligned groups` is where this spec says what append
+covers, and its central promise — *"append never leaves one group's rows grown
+without the corresponding rows in every other group in its family"* — is
+quantified over the table beneath it. The table listed three members. The code
+grows five.
+
+| Missing | Why it matters |
+|---|---|
+| `instrument/monochromator/wavelength` | 04b had already established this is per-scan-point rather than entry-wide, and corrected its own Scope for exactly that. 04c's table then placed `_instrument.py` only under *name-keyed, no insertion needed*, which is true of `_Masks` and false of the module. |
+| `SAMPLE_DESCRIPTION/transformations/*` | Added to `_sample.py` later in this review (spec 04 Follow-up 9); scan-point-aligned by construction, seven links per entry. |
+| `entry/start_time`, `entry/end_time` | The section had no entry-level row at all, so these belonged to no family. |
+
+Each is a place the lockstep guarantee could have been broken without the
+document noticing. The table now enumerates the family exhaustively and, more
+usefully, names the **actual authority** beside it: each module's own
+`appendableDatasets`, aggregated by `NXstress._appendableDatasets`
+([NXstress.py:667](../../pyrs/utilities/NXstress/NXstress.py#L667)) and consumed
+by `_validateAppendableShapes`. A prose table is a restatement and goes stale;
+pointing at the code that is actually consulted means the next member added
+shows up in one place rather than needing to be remembered in two.
+
+### F6.5 — the Overview's motivating claim had become false in the present tense
+
+The Overview opened by observing that `NXstress.write` *"already supports
+accumulating multiple reductions into one `.nxs` file **today** — each call adds
+a new, auto-numbered `NXentry`"*. That was true as a statement of the
+pre-04c starting point, and this spec then changed it: under Decisions Log
+item 33, `write()` dispatches on whether the resolved entry already exists, so
+an omitted `entry_number` now **appends to the highest existing entry** rather
+than creating a new one. The sentence had come to assert the opposite of
+`write()`'s own docstring table.
+
+Rewritten into the past tense and explicitly labelled as the starting point,
+with a following paragraph stating the current behaviour and pointing at
+[NXstress.py:156-164](../../pyrs/utilities/NXstress/NXstress.py#L156).
+
+This also releases the one pointer F6.2 had to leave unrepaired:
+`NXstress.py:151-152` could not be corrected while the claim it served was
+false, since repointing it at the targeting table would have made the citation
+contradict the sentence citing it. **A stale pointer attached to a stale claim
+cannot be fixed as a pointer** — that is worth separating from ordinary drift,
+because the mechanical sweep that catches the rest will report this one as
+merely out of date.
+
+### Verification
+
+`check_links` 0 findings across 25 documents; `check_citations` 3 of 425, the
+known `open-questions/06` bare-`Lnn` residue, none in this document;
+`check_ownership` unchanged accepted residue. Every corrected pointer asserted
+to contain the symbol its prose names — 30 checks, all passing. A final sweep of
+every citation in this document leaves none landing on a structural or blank
+line. `NXstress.py:151-152`, left unrepaired when F6.2 was written because the
+claim it served was false, was released by F6.5 and is gone. No code changed in
+this batch; tiers not re-run.
