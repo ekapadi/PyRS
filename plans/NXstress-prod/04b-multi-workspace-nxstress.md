@@ -35,14 +35,14 @@ consequence of checking what the reader actually requires, against the
 current code:
 
 - The only reader-side splitter, `_Peaks.peakCollectionRanges`
-  (`_peaks.py:419-529`), enforces exactly two invariants: each compound
+  (`_peaks.py:446-559`), enforces exactly two invariants: each compound
   key occupies one *contiguous* run (raises `"Interleaved blocks
-  detected"` at `_peaks.py:505`/`:524` otherwise), and `scan_point`
-  increases within a run (`_peaks.py:499`/`:519`). It never checks that
+  detected"` at `_peaks.py:534`/`:553` otherwise), and `scan_point`
+  increases within a run (`_peaks.py:528`/`:548`). It never checks that
   the runs themselves are globally ordered — there is no
   `searchsorted`/`argsort`/binary search anywhere in the module. The
   three `sorted(peakss, key=_Peaks.PeakIndex.sort_key)` calls
-  (`_peaks.py:303`, `_fit.py:98`, `_fit.py:298`) exist only to give the
+  (`_peaks.py:325`, `_fit.py:109`, `_fit.py:309`) exist only to give the
   peak-index-family groups a **shared, deterministic block order** so
   their rows stay positionally aligned with each other — any commonly
   agreed order satisfies that, not specifically lexicographic.
@@ -58,13 +58,15 @@ current code:
   is what makes the read-side split and the scan-point-family merge
   both trivial — see the corresponding Scope bullets below — rather than
   requiring new indexing machinery.
-- Consequently, `_peaks.py:51-58`'s docstring (which currently states
-  the index is *"sorted lexographically prior to output"* as a format
-  guarantee, specifically to support append) should be corrected during
-  implementation: the actual guarantee is the two invariants above, not
-  a specific sort order, and the append cost the docstring warns about is
-  addressed instead by [04c](04c-nxstress-append.md)'s tail-append-only
-  scope.
+- Consequently, `_peaks.py`'s module docstring, which stated the index is
+  *"sorted lexographically prior to output"* as a format guarantee specifically
+  to support append, had to be corrected during implementation: the actual
+  guarantee is the two invariants above, not a specific sort order, and the
+  append cost the docstring warned about is addressed instead by
+  [04c](04c-nxstress-append.md)'s tail-append-only scope. **Done** --
+  [_peaks.py:53-60](../../pyrs/utilities/NXstress/_peaks.py#L53) now states the
+  two invariants, says in terms that a global lexicographic sort is *not*
+  guaranteed, and cites Decisions Log item 17 for the change.
 - **Orthogonal to name-keyed discriminator values (below):** name-keying
   governs how a discriminator *value* is attributed to a field name;
   this ordering rule governs only *write-time row order*. The reader
@@ -86,9 +88,11 @@ machinery.
 > `center_type`, and `sx`/`sy`/`sz` onto `NXreflections`
 > ([_peaks.py:168-262](../../pyrs/utilities/NXstress/_peaks.py#L168)), and the
 > module's own docstring
-> ([_peaks.py:30-37](../../pyrs/utilities/NXstress/_peaks.py#L30)) states only
-> `h`/`k`/`l`/`phase_name` (plus the unused `qx`/`qy`/`qz`) are
-> schema-required — `mask` explicitly was not part of `PeakCollection` before
+> ([_peaks.py:32-39](../../pyrs/utilities/NXstress/_peaks.py#L32)) states only
+> `h`/`k`/`l`/`phase_name` are schema-required (the unused `qx`/`qy`/`qz` are
+> recorded as required at
+> [_peaks.py:196-198](../../pyrs/utilities/NXstress/_peaks.py#L196), not in that
+> docstring) — `mask` explicitly was not part of `PeakCollection` before
 > this implementation added it. A discriminator column is the same category
 > of extension `NXreflections` already tolerates in practice. Verify against
 > `NXstress.html` (the canonical schema doc) and the `nexusformat`-org
@@ -141,11 +145,11 @@ machinery.
   **plain concatenation in workspace order** —
   `concat(ws0.get_sub_runs(), ws1.get_sub_runs(), …)` — not a merge-and-sort:
   `_Diffractogram.init_group` already writes
-  `dg["scan_point"] = NXfield(ws.get_sub_runs())` verbatim (`_fit.py:466`),
+  `dg["scan_point"] = NXfield(ws.get_sub_runs())` verbatim (`_fit.py:510`),
   `_InputData.init_group` iterates `ws._raw_counts.keys()` in workspace
   order (`_input_data.py:49`), and `_InputData.readSubruns`'s exact-match
   check — `if ws.get_sub_runs() != scan_points: raise RuntimeError(...)`
-  (`_input_data.py:95-97`) — keeps working unchanged specifically *because*
+  (`_input_data.py:170-172`) — keeps working unchanged specifically *because*
   each workspace's slice of the concatenated array equals its own
   `get_sub_runs()` as-is. A global-`scan_point` merge order would have
   interleaved workspaces with interleaving scan ranges (e.g. `[1,3,5]` and
@@ -192,7 +196,7 @@ changes to that class.
 **Forward note for later specs:** `HidraWorkspace` already uses plain
 `@property` for this exact shape of accessor — `name`, `hidra_project_file`,
 `reduction_masks`, `calibration_file`, `sample_log_names`
-(`pyrs/core/workspaces.py:55-1168`) are all properties, none are
+(`pyrs/core/workspaces.py:68-1261`) are all properties, none are
 `()`-called methods. If a later spec (e.g. 05, for `direction`) wants a
 first-class dedicated accessor rather than relying on the `SampleLogs`
 fallback, it should add a `@property` matching that convention — NXstress's
@@ -254,13 +258,13 @@ session. See Follow-up 3 F3.3.
   with discriminator values attached, vs. one list per workspace — TBD).
   On-disk, each discriminator field becomes one `NXfield` on `NXreflections`,
   named via the existing `allowed_identifier()` sanitizer
-  (`_definitions.py:326-390`).
+  (`_definitions.py:574-640`).
 - `peakCollectionsFromNexus` reconstructs the flattened index as today. The
   per-workspace split is a `groupby` over the discriminator-value prefix of
   the ranges `peakCollectionRanges` already returns — not a new indexing
   mechanism — because the slowest-varying ordering rule above guarantees
   each workspace's ranges are contiguous. The existing block-detection
-  algorithm (`_peaks.py:419-529`) generalizes by *prepending* the
+  algorithm (`_peaks.py:446-559`) generalizes by *prepending* the
   discriminator columns to its key tuple; the contiguity/monotonicity
   checks it already performs are otherwise unchanged.
 - Collision guard: raise if a configured discriminator field name collides
@@ -309,11 +313,11 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
   discriminator field falls back to the log path rather than raising on
   `setattr`.
 - The get fallback reuses `HidraWorkspace.get_sample_log_value(name)`
-  (`pyrs/core/workspaces.py:713-745`) as-is — it already returns the single
+  (`pyrs/core/workspaces.py:769-801`) as-is — it already returns the single
   value when every sub-run agrees, and raises otherwise. No new
   constancy-checking code is needed. The set fallback reuses the existing
   `HidraWorkspace.set_sample_log(name, sub_runs, values, units="")`
-  (`pyrs/core/workspaces.py:1001`).
+  (`pyrs/core/workspaces.py:1057`).
 - This bidirectional shape exists so that any later spec adding a dedicated
   `@property` (get **and** set — see 05's `direction` property) gets
   round-trip behavior for free: `write()` reads the property off each input
@@ -332,7 +336,7 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
 - `init_group` methods change from accepting one `ws` to accepting
   `list[HidraWorkspace]`; concatenate along the scan-point axis. Reuse the
   merge logic `HidraWorkspace.append_hidra_project` already implements
-  in-memory (`pyrs/core/workspaces.py:517`) rather than re-deriving it.
+  in-memory (`pyrs/core/workspaces.py:574`) rather than re-deriving it.
 - `_Instrument.init_group` treats two genuinely different kinds of field:
   - **Geometry, detector shift, and calibration state** are single,
     entry-wide values — validate they're consistent across all N input
@@ -340,7 +344,7 @@ def _apply_discriminator_value(ws: HidraWorkspace, name: str, value):
     mixed-calibration merges are not supported by this spec).
   - **Wavelength is not** one of these, even though an earlier draft of
     this bullet grouped it with geometry. It's stored per-scan-point
-    (`mono["wavelength"] = NXfield(wavelength, ...)`, `_instrument.py:205`)
+    (`mono["wavelength"] = NXfield(wavelength, ...)`, `_instrument.py:227`)
     and can already legitimately vary *within* a single workspace under
     existing PyRS semantics (`HidraWorkspace.get_wavelength` can return a
     per-subrun dict). It belongs to the scan-point family's concatenation
@@ -1623,3 +1627,84 @@ assumption is not idle.
 ### Verification
 
 526 unit / **112 integration** (was 104) / 16 GUI; `ruff` and `mypy` clean.
+
+---
+
+## Follow-up 11 — 2026-10-15 (PR review, batch 25: the body is the live register, and it had stopped being true)
+
+Raised in the human PR review of 04 + 04b + 04c (batch 25,
+[plans/PR_review/04b-comments.md](../PR_review/04b-comments.md)), auditing this
+document and its `open-questions` file.
+
+### F11.1 — thirteen body citations, every one into a function this PR rewrote
+
+Follow-up 2's `### Citations corrected in place` table fixed these as of
+2026-09-30 and says so in terms: *"Several of these moved again within this PR,
+since it rewrote the same functions; the values above are as of this
+Follow-up."* The PR then moved them **again**, and the body was never re-synced.
+
+| Claim | Was | Now |
+|---|---|---|
+| `peakCollectionRanges` | 419-529 | `_peaks.py:446-559` |
+| interleave raises | 505 / 524 | `_peaks.py:534` / `:553` |
+| monotonicity raises | 499 / 519 | `_peaks.py:528` / `:548` |
+| the three `sorted(...)` sites | `_peaks.py:303`, `_fit.py:98`, `:298` | `_peaks.py:325`, `_fit.py:109`, `_fit.py:309` |
+| "only h/k/l/phase_name required" | 30-37 | `_peaks.py:32-39` |
+| `dg["scan_point"] = ...` | 466 | `_fit.py:510` |
+| the exact-match check | 95-97 | `_input_data.py:170-172` |
+| the five `@property` accessors | 55-1168 | `workspaces.py:68-1261` |
+| `allowed_identifier` | 326-390 | `_definitions.py:574-640` |
+| `get_sample_log_value` | 713-745 | `workspaces.py:769-801` |
+| `set_sample_log` | 1001 | `workspaces.py:1057` |
+| `append_hidra_project` | 517 | `workspaces.py:574` |
+| `mono["wavelength"] = ...` | 205 | `_instrument.py:227` |
+
+Two did not merely drift, they **misled**. `workspaces.py:517` landed inside
+`get_wavelength` returning a per-subrun dict — entirely plausible beside a
+wavelength discussion, and attached to the `append_hidra_project` claim.
+`_input_data.py:95-97` landed on `appendableDatasets`' docstring and its
+`return row_aligned_fields(...)`, which reads like a reader and is not one. A
+citation that resolves to *something related* is worse than one that resolves to
+nothing, because checking it does not feel like checking it.
+
+One further inaccuracy in the same sentence: the module docstring at
+`_peaks.py:32-39` lists `h`/`k`/`l`/`phase_name` and **not** `qx`/`qy`/`qz`,
+which the prose attributed to it. Those are recorded at `_peaks.py:196-198`,
+a code comment, now cited separately.
+
+**Follow-up 1 and Follow-up 2 are untouched**, including Follow-up 2's table and
+the stale pointers Follow-up 2 explicitly elected to leave in Follow-up 1
+(:860-864). The corollary is what makes F11.1 a defect rather than more of the
+same accepted cost: **if every Follow-up is frozen, the body is the only live
+register there is**, and it is the one place a pointer has to be kept true.
+
+### F11.2 — a claim that had come to say the opposite of its referent
+
+The Overview bullet and `open-questions` Q6 both stated that
+`_peaks.py`'s module docstring *"currently states the index is sorted
+lexographically prior to output"* as a format guarantee, and that this
+*"should be corrected during implementation"*.
+
+It was corrected. `_peaks.py:53-60` now states the two invariants, says in terms
+that a global lexicographic sort is **not** guaranteed, and cites this
+document's Decisions Log item 17 for the change. So the citation resolved, passed
+`check_citations`, and handed a reader text contradicting the prose that quoted
+it — while also reading as outstanding work that was in fact done.
+
+Both now record the correction as made and point at the new text. The superseded
+wording is kept in the `open-questions` entry, which is the record of what was
+flagged; the Overview bullet is live spec text and states the current position.
+
+This is the same shape as spec 04's F-series finding on `check_citations`: the
+tool verifies a citation **resolves**, never that the line says what the prose
+claims. Two batches running, that gap has been where the defect was.
+
+### Verification
+
+`check_links` 0 findings across 25 documents; `check_citations` 3 problems out
+of 425, the known `open-questions/06` bare-`Lnn` residue, none in these two
+documents. Every corrected pointer was re-resolved mechanically against the
+current source and asserted to contain the symbol or text its prose names — 21
+checks, all passing, including one off-by-one caught and fixed that way
+(`_peaks.py:195-197` → `:196-198`). No code changed in this batch, so no tiers
+were re-run.

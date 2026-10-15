@@ -1543,3 +1543,66 @@ came from the model. Counting the inputs removed both at once.
 ### Verification
 
 534 unit / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 25 — `04b-multi-workspace-nxstress.md` + `open-questions/04b-multi-workspace-nxstress.md`
+
+The batch plan's Appendix A row 25 names these `04b-nxstress-multi-workspace.md`.
+The real filenames reverse the middle terms. A third row-vs-reality mismatch,
+alongside the two already recorded under "Corrections found while walking it" --
+and the same lesson: a file list drawn from a diff goes stale, so each batch's
+membership should be re-derived from the range when it opens.
+
+### Coverage
+
+A1, A2, A3, A7. **A4/A5 exempt** -- neither document asserts third-party
+behaviour or a cross-module runtime contract not already covered by a landed
+probe. Written down rather than left implicit, since afterwards "no probes were
+needed" and "no probes were written" are indistinguishable.
+
+All 61 code citations in both documents were extracted mechanically and then
+each one opened and read. That combination is the point: the tool says which
+citations exist and that they resolve, and only reading says whether the line
+means what the prose says it means.
+
+### D44 -- thirteen stale body pointers; two of them actively misleading
+
+Every one into a function this PR rewrote *after* Follow-up 2's correction table
+was written. Detail and the full table in 04b's **Follow-up 11** (F11.1).
+
+The two worth separating: `workspaces.py:517` resolved inside `get_wavelength`
+while attached to the `append_hidra_project` claim, and `_input_data.py:95-97`
+resolved onto `appendableDatasets` while described as the exact-match reader.
+**A citation that lands on something plausible is worse than one that lands on
+nothing**, because following it does not feel like a failed check.
+
+Follow-ups 1 and 2 were left untouched, per the policy this document already set
+at :860-864. That policy is what makes the body the only live register, which is
+why its drift is a defect and theirs is accepted cost.
+
+### D45 -- a claim that had come to assert the opposite of its referent
+
+Both documents said `_peaks.py`'s docstring "currently states" global
+lexicographic sorting and "should be corrected during implementation". The
+correction had been made: that docstring now says a global sort is *not*
+guaranteed, and cites this spec's own Decisions item 17 for it. The citation
+resolved, passed `check_citations`, and contradicted the prose quoting it.
+Recorded as F11.2.
+
+### O34 -- not fixed, raised for the series
+
+Two batches running, the finding has been stale line pointers, and the reason is
+structural: `landing_trigger.py` flags *every* citation into a changed file, so
+one genuine drift arrives indistinguishable from forty correct neighbours and the
+list gets skimmed. A tool that diffed old-vs-new line content and reported only
+citations whose target text actually moved would separate them. Toolkit work,
+not this PR's.
+
+### Verification
+
+`check_links` 0 across 25 documents; `check_citations` 3 of 425 (known
+`open-questions/06` residue, none here). Each corrected pointer re-resolved
+against current source and asserted to contain the symbol its prose names -- 21
+checks, all passing, one off-by-one caught that way. No code changed; tiers not
+re-run.
