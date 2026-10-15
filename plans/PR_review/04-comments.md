@@ -413,3 +413,59 @@ from another directory now succeeds for all three modules:
 ### Verification
 
 534 unit / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 23 — `plans/NXstress-prod/README.md`
+
+First of the document batches, and the one everything else cites. **110 lines
+from the PR**; 6 are this review's (Decisions rows 38-40).
+
+Decisions rows 24-35, §5 ownership and test-inventory corrections, and
+`## Follow-up 3`. Two entries there do unusual and useful work:
+
+**F3.1** explains why the new rows start at 24 when an earlier consolidation
+collapsed 23/24/25 into one -- the numbers were vacated, three specs still cite
+the old ones, and all three still resolve to row 23. Not reconstructible later.
+
+**F3.4** records a real conflict between two instruction files about where a
+finding lives, resolves it, and explicitly declines to edit the shared
+`CLAUDE.md` because it is not this series' to settle. It also records that two
+findings were written into `docs/ground_truths.md` in full and **reverted**,
+a second full copy being the drift mechanism the process rejects.
+
+### D43 — one of F3.4's four citations did not resolve to what it claimed
+
+F3.4's argument turns on four line-number citations. All four were opened:
+
+| citation | claim | held? |
+|---|---|---|
+| `CLAUDE.md:12` | *"ALWAYS record key findings in `docs/ground_truths.md`"* | yes, exact |
+| `CLAUDE.md:330-333` | probe results *"**also** belong"* there | yes, exact |
+| `CLAUDE.md:357-363` | findings go in an append-only `## Follow-up N` | yes, exact |
+| `process.md:109` | *"its single mention ... is an incidental example"* | **misleading** |
+
+Line 109 is a row in the **anti-patterns table**, about `10-flip-defaults.md`
+and `self.statusBar()`. It does mention the file -- *"`docs/ground_truths.md`
+records that this repo moved PyQt5 to PyQt6"* -- so "incidental example" is
+accurate and it genuinely is the only mention. But the sentence reads as though
+109 were *about* routing, so a reader who checks it lands on a Qt anti-pattern
+and concludes the argument is unsourced. The claim is true; the citation looked
+wrong.
+
+Now says what line 109 actually is. F3.4 is the entry a future session is
+explicitly directed to read, so a citation that survives checking but not
+reading is worth more there than elsewhere.
+
+### Why the toolkit did not catch it
+
+`check_citations` reports 423 resolved citations and 3 known problems, none
+here. It verifies a citation **resolves** -- the path exists, the line range is
+in bounds. It cannot verify the line says what the prose claims. That is exactly
+the A1/A3 distinction the audit process draws, and this is a clean instance of a
+citation passing the tool while misleading a reader.
+
+### Verification
+
+`check_links` 0 findings; `check_citations` 3, the known `open-questions/06`
+residue.

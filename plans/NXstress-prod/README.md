@@ -1027,9 +1027,13 @@ re-derive it the hard way.**
 `CLAUDE.md:357-363` is unambiguous: findings go in an append-only `## Follow-up N`
 section of the document being audited; decisions go to the Decisions Log and the
 Follow-up holds the evidence. `plans/audit-process/process.md` — the audit
-definition — specifies **no** ground-truths destination at all; its single mention
-of `docs/ground_truths.md` (at `process.md:109`) is an incidental example, not a
-routing rule.
+definition — specifies **no** ground-truths destination at all. Its single mention
+of `docs/ground_truths.md` is at `process.md:109`, and that line is **a row in the
+anti-patterns table**, about a plan asserting a PyQt5 API after the repository
+moved to PyQt6; it cites the file as a place where such a fact happens to be
+recorded. An incidental example, in other words, and not a routing rule — but a
+reader who opens line 109 expecting routing finds a Qt anti-pattern, so what is
+there is spelled out here rather than left to be checked.
 
 Pulling the other way, `CLAUDE.md:12` states as a core principle: *"ALWAYS record
 key findings in `docs/ground_truths.md`"*, and `CLAUDE.md:330-333` says a probe
