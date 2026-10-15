@@ -469,3 +469,65 @@ citation passing the tool while misleading a reader.
 
 `check_links` 0 findings; `check_citations` 3, the known `open-questions/06`
 residue.
+
+---
+
+## Batch 24 — `plans/NXstress-prod/open-questions/04-nxstress-internal-cleanup.md`
+
+Two items: **O33**, a wording defect in invariant 7; and **Q5**, which the
+reviewer declined to leave as it stood.
+
+### O33 — invariant 7 asserted two things and could only fail on one
+
+Invariant 7 bundled the identifier *alphabet* with the 63-character cap. Split
+into 7 (alphabet) and 7b (the cap, stated at its edge), noting that the length
+half "was an assertion that could not fail (longest encoding of those inputs is
+14, against a cap of 63)". Same family as O12, O20, O30 and D42.
+
+### Q5 — the sample `depends_on` chain
+
+Q5 recorded that PyRS writes no `SAMPLE_DESCRIPTION/NXtransformations`, and
+justified leaving it that way on the grounds that *"the sample side has no
+equivalent [referent] that has been located"* — writing one would mean guessing a
+goniometer convention.
+
+The reviewer rejected both halves:
+
+> we need to implement a working sample-transformations chain now; we can correct
+> it if the answer to Q5 changes it. We cannot leave the depends-on pointing at
+> the first entry only? That would be unacceptable.
+
+A translations-only chain was implemented against that, with the rotations
+excluded on the stated grounds that `rotate_project_q` "yields no axis vectors to
+copy". The reviewer rejected that too:
+
+> I'm not understanding how we can be presented with a 3-angle transformation, in
+> an applicable form, that can't simply be mathematically decomposed? That doesn't
+> make any sense!
+
+**They were right, and the claim was withdrawn rather than defended.** The
+decomposition is in `probes/a5_sample_rotation_axes.py` and is exact: of 2880
+candidates, one survives, at `5.8e-14` over 200 random angle triples. Written up
+as subspec 04's **Follow-up 9**, with the probe output pasted into Q5.
+
+### The part worth keeping
+
+A first pass at the decomposition *did* come back ambiguous — two survivors
+differing by a handedness sign — and that was nearly recorded in Q5 as a residual
+assumption the chain would have to adopt. It was an artefact of the search space:
+the projection is `diag(1, -1, -1)` at zero stage angles, not the identity, and a
+candidate set containing no constant factor cannot match a composition that has
+one. **An underdetermined decomposition is as likely to mean the candidate space
+is wrong as it is to mean the referent is ambiguous**, and nothing in the result
+distinguishes them. Recorded as F9.2.
+
+This is the same shape as the recurring finding in this review — an assertion
+that could not fail, here inverted into a *negative* result that could not
+succeed.
+
+### Verification
+
+`pixi run test-unit` 545 passed. Real-file round trip of
+`HB2B_1327_with_instrument.h5` (150 scan points): seven links, all reachable,
+chain-on-disk vs `rotate_project_q` max error `1.11e-16`. Three mutants of the
+composition test all caught. ruff clean; mypy clean on `_sample.py`.

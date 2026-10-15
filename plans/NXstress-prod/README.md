@@ -148,7 +148,7 @@ phases below).
   masks are addressed differently in the current writer; needs a single
   convention before external readers can rely on the layout. Scheduled:
   Phase 2.
-- **Sample `STRESS_FIELD` shape unverified** — `_sample.py:107` (actual
+- **Sample `STRESS_FIELD` shape unverified** — `_sample.py:171` (actual
   comment: *"we don't have an example of these entries, so the dimensions
   may not be correct!"*). Confirmed no real dataset with a genuine
   `STRESS_FIELD` log exists anywhere in the repo — blocked, see
@@ -671,7 +671,7 @@ instrument-science team).
   `arm_shift_applied` flag and use it to decide whether to call
   `apply_shift` or use the raw arm-length value directly, or a round-trip
   will double-shift or under-shift.
-- `_sample.py:107` `STRESS_FIELD` dimensions: **not touched** — remains
+- `_sample.py:171` `STRESS_FIELD` dimensions: **not touched** — remains
   blocked, carried forward from the PyRS-side item above.
 
 ---

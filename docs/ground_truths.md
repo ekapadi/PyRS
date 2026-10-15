@@ -1022,3 +1022,54 @@ not expect. Pinned by
 and
 `tests/unit/pyrs/projectfile/test_sample_logs.py::TestStringLogsAreBytesOnDisk`,
 which reference each other so neither half can be removed as redundant.
+
+---
+
+## PyRS's sample stage convention is recoverable from `rotate_project_q`, offset included
+
+`PoleFigureCalculator.rotate_project_q` (`pyrs/core/polefigurecalculator.py:186`)
+is the only place PyRS applies the three sample stage angles, and it applies them
+as the closed-form pole-figure projection of Bob He, *Two-Dimensional X-ray
+Diffraction*, ch. 8.3 — sines and cosines, with no matrix in it. There is no axis
+vector anywhere in the source to copy, which is why the sample-frame convention
+was for a long time recorded as "not located" rather than as a value.
+
+It is recoverable without touching the function's internals. Its `theta`/`eta`
+arguments fix the probe vector it rotates; choosing them aims that vector along
+each basis vector in turn, so three calls read off three columns of the matrix it
+implements, and its `(90 - alpha, beta)` return inverts to `(h1, h2)` exactly.
+The two rows it exposes are orthonormal, so the third is their cross product. The
+result, exact to `5.8e-14` over 200 random angle triples:
+
+```
+sample -> lab  ==  M0 @ R_omega(0,-1,0) @ R_chi(1,0,0) @ R_phi(0,0,-1)
+M0 = diag(1, -1, -1), i.e. 180 degrees about +x
+```
+
+`M0` is the load-bearing part. **The projection is not the identity at
+`omega = chi = phi = 0`** — there is a constant 180-degree offset between its
+output frame and the lab frame. The lab frame itself is right-handed with
+conventional axes, which `reduce_hb2b_pyrs.py::generate_rotation_matrix`
+(`Rx @ Ry @ Rz` about `+x/+y/+z`) confirms from the detector side, so the
+negative sample axes above are a real feature of the stage.
+
+`mrot` is present in every real HB2B file in `tests/data` alongside the three
+angles and does **not** appear in this decomposition, because `rotate_project_q`
+does not take it. Anything claiming to describe the full sample placement has to
+settle what `mrot` does first.
+
+**Why this matters going forward:** a decomposition that comes back
+*underdetermined* is as likely to mean the candidate space is too small as it is
+to mean the referent is genuinely ambiguous, and **the result alone cannot tell
+you which**. A first attempt here enumerated stage rotations only, found two
+survivors differing by a handedness sign, and was almost written up as an
+irreducible ambiguity for a stakeholder to settle — when the real answer was that
+no composition of three stage rotations can match one that carries a constant
+factor. Before reporting "ambiguous", add the constant term and re-run; before
+reporting "unrecoverable", check whether the function can simply be *driven* as a
+black box instead of read. Probe:
+[`plans/NXstress-prod/probes/a5_sample_rotation_axes.py`](../plans/NXstress-prod/probes/a5_sample_rotation_axes.py).
+Pinned by
+`tests/unit/pyrs/utilities/NXstress/test_sample.py::TestSampleTransformationChain::test_the_rotations_compose_in_write_order`,
+which composes the chain PyRS writes and compares it against `rotate_project_q`
+itself, so the two cannot drift apart silently.

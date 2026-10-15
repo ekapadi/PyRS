@@ -66,7 +66,7 @@ three items are unaffected by that block and proceed normally.
   stays in place; it remains a real, current limitation.
 
 **Out of scope:**
-- `_sample.py:107` `STRESS_FIELD` dimensions — **blocked**, carried over
+- `_sample.py:171` `STRESS_FIELD` dimensions — **blocked**, carried over
   unresolved from spec 08 (see Overview). Do not attempt to guess a shape
   here; leave the existing TODO in place, updated only if spec 08's
   blocker resolves in the meantime.
@@ -170,7 +170,7 @@ across all of `wss` in the same order as the rest of the scan-point
 family; do **not** validate it for cross-workspace equality the way
 geometry/shift are (above).
 
-### `pyrs/utilities/NXstress/_sample.py` — STRESS_FIELD shape (L107) — BLOCKED
+### `pyrs/utilities/NXstress/_sample.py` — STRESS_FIELD shape (L171) — BLOCKED
 
 **Do not touch this code in this spec.** Spec 08 investigated this item and
 found it genuinely blocked — no file anywhere in the repository contains a
@@ -260,7 +260,7 @@ investigated and remains blocked, not left untouched by oversight.
   update it to use the newly-populated fit-spectrum, calibration, and
   beam-profile output and confirm it runs cleanly. `STRESS_FIELD` remains
   unaddressed by design; confirm the demo script doesn't assert against it.
-- Confirm `_sample.py:107`'s TODO comment reads as investigated-and-blocked,
+- Confirm `_sample.py:171`'s TODO comment reads as investigated-and-blocked,
   not silently unchanged from spec 08.
 
 ---

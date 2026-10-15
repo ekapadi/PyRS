@@ -9,10 +9,50 @@ import numpy as np
 from nexusformat.nexus import NXcollection, NXentry, NXsample, nxopen
 import pytest
 
+from pyrs.core.polefigurecalculator import PoleFigureCalculator
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.dataobjects.constants import HidraConstants
 from pyrs.utilities.NXstress._sample import _Sample
 from pyrs.utilities.NXstress._definitions import FIELD_DTYPE
+
+
+def _rodrigues(axis, degrees: float) -> np.ndarray:
+    """Right-handed rotation of `degrees` about `axis`.
+
+    Written here rather than imported: the point of
+    `test_the_rotations_compose_in_write_order` is to check `_sample.py`'s chain
+    against an independent construction, so sharing one would make it circular
+    (`plans/audit-process/process.md` section 5.3).
+    """
+    k = np.asarray(axis, dtype=float)
+    k = k / np.linalg.norm(k)
+    theta = np.radians(degrees)
+    cross = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    return np.eye(3) + np.sin(theta) * cross + (1.0 - np.cos(theta)) * (cross @ cross)
+
+
+def _lab_from_sample(omega: float, chi: float, phi: float) -> np.ndarray:
+    """The sample -> lab matrix implied by `rotate_project_q`, for one angle set.
+
+    The *referent*, so it is driven through the real function rather than
+    reimplemented. `rotate_project_q` returns `(90 - alpha, beta)` for a probe
+    vector fixed by its `theta`/`eta` arguments; aiming that probe vector along
+    each basis vector in turn reads off the columns of the lab -> sample matrix,
+    and `alpha`/`beta` invert to `(h1, h2)` exactly. The third row is the cross
+    product of the first two, which is forced once they are orthonormal.
+
+    Derived in `plans/NXstress-prod/probes/a5_sample_rotation_axes.py`.
+    """
+    calculator = PoleFigureCalculator()
+    columns = []
+    for theta, eta in ((90.0, 0.0), (0.0, 90.0), (0.0, 0.0)):
+        elevation, beta = calculator.rotate_project_q(theta, omega, chi, phi, eta)
+        length = np.sin(np.radians(elevation))
+        columns.append([length * np.cos(np.radians(beta)), length * np.sin(np.radians(beta))])
+    rows = np.asarray(columns).T
+    lab_from_sample = np.vstack([rows, np.cross(rows[0], rows[1])]).T
+    assert np.allclose(lab_from_sample @ lab_from_sample.T, np.eye(3), atol=1e-9)
+    return lab_from_sample
 
 
 class TestSample:
@@ -205,6 +245,248 @@ class TestSample:
         # Verify attributes: local_name still recovers the original PV name
         assert sample["logs"][expected_field_name].attrs["local_name"] == custom_log_name
         assert sample["logs"][expected_field_name].attrs["units"] == "mm"
+
+
+class TestSampleTransformationChain:
+    """`SAMPLE_DESCRIPTION` defines the frame its positions are expressed in.
+
+    NXstress defines `peaks/sx,sy,sz` as the sample position *in the sample
+    reference frame*, and defines that frame by the sample transformations.
+    PyRS wrote no such group, so the positions were numerically present and
+    semantically unanchored -- fine for a PyRS-to-PyRS round trip, which shares
+    the convention implicitly, and uninterpretable for the external consumer the
+    format exists to serve. Recorded as `open-questions/04` Q5.
+
+    Two things are pinned here. That the chain is **traversable** -- it must
+    never repeat the detector-side defect of Follow-up 7 F7.5, where
+    `depends_on` named the *first* link and traversal stopped immediately. And
+    that the **rotation axes are the ones decomposition recovered**, since those
+    were derived from `rotate_project_q` rather than read off a document: a
+    later edit to a `vector` is a change to the recovered convention and has to
+    be deliberate.
+    """
+
+    #: Logs the rotation links are built from, with values that are distinct
+    #: per axis and per scan point, so a test cannot pass by cross-wiring them.
+    ROTATION_LOGS = {"omega": 10.0, "chi": 20.0, "phi": 30.0}
+
+    @classmethod
+    def _with_rotations(cls, ws):
+        """Add `omega`/`chi`/`phi` logs, which the minimal fixture does not carry."""
+        logs = ws._sample_logs
+        n_scan = len(logs.subruns)
+        for key, base in cls.ROTATION_LOGS.items():
+            logs[key] = base + np.arange(n_scan, dtype=float)
+        return logs
+
+    @staticmethod
+    def _traverse(sd) -> list[str]:
+        """Walk the chain the way a NeXus reader does: entry point, then back to '.'."""
+        reached: list[str] = []
+        current = str(sd["depends_on"].nxvalue)
+        while current != ".":
+            assert current.startswith("./transformations/"), f"depends_on leaves the group: {current!r}"
+            name = current.rsplit("/", 1)[-1]
+            assert name not in reached, f"cycle at {name!r}"
+            reached.append(name)
+            current = str(sd["transformations"][name].attrs["depends_on"])
+        return reached
+
+    def test_every_link_is_reachable_from_the_entry_point(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
+        """The F7.5 defect, asserted on the sample side before it can happen."""
+        # Arrange
+        logs = self._with_rotations(minimal_HidraWorkspace(with_instrument=False))
+        sd = _Sample.init_group([logs])
+
+        # Act
+        reached = self._traverse(sd)
+
+        # Assert -- every written link, not merely the one `depends_on` names
+        assert set(reached) == set(sd["transformations"])
+        assert set(reached) == {name for name, *_ in _Sample.TRANSFORMATION_CHAIN}
+
+    def test_the_entry_point_is_the_last_link_not_the_first(
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
+    ):
+        """Naming the first link leaves a chain that terminates at once."""
+        # Arrange
+        logs = self._with_rotations(minimal_HidraWorkspace(with_instrument=False))
+        sd = _Sample.init_group([logs])
+        first, last = _Sample.TRANSFORMATION_CHAIN[0][0], _Sample.TRANSFORMATION_CHAIN[-1][0]
+
+        # Assert
+        assert str(sd["depends_on"].nxvalue) == f"./transformations/{last}"
+        assert str(sd["transformations"][first].attrs["depends_on"]) == "."
+
+    def test_traversal_order_reverses_write_order(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
+        """Write order is composition order, so traversal must run against it.
+
+        Write order `[A, B, C]` entered at `C` composes to `A @ B @ C`. If this
+        reverses, the chain still traverses and still reaches every link -- and
+        describes a different placement.
+        """
+        # Arrange
+        logs = self._with_rotations(minimal_HidraWorkspace(with_instrument=False))
+        sd = _Sample.init_group([logs])
+
+        # Act
+        reached = self._traverse(sd)
+
+        # Assert
+        assert reached == [name for name, *_ in reversed(_Sample.TRANSFORMATION_CHAIN)]
+
+    def test_each_link_carries_its_source_values_and_provenance(
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
+    ):
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=False)
+        logs = self._with_rotations(ws)
+        sd = _Sample.init_group([logs])
+
+        # Assert
+        n_scan = len(logs.subruns)
+        for name, source, vector, transformation_type, units in _Sample.TRANSFORMATION_CHAIN:
+            link = sd["transformations"][name]
+            if source is None:
+                expected = np.full(n_scan, _Sample.FRAME_OFFSET_DEGREES)
+            elif source in HidraConstants.SAMPLE_COORDINATE_NAMES:
+                expected = sd[source].nxdata
+            else:
+                expected = logs[source]
+            np.testing.assert_allclose(link.nxdata, np.asarray(expected, dtype=float))
+            assert tuple(link.attrs["vector"]) == vector, name
+            assert link.attrs["transformation_type"] == transformation_type, name
+            assert link.attrs["units"] == units, name
+            # The NeXus name is `translation_x`; the PyRS value's name is `vx`.
+            # `frame_offset` is a constant, so it has no log to point at.
+            assert link.attrs.get("local_name") == source, name
+
+    def test_the_rotation_axes_are_the_decomposed_ones(self):
+        """The recovered convention, pinned so a later edit has to be deliberate.
+
+        `PoleFigureCalculator.rotate_project_q` composes these angles as a
+        closed-form projection rather than as matrices, so the axes appear
+        nowhere in the source. They were recovered by driving that function
+        through its public signature and identifying the matrix it implements;
+        `plans/NXstress-prod/probes/a5_sample_rotation_axes.py` is the evidence
+        and `open-questions/04` Q5 carries its output. The result is exact --
+
+            sample -> lab == M0 @ R_omega(0,-1,0) @ R_chi(1,0,0) @ R_phi(0,0,-1)
+
+        -- so unlike most conventions recovered after the fact there is nothing
+        here left to assume.
+        """
+        # Arrange
+        chain = {name: (vector, kind) for name, _s, vector, kind, _u in _Sample.TRANSFORMATION_CHAIN}
+
+        # Assert
+        assert chain["omega"] == ((0.0, -1.0, 0.0), "rotation")
+        assert chain["chi"] == ((1.0, 0.0, 0.0), "rotation")
+        assert chain["phi"] == ((0.0, 0.0, -1.0), "rotation")
+        # M0: the projection is `diag(1, -1, -1)` at zero stage angles, not the
+        # identity. Omitting it would assert the sample frame is the lab frame.
+        assert chain["frame_offset"] == ((1.0, 0.0, 0.0), "rotation")
+        assert _Sample.FRAME_OFFSET_DEGREES == 180.0
+
+    def test_the_rotations_compose_in_write_order(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
+        """The written chain reproduces the matrix `rotate_project_q` implements.
+
+        The axes alone do not pin the convention -- the same three axes in a
+        different order are a different rotation. This composes what was
+        actually written and compares it against the referent, so an edit to
+        either the order or an axis is caught by the thing it would break.
+        """
+        # Arrange -- one scan point, at angles with no symmetry to hide behind
+        ws = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1]))
+        logs = ws._sample_logs
+        omega, chi, phi = 37.0, -52.0, 113.0
+        for key, value in (("omega", omega), ("chi", chi), ("phi", phi)):
+            logs[key] = np.array([value])
+        sd = _Sample.init_group([logs])
+
+        # Act -- compose the rotation links in write order, which is composition order
+        composed = np.eye(3)
+        for name, _source, _vector, kind, _units in _Sample.TRANSFORMATION_CHAIN:
+            if kind != "rotation":
+                continue
+            link = sd["transformations"][name]
+            composed = composed @ _rodrigues(link.attrs["vector"], float(link.nxdata[0]))
+
+        # Assert -- against the projection itself, sample -> lab being its transpose
+        expected = _lab_from_sample(omega, chi, phi)
+        np.testing.assert_allclose(composed, expected, atol=1e-9)
+
+    def test_rotations_are_omitted_when_their_logs_are_absent(
+        self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
+    ):
+        """A synthetic workspace carries no stage angles; the chain is still valid."""
+        # Arrange
+        sd = _Sample.init_group([minimal_HidraWorkspace(with_instrument=False)._sample_logs])
+
+        # Assert -- translations only, and the entry point follows
+        assert set(sd["transformations"]) == {"translation_x", "translation_y", "translation_z"}
+        assert str(sd["depends_on"].nxvalue) == "./transformations/translation_z"
+        assert self._traverse(sd) == ["translation_z", "translation_y", "translation_x"]
+
+    def test_a_rotation_in_some_inputs_only_raises(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
+        """Part-filling it would misalign every scan point after the first gap."""
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        second = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5, 6]))
+        self._with_rotations(first)
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"log 'omega' is present in some input workspaces"):
+            _Sample.init_group([first._sample_logs, second._sample_logs])
+
+    def test_the_chain_grows_on_append(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
+        """A chain shorter than the axes it describes would silently misdescribe them."""
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        second = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5]))
+        self._with_rotations(first)
+        self._with_rotations(second)
+        sd = _Sample.init_group([first._sample_logs])
+        before = np.asarray(sd["transformations"]["omega"].nxdata).copy()
+        entry_point = str(sd["depends_on"].nxvalue)
+
+        # Act
+        _Sample.init_group([second._sample_logs], data=sd)
+
+        # Assert
+        for name, source, *_ in _Sample.TRANSFORMATION_CHAIN:
+            link = sd["transformations"][name]
+            assert link.shape[0] == 5, name
+            if source in HidraConstants.SAMPLE_COORDINATE_NAMES:
+                np.testing.assert_allclose(link.nxdata, sd[source].nxdata)
+        # Existing rows untouched, and an append adds scan points to a frame
+        # rather than redefining one.
+        np.testing.assert_allclose(np.asarray(sd["transformations"]["omega"].nxdata)[:3], before)
+        assert str(sd["depends_on"].nxvalue) == entry_point
+
+    def test_append_that_would_change_the_chain_raises(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
+        """A link gained or lost part-way means the frame changes definition mid-entry."""
+        # Arrange
+        first = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([1, 2, 3]))
+        second = minimal_HidraWorkspace(with_instrument=False, sub_runs=np.array([4, 5]))
+        self._with_rotations(first)
+        sd = _Sample.init_group([first._sample_logs])
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"transformation chain has rotation links"):
+            _Sample.init_group([second._sample_logs], data=sd)
+
+    def test_only_some_of_the_three_angles_raises(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]):
+        """Two of the three angles describe no frame, so a partial set is refused."""
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=False)
+        logs = ws._sample_logs
+        logs["omega"] = np.zeros(len(logs.subruns))
+        logs["chi"] = np.zeros(len(logs.subruns))
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"needs all of \['omega', 'chi', 'phi'\]"):
+            _Sample.init_group([logs])
 
 
 class TestNonFiniteCoordinatesAreAsked:

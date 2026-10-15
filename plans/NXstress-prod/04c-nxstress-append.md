@@ -556,7 +556,7 @@ and cannot be extended by any mechanism.
   [`growable(rank)`](../../pyrs/utilities/NXstress/_definitions.py#L70) returns
   the `maxshape`/`chunks` kwargs, and is applied at every per-scan-point
   `NXfield(...)` — `NXstress.py:801-802`, `_instrument.py:226`,
-  `_input_data.py:74`, `_sample.py:131`/`:145`/`:167`/`:186`,
+  `_input_data.py:74`, `_sample.py:195`/`:209`/`:231`/`:252`,
   `_fit.py:485`/`:490`/`:494`/`:498`. A matching
   [`tail_append(field, values)`](../../pyrs/utilities/NXstress/_definitions.py#L109)
   carries the growth rule, and
@@ -599,7 +599,7 @@ than that.
   `Filename`, `start_time` and `end_time` are all bytes logs, so this was reachable
   by appending a workspace whose project file has a longer name than the first's.
 - Action taken: `_writable` now coerces `|S` as well as `<U` to the
-  variable-length dtype ([`_sample.py:312`](../../pyrs/utilities/NXstress/_sample.py#L312)).
+  variable-length dtype ([`_sample.py:529`](../../pyrs/utilities/NXstress/_sample.py#L529)).
   The read-back property is unchanged — both dtypes return `bytes` — so no reader
   is affected. The same probe confirms all three forms the writer produces
   (`list[str]`, `|S`, vlen UTF-8) write, reopen and tail-append correctly with
@@ -662,7 +662,7 @@ error. Added to the pre-flight pass, each raising `RuntimeError`:
      `DIFFRACTOGRAM` for would need a new group with no rows for the scan points
      already on disk.
   3. **Retained sample-log set matches** (`_Sample.validateAppend`,
-     [`_sample.py:210`](../../pyrs/utilities/NXstress/_sample.py#L210)), compared
+     [`_sample.py:276`](../../pyrs/utilities/NXstress/_sample.py#L276)), compared
      by encoded column name rather than raw PV key, since that is what the file
      indexes by.
   4. **Optional sample fields match** — `temperature`, `stress_field`: an entry
@@ -899,7 +899,7 @@ therefore fired during mutation, after earlier groups had grown.
 comment said so: "a mismatch found mid-append would already have grown
 something" sat *below* a `tail_append` of `scan_point` and the three coordinate
 axes. Same class as F2.5's two, missed in the same pass. The call is now the
-first statement ([`_sample.py:287`](../../pyrs/utilities/NXstress/_sample.py#L287)),
+first statement ([`_sample.py:497`](../../pyrs/utilities/NXstress/_sample.py#L497)),
 and the coordinate arrays are built and shape-checked before anything is
 resized rather than appended as they are computed.
 

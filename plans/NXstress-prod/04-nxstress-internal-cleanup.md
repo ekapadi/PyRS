@@ -323,7 +323,7 @@ anywhere in this series; found by probing
           'HB2B_CS_X' -- the first log is gone, with no record that it existed.
 ```
 
-`_sample.py:127-137` iterates **every** sample log, converts the key, and writes
+`_sample.py:191-201` iterates **every** sample log, converts the key, and writes
 into a flat `NXcollection`. A second key converging on the same identifier
 overwrites the first — **including the `local_name` attribute that exists
 specifically to preserve the original PV name**. So the one mechanism that could
@@ -334,7 +334,7 @@ by this spec; this spec's widening of the conversion makes it **more likely**.
 
 **F3.2** — Why "just disallow them" needs one distinction before it is acted on.
 
-The only production caller (`_sample.py:129`) converts **instrument PV-log
+The only production caller (`_sample.py:193`) converts **instrument PV-log
 names**. That input is not ours: it comes from the control system, and the set
 of names is open-ended. So "disallow" splits into two very different policies:
 
@@ -756,7 +756,8 @@ the probe, where it already was.
 | # | Invariant | Where |
 |---|---|---|
 | 6 | no legacy log-name `FIXME` in `file_object.py`; no capitalized `"2Theta"` key in code | `tests/unit/pyrs/projectfile/test_file_object.py` |
-| 7 | every character at every position encodes into the NeXus alphabet, within 63 chars | `test_definitions.py` |
+| 7 | every character at every position encodes into the NeXus alphabet | `test_definitions.py` |
+| 7b | the 63-character cap is enforced at its edge, and one past it raises | `test_definitions.py` — split out from 7 by the PR review: the length half of 7 was an assertion that could not fail (longest encoding of those inputs is 14, against a cap of 63) |
 | 8 | `decode(encode(name)) == name` over escape-shaped and real-shaped inputs | `test_definitions.py` |
 | 9 | `allowed_identifier` is injective | `test_definitions.py` |
 | 10 | every written transformation is reachable from the detector's `depends_on` | `test_instrument.py` |
@@ -1039,3 +1040,106 @@ exactly one mask, so the following `names.append(...)` would raise
 `masks=`) and left standing rather than fixed blind, since mask-append semantics
 are not specified anywhere. Recorded here so 04c's append work does not inherit it
 silently.
+
+---
+
+## Follow-up 9 — 2026-10-14 (PR review: the sample frame is now defined, and Q5's premise was wrong)
+
+Raised in the human PR review of 04 + 04b + 04c (batch 24,
+[plans/PR_review/04-comments.md](../PR_review/04-comments.md)).
+
+This document's `## Verification` and Follow-up 7 F7.5 both treat the *detector*
+`NXtransformations` chain as the only one at issue. The sample side has no chain
+at all, which [open-questions/04 Q5](open-questions/04-nxstress-internal-cleanup.md)
+records — together with the reason it was left that way: *"the sample side has no
+equivalent [referent] that has been located."*
+
+**That reason was false, and the stakeholder said so.** Asked to accept leaving
+`depends_on` unwritten, the reviewer's response was: *"I'm not understanding how
+we can be presented with a 3-angle transformation, in an applicable form, that
+can't simply be mathematically decomposed? That doesn't make any sense!"*
+
+### F9.1 — the referent existed; it just had no matrix in it
+
+`PoleFigureCalculator.rotate_project_q` (`pyrs/core/polefigurecalculator.py:186`)
+applies `omega`, `chi` and `phi`. It was passed over during the implementation
+pass because it implements the closed-form pole-figure projection of Bob He,
+*Two-Dimensional X-ray Diffraction*, ch. 8.3 — built from sines and cosines, with
+no matrix anywhere in it and therefore no axis to read off.
+
+A composition of rotations is still a composition of rotations however it is
+spelled. Driving that function through its **public signature** — aiming the
+probe vector its `theta`/`eta` arguments fix along each basis vector in turn —
+reads off the matrix it implements without touching its internals. Of 2880
+candidate compositions over the six signed axes, exactly one survives.
+
+Probe: [`probes/a5_sample_rotation_axes.py`](probes/a5_sample_rotation_axes.py).
+Full output is pasted in Q5; the result is
+
+```
+sample -> lab  ==  M0 @ R_omega(0,-1,0) @ R_chi(1,0,0) @ R_phi(0,0,-1)
+worst elementwise error over 200 random triples: 5.818e-14
+```
+
+### F9.2 — the finding inside the finding: a first decomposition said "ambiguous", wrongly
+
+An earlier attempt enumerated stage rotations only and reported two survivors
+differing in a handedness sign, which was written up as an irreducible ambiguity
+for Q5 to settle. It is not. At `omega = chi = phi = 0` the projection does not
+reduce to the identity but to `diag(1, -1, -1)` — a constant 180-degree rotation
+about `+x`, written as the chain's `frame_offset` link. **A search over stage
+rotations alone cannot match a composition carrying a constant factor**, so it
+returns partial matches that disagree, and the disagreement looks exactly like a
+real ambiguity. With the offset in the search the answer is exact and unique.
+
+Recorded because the failure mode generalises: a decomposition that comes back
+*underdetermined* is as likely to mean the candidate space is wrong as it is to
+mean the referent is ambiguous, and the two are indistinguishable from the result
+alone.
+
+### F9.3 — what `_sample.py` now writes
+
+`SAMPLE_DESCRIPTION/transformations`, as a per-scan-point chain, with the group's
+`depends_on` naming the **last** link — the F7.5 defect asserted against on the
+sample side before it could occur.
+
+| # | link | type | vector | source |
+|---|---|---|---|---|
+| 1–3 | `translation_x/y/z` | translation | `(1,0,0)`, `(0,1,0)`, `(0,0,1)` | `vx`, `vy`, `vz` |
+| 4 | `frame_offset` | rotation | `(1, 0, 0)` | constant `180` |
+| 5 | `omega` | rotation | `(0, -1, 0)` | log `omega` |
+| 6 | `chi` | rotation | `(1, 0, 0)` | log `chi` |
+| 7 | `phi` | rotation | `(0, 0, -1)` | log `phi` — the entry point |
+
+The rotation links are written all together or not at all, gated on every input
+carrying all three angle logs; the synthetic unit fixtures carry none and get a
+translations-only chain, while every real HB2B file in `tests/data` gets all
+seven. The raw angle logs stay untouched under `logs/`, so this group is purely
+additive. `frame_offset` is gated with the angles although it is constant:
+written alone it would assert the stage was at zero.
+
+### F9.4 — verification
+
+Writing `tests/data/HB2B_1327_with_instrument.h5` (150 scan points) through
+`NXstress.write` and reading it back with h5py: all seven links reachable by
+following `depends_on`, all 150 rows long, and the chain composed from the
+**on-disk** vectors and values reproduces `rotate_project_q` to a maximum
+elementwise error of `1.11e-16`.
+
+`test_sample.py::TestSampleTransformationChain` pins reachability, that the entry
+point is the last link and not the first, traversal order against write order,
+the axes, the all-or-nothing rotation gate, and lockstep growth on append.
+`test_the_rotations_compose_in_write_order` composes the written chain and
+compares it against `rotate_project_q` itself — so an edit to an axis *or to the
+order* fails against the referent rather than against a restatement of it. Three
+mutants confirm it can fail: swapping `omega` and `chi` in write order (axes
+unchanged, rotation different), dropping `frame_offset`, and setting its value to
+zero are each caught.
+
+### F9.5 — what stays open
+
+Nothing about the convention. Two things are worth a stakeholder's eye, both
+recorded at the end of Q5: whether `frame_offset` is physical or an artefact of
+the ch. 8.3 output convention (the chain is correct either way; only the name
+would change), and whether `mrot` — present in every real HB2B file, absent from
+`rotate_project_q` — moves the sample, in which case the chain is incomplete.

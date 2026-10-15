@@ -227,7 +227,7 @@ Stated so gaps are not mistaken for coverage.
 | ~~04c's conflict classification, Case-A/B dispatch, `entry_number` targeting~~ | A5 | **Closed 2026-10-01 by the 04c PR.** Listed here so the first round's gap is not lost from the record. The note that "the *mechanism* beneath it **is** covered" is the part that proved misleading — it was covered for the peak-index family only. |
 | 08's fit-spectrum reconstruction, `beam_intensity_profile`, `DENEXDetectorGeometry` repairs | A5 | Net-new PyRS code. 08's claims about the **current** broken state are A3 and were checked. |
 | ~~`uncertainties` propagation; Mantid diagonal fit errors~~ | A4 | **Closed in round two** — see 08's Follow-up 2. Listed here only so the first round's gap is not lost from the record. |
-| `STRESS_FIELD` shape (`_sample.py:107`) | A4/A5 | Externally blocked — no file in the repository carries the log. Genuinely exempt. |
+| `STRESS_FIELD` shape (`_sample.py:171`) | A4/A5 | Externally blocked — no file in the repository carries the log. Genuinely exempt. |
 | The NXstress `.xml`/`.html` schema doc | A4 | Not in the repo. The absence *is* the finding. |
 | `open-questions/` prose (10 of 12) | A1 | Scope decision for this pass; mechanically checked, not read. |
 

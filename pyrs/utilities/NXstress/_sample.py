@@ -6,7 +6,7 @@ This class provides I/O for the `sample` `NXsample` subgroup.
 """
 
 import numpy as np
-from nexusformat.nexus import NXcollection, NXsample, NXfield
+from nexusformat.nexus import NXcollection, NXsample, NXfield, NXtransformations
 
 from pyrs.dataobjects.constants import HidraConstants
 from pyrs.dataobjects.sample_logs import SampleLogs, SubRuns
@@ -41,6 +41,70 @@ class _Sample:
     ########################################
     # ALL methods must be `classmethod`.  ##
     ########################################
+
+    #: The sample-frame transformation chain, written under
+    #: `SAMPLE_DESCRIPTION/transformations` and entered through the group's
+    #: `depends_on`, as `(nexus name, source log, axis vector, type, units)` in
+    #: **write order**. Traversal starts at the last entry and follows each
+    #: field's own `depends_on` back to ".", so write order read left to right is
+    #: the composition order.
+    #:
+    #: **The rotation axes and their order were recovered by decomposition, not
+    #: chosen.** `PoleFigureCalculator.rotate_project_q` composes omega/chi/phi
+    #: as the closed-form pole-figure projection of Bob He, *Two-Dimensional
+    #: X-ray Diffraction*, ch. 8.3 -- sines and cosines, no matrix -- so the
+    #: convention appears nowhere in the source. It is recoverable all the same:
+    #: driving that function through its public signature with the probe vector
+    #: aimed along each basis vector reads off the matrix it implements, and
+    #: exactly one composition reproduces it. See
+    #: `plans/NXstress-prod/probes/a5_sample_rotation_axes.py`, whose output is
+    #: pasted into `open-questions/04-nxstress-internal-cleanup.md` at Q5:
+    #:
+    #:     sample -> lab  ==  M0 @ R_omega(0,-1,0) @ R_chi(1,0,0) @ R_phi(0,0,-1)
+    #:     worst elementwise error over 200 random triples: 5.818e-14
+    #:
+    #: `M0` is `frame_offset` below: at `omega = chi = phi = 0` the projection
+    #: does **not** reduce to the identity but to `diag(1, -1, -1)`, a constant
+    #: 180-degree rotation about `+x` relating the two frames. It is part of the
+    #: definition, not an artefact -- omitting it would assert the sample frame
+    #: is the lab frame at zero stage angles, which is false. It is also why a
+    #: first attempt at this decomposition found no match at all and concluded,
+    #: wrongly, that the convention was unrecoverable: a search over stage
+    #: rotations alone cannot match a composition carrying a constant factor.
+    #:
+    #: NXtransformations describes **sample -> lab**, so what is written is the
+    #: transpose of the lab -> sample matrix the projection applies. The detector
+    #: side composes `Rx @ Ry @ Rz` about `+x/+y/+z`
+    #: (`reduce_hb2b_pyrs.py::generate_rotation_matrix`), confirming the lab
+    #: frame is right-handed with conventional axes -- so the negative sample
+    #: axes here are a real feature of the stage, not a sign error.
+    TRANSFORMATION_CHAIN = (
+        ("translation_x", "vx", (1.0, 0.0, 0.0), "translation", "mm"),
+        ("translation_y", "vy", (0.0, 1.0, 0.0), "translation", "mm"),
+        ("translation_z", "vz", (0.0, 0.0, 1.0), "translation", "mm"),
+        ("frame_offset", None, (1.0, 0.0, 0.0), "rotation", "degrees"),
+        ("omega", "omega", (0.0, -1.0, 0.0), "rotation", "degrees"),
+        ("chi", "chi", (1.0, 0.0, 0.0), "rotation", "degrees"),
+        ("phi", "phi", (0.0, 0.0, -1.0), "rotation", "degrees"),
+    )
+
+    #: `frame_offset`'s constant value -- `M0`, above.
+    FRAME_OFFSET_DEGREES = 180.0
+
+    #: Logs the rotation sub-chain is built from. Every real HB2B file carries
+    #: them; the synthetic fixtures need not. Written all together or not at
+    #: all, on the same rule as `OPTIONAL_SCAN_POINT_FIELDS`, because a rotation
+    #: present for some scan points and not others would describe a frame that
+    #: changes meaning part-way through the entry.
+    #:
+    #: `frame_offset` is gated with them rather than written unconditionally.
+    #: It is constant and so always *computable*, but it only describes the
+    #: sample frame in conjunction with the stage angles: writing it alone would
+    #: assert the stage was at zero, which an entry without the angle logs gives
+    #: no grounds for.
+    ROTATION_SOURCE_LOGS = ("omega", "chi", "phi")
+
+    TRANSFORMATIONS_GROUP = "transformations"
 
     # Log keys included in the NXstress schema.
     NXstress_logs = {
@@ -183,6 +247,8 @@ class _Sample:
             f = NXfield(vs, name=axis_name, units="mm", **growable(vs.ndim))
             sd[axis_name] = f
 
+        cls._init_transformations(sd, cls._chain_columns(logss, counts, N_scan))
+
         # Optionally, add other NXstress SAMPLE_DESCRIPTION fields if available in logs:
         #   - `HidraConstants.CHEMICAL_FORMULA` (NXCHAR)
         #   - `HidraConstants.TEMPERATURE`[nTemp] (NXTEMPERATURE)
@@ -272,6 +338,150 @@ class _Sample:
         return {allowed_identifier(key): key for key in cls._retained_log_keys(logss)}
 
     @classmethod
+    def _chain_columns(cls, logss: list[SampleLogs], counts: list[int], N_scan: int) -> list[tuple]:
+        """The chain links this batch supplies, with their per-scan-point values.
+
+        One source for both the fresh-write and the append path, so the two can
+        never disagree about which links exist or what they carry. Translations
+        are read through the same `_concatenated_pointlist(logss, counts)` call
+        the coordinate loop makes, with the same arguments, so `translation_x`
+        and `vx` are the same array by construction rather than by inspection.
+
+        An optional rotation absent from every input is skipped; present in some
+        and not others raises, via `_present_in_all`.
+
+        Args:
+            logss: Sample logs of the workspaces being written, in workspace order.
+            counts: Scan points contributed by each workspace, in the same order.
+            N_scan: Total scan points, against which each column is checked.
+
+        Returns:
+            `(nexus name, source log, values, axis vector, transformation type,
+            units)` in write order, holding only the links this batch supplies.
+
+        Raises:
+            RuntimeError: If a column's first axis is not the scan-point axis.
+        """
+        translations = dict(zip(HidraConstants.SAMPLE_COORDINATE_NAMES, cls._concatenated_pointlist(logss, counts)))
+        rotations = cls._rotations_available(logss)
+
+        columns = []
+        for name, source, vector, transformation_type, units in cls.TRANSFORMATION_CHAIN:
+            if transformation_type == "rotation" and not rotations:
+                continue
+
+            if source is None:
+                values = np.full(N_scan, cls.FRAME_OFFSET_DEGREES, dtype=FIELD_DTYPE.FLOAT_DATA.value)
+            elif source in translations:
+                values = np.asarray(translations[source], dtype=FIELD_DTYPE.FLOAT_DATA.value)
+            else:
+                values = np.concatenate(
+                    [np.asarray(logs[source], dtype=FIELD_DTYPE.FLOAT_DATA.value) for logs in logss]
+                )
+
+            if values.shape[0] != N_scan:
+                raise RuntimeError(
+                    f"NXstress transformation '{name}' (from log '{source}') has unexpected shape.\n"
+                    f"  First axis should be <scan point> (== {N_scan}), not {values.shape[0]}"
+                )
+            columns.append((name, source, values, vector, transformation_type, units))
+        return columns
+
+    @classmethod
+    def _rotations_available(cls, logss: list[SampleLogs]) -> bool:
+        """Whether every input carries every stage angle the rotation sub-chain needs.
+
+        All three or none: the three compose into one frame, so two of them
+        describe nothing. `_present_in_all` raises if a single angle is present
+        in some inputs and not others, which is the misalignment case; this adds
+        the rule that the three must agree with each other too.
+        """
+        present = [cls._present_in_all(logss, key) for key in cls.ROTATION_SOURCE_LOGS]
+        if any(present) and not all(present):
+            supplied = [key for key, ok in zip(cls.ROTATION_SOURCE_LOGS, present) if ok]
+            raise RuntimeError(
+                f"NXstress._sample: the sample rotation chain needs all of "
+                f"{list(cls.ROTATION_SOURCE_LOGS)}, but only {supplied} are present.\n"
+                "  Two of the three angles describe no frame; supply all of them, or none."
+            )
+        return all(present)
+
+    @classmethod
+    def _init_transformations(cls, sd: NXsample, columns: list[tuple]) -> None:
+        """Write the sample-frame transformation chain and the group's entry point.
+
+        NXstress defines `peaks/sx,sy,sz` as the sample position *in the sample
+        reference frame*, and defines that frame by the sample transformations.
+        Without this group the positions are numerically present and semantically
+        unanchored -- correct for a PyRS-to-PyRS round trip, which shares the
+        convention implicitly, and uninterpretable for the external consumer the
+        format exists to serve.
+
+        Each link carries the per-scan-point values of its axis, so the chain is
+        one transformation per scan point rather than a static placement. The
+        values duplicate logs that stay where readers already expect them --
+        `vx`/`vy`/`vz` and, for the rotations, `logs/{omega,chi,phi}`. The
+        duplication is a few floats per scan point and buys a group a NeXus
+        reader can traverse without knowing PyRS; keeping the raw logs untouched
+        means the interpretation this group applies is additive, and a consumer
+        who disputes the axes can still read the angles.
+
+        `depends_on` names the **last** link, because NeXus enters a chain there
+        and follows each field's own `depends_on` back to ".". Naming the first --
+        whose `depends_on` is "." -- terminates traversal immediately and leaves
+        the rest written but unreachable. That is exactly the defect Follow-up 7
+        F7.5 found on the detector side, and the reason this is written as a loop
+        ending in `sd["depends_on"] = depends`: the entry point cannot be set to
+        anything but the last link without editing the loop itself.
+
+        Args:
+            sd: The `NXsample` group being built; its coordinate fields must
+                already be written.
+            columns: `_chain_columns` output for this batch.
+        """
+        transformations = NXtransformations()
+
+        depends = "."
+        for name, source, values, vector, transformation_type, units in columns:
+            field = NXfield(values, units=units, **growable(1))
+            field.attrs["transformation_type"] = transformation_type
+            field.attrs["vector"] = np.asarray(vector, dtype=np.float64)
+            field.attrs["depends_on"] = depends
+            # The log these values come from, as `_sample.py` records provenance
+            # everywhere else: the NeXus name is `translation_x`, the PyRS one `vx`.
+            if source is not None:
+                field.attrs["local_name"] = source
+            transformations[name] = field
+            depends = f"./{cls.TRANSFORMATIONS_GROUP}/{name}"
+
+        sd[cls.TRANSFORMATIONS_GROUP] = transformations
+        sd["depends_on"] = depends
+
+    @classmethod
+    def _append_transformations(cls, sd: NXsample, columns: list[tuple]) -> None:
+        """Grow each chain link by this batch's rows.
+
+        `depends_on` and every `vector` are left exactly as the first write set
+        them: an append adds scan points to an existing frame, it does not
+        redefine one. `validateAppend` has already established that the links on
+        disk are the links this batch supplies.
+        """
+        if cls.TRANSFORMATIONS_GROUP not in sd:
+            # An entry written before this group existed. Appending to it would
+            # leave a chain shorter than the axes it describes, which is worse
+            # than the absence -- `NXstress._validateAppendableShapes` refuses
+            # such an entry up front, so this is a backstop, not a path.
+            raise RuntimeError(
+                "NXstress._sample: the target entry has no `transformations` group, so its "
+                "sample frame is undefined and cannot be extended.\n"
+                "  It was written before the sample transformation chain existed; write a new entry."
+            )
+
+        transformations = sd[cls.TRANSFORMATIONS_GROUP]
+        for name, _source, values, *_ in columns:
+            tail_append(transformations[name], values)
+
+    @classmethod
     def appendableDatasets(cls, sd: NXsample) -> dict:
         """Every dataset in ``SAMPLE_DESCRIPTION`` that an append grows.
 
@@ -288,6 +498,13 @@ class _Sample:
         found = row_aligned_fields(sd, GROUP_NAME.SAMPLE_DESCRIPTION)
         if "logs" in sd:
             found.update(row_aligned_fields(sd["logs"], f"{GROUP_NAME.SAMPLE_DESCRIPTION}/logs"))
+        if cls.TRANSFORMATIONS_GROUP in sd:
+            found.update(
+                row_aligned_fields(
+                    sd[cls.TRANSFORMATIONS_GROUP],
+                    f"{GROUP_NAME.SAMPLE_DESCRIPTION}/{cls.TRANSFORMATIONS_GROUP}",
+                )
+            )
         return found
 
     @classmethod
@@ -318,6 +535,21 @@ class _Sample:
                     f"{'do' if present_in_input else 'do not'} supply '{key}'.\n"
                     "  Appended data must carry the same optional sample fields as the entry it joins."
                 )
+
+        rotations_on_disk = cls.TRANSFORMATIONS_GROUP in sd and any(
+            name in sd[cls.TRANSFORMATIONS_GROUP]
+            for name, _s, _v, kind, _u in cls.TRANSFORMATION_CHAIN
+            if kind == "rotation"
+        )
+        if rotations_on_disk != cls._rotations_available(logss):
+            raise RuntimeError(
+                f"NXstress: cannot append -- the target entry's transformation chain "
+                f"{'has' if rotations_on_disk else 'has no'} rotation links, while the incoming "
+                f"workspaces {'do' if not rotations_on_disk else 'do not'} supply "
+                f"{list(cls.ROTATION_SOURCE_LOGS)}.\n"
+                "  A chain that gained or lost its rotations part-way through an entry would mean "
+                "the sample frame changes definition between scan points."
+            )
 
         incoming = set(cls._retained_log_columns(logss))
         on_disk = set(sd["logs"]) if "logs" in sd else set()
@@ -396,6 +628,8 @@ class _Sample:
                 sd["logs"][name],
                 cls._writable(np.concatenate([np.asarray(logs[key]) for logs in logss])),
             )
+
+        cls._append_transformations(sd, cls._chain_columns(logss, counts, N_scan))
 
         return sd
 

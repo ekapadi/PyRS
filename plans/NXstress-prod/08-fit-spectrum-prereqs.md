@@ -213,14 +213,14 @@ strain measurements cannot stand in for a numeric stress-field *value*,
 and conflating them would be a real physics error, not a naming
 inconsistency.
 
-`_sample.py:107`'s shape/dtype question for `STRESS_FIELD` **remains fully
+`_sample.py:171`'s shape/dtype question for `STRESS_FIELD` **remains fully
 open**. This spec cannot resolve it without new information: either a real
 dataset containing a genuine numeric `"stress field"` sample log, or
 clarification of what `STRESS_FIELD` is actually meant to represent (e.g.,
 whether it's expected as a raw-data log at all, versus a value the
 stress/strain calculator computes downstream that NXstress should instead
 receive from a different source entirely). **Do not guess a shape to
-unblock this — leave `_sample.py:107`'s existing TODO in place, updated to
+unblock this — leave `_sample.py:171`'s existing TODO in place, updated to
 reflect that this was actively investigated and remains blocked**, not
 merely "never gotten to."
 
@@ -282,7 +282,7 @@ the `STRESS_FIELD` item, which remains its own tracked gap.)
 - `pytest tests/unit/pyrs/core/test_workspaces.py` — all pass.
 - Manual inspection: fit a peak on a real dataset; print the reconstructed
   spectrum; overlay with the raw data to confirm it is plausible.
-- Confirm `_sample.py:107`'s TODO comment is updated to reflect the
+- Confirm `_sample.py:171`'s TODO comment is updated to reflect the
   investigated-but-blocked status, not left as if untouched.
 
 ---
@@ -326,7 +326,7 @@ exactly on its claimed target: `peak_collection.py:399-419` →
 `def __set_fit_status`; `instrument_geometry.py:88,107` → `calibrated: bool,`
 and its `check_bool_variable` call, which together confirm the central "accepts
 but only validates, never stores" finding; `instrument_geometry.py:109-116` →
-`def apply_shift`; `_sample.py:107` → the `STRESS_FIELD` dimensions TODO.
+`def apply_shift`; `_sample.py:171` → the `STRESS_FIELD` dimensions TODO.
 
 **A4/A5 exemption for the `STRESS_FIELD` item, recorded.** The blocked
 `STRESS_FIELD` shape question is genuinely un-probeable: no file in the
