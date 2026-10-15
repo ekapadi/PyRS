@@ -57,20 +57,20 @@
                          - `_peaks.py`'s module docstring no longer claims a
                            global lexicographic sort. 04b's open-questions Q6
                            flagged that wording for correction and the 04b PR
-                           made it. 04c's Q5 and `04c:41` both cite the OLD
+                           made it. 04c's Q5 and `04c:49` both cite the OLD
                            docstring as the assumption they relax, so check
                            whether they now argue against wording that is gone.
 
                          Known-stale citations before you start, with current
                          values (verify, do not trust this list):
-                         `_peaks.py:246-338` -> 419-529 (peakCollectionRanges);
-                         `_peaks.py:190-244` -> 309-381 (`_append_peak`);
-                         `_peaks.py:180-181` -> 289-306 (`init_group`);
-                         `_peaks.py:44-45` -> 51-58 (the sort-order docstring);
-                         `_peaks.py:306`/`:313`/`:326`/`:332` -> 499/505/519/524;
-                         `_fit.py:87` -> 98;
-                         `NXstress.py:151-152` -> 163-164 (the overwrite guard);
-                         `_input_data.py:44-46,63-72` -> 32-74 / 78-103.
+                         `_peaks.py:246-338` -> 446-559 (peakCollectionRanges);
+                         `_peaks.py:190-244` -> 331-404 (`_append_peak`);
+                         `_peaks.py:180-181` -> 305-329 (`init_group`);
+                         `_peaks.py:44-45` -> 53-60 (the sort-order docstring);
+                         `_peaks.py:306`/`:313`/`:326`/`:332` -> 528/534/548/553;
+                         `_fit.py:87` -> 109;
+                         `NXstress.py:151-152` -> 278 (the overwrite guard);
+                         `_input_data.py:44-46,63-72` -> 32-81 / 83-151.
 
 <!-- ===== end UPDATE ===== -->
 

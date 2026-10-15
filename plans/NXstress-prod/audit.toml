@@ -87,8 +87,19 @@ freshness_only = [
 # A pattern matching zero files is also an error: a stale exclude is as bad as a
 # missing one.
 paths = ["archive/*.md"]
-# prompts/ holds no *.md (only append.prompt.txt), so it needs no pattern -- and
-# adding one would itself be a load error under the zero-match rule above.
+
+# Whole directories, excluded whether or not they hold any *.md today. A glob
+# cannot express "and anything added here later", and `prompts/` holds only
+# `.txt` right now -- so `prompts/*.md` would match zero files and fail the rule
+# above, while leaving a future `prompts/*.md` to break the loader on the day it
+# is added. The staleness check for a directory is that it exists, enforced at
+# load in the same spirit.
+#
+# `prompts/` is the author's working prompt directory: `implementation-prompt.txt`
+# is adjusted before each subspec's implementation begins. It is an input to the
+# work, not a record of it, and is not audited.
+dirs = ["prompts"]
+
 # Excluding is not hiding. archive/ holds superseded drafts: never link-checked,
 # citation-checked or landing-triggered, because a superseded draft is stale BY
 # DEFINITION and reporting its staleness would bury the live findings. But

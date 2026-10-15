@@ -388,3 +388,119 @@ output-diffed. 8 of 8 corrected code pointers assert against current source.
 `check_links` 0 across 25 documents; `check_citations` 3 of 504 (known
 `open-questions/06` residue). 21 of 21 probe files now listed in the index. No
 PyRS code changed; tiers not re-run.
+
+---
+
+## Batch 28 — `review/findings.md` + `audit.toml` + `prompts/implementation-prompt.txt`
+
+### `audit.toml` — machine-checked facts verified, nothing wrong
+
+`base_commit` resolves, `base_subject` matches the commit's subject exactly, the
+base is an ancestor of `HEAD`, `claims_written_against` resolves, and `[scope]`
+covers all 12 subspecs exactly once.
+
+### Withdrawn: D56
+
+I reported that `base_commit`'s rationale was false because `base_commit..HEAD`
+now spans 34 commits rather than "exactly 04b's changes (one commit)". **The
+reviewer rejected this, and was right:**
+
+> The startup process for subspec 05 will *definitely* need to span over all of
+> these PR-review commits from 04, 04a, 04b, and 04c; how could it simply
+> *ignore* those? Significant code changes occurred during this review, and we
+> reviewed the entirety of 04-series at once. Further, we do *NOT* change the
+> audit process in the middle of running the process!!
+
+The error was reading a *rationale written for one purpose* as a *specification
+of the range*. The comment explains why the base was advanced in 2026-09-30; the
+range legitimately grew afterwards because the review landed code in it, and
+subspec 05's landing pass must see all of it. Two lessons, both general:
+a widening range is the benign direction **and the intended one** here; and a
+comment describing a past decision is not falsified by the world moving on.
+
+### D57 — fixed, and the reviewer's follow-up made it a real toolkit gap
+
+Reported as a wrong parenthetical: `[exclude]` said *"prompts/ holds no `*.md`
+(only `append.prompt.txt`)"* when the directory holds **two** `.txt` files. The
+reviewer's response went further — *"I could imagine placing an `*.md` into
+'prompts' -- it needs to be excluded on a directory basis!"* — and that exposed
+something the comment was hiding.
+
+**`prompts/` could not be excluded at all.** `[exclude] paths` is a glob, and
+`prompts/*.md` matches zero files today, which the loader's own zero-match rule
+makes an error. So the directory was uncovered *by coincidence* — the walk is
+`rglob("*.md")` and there were none — and the day a `*.md` landed there the
+loader would fail with "matches no classification". The comment recorded the
+coincidence as if it were a design.
+
+`manifest.py` gains `[exclude] dirs`: whole directories, excluded whether or not
+they hold any `*.md` today. **A glob cannot express "and anything added here
+later".** Its staleness check is that the directory exists — the same guarantee
+`paths` gets from zero-match, expressed for a directory rather than a pattern.
+Required, not optional, consistent with the loader's "missing keys and unknown
+keys are equally errors".
+
+Both halves verified by measurement, not by reading: a `*.md` dropped into
+`prompts/` leaves the document count at 25 (excluded, not counted, not an
+error), and a `dirs` entry naming a missing directory fails at load with a
+message that says why. Documented in `process.md` §7.2 beside `exclude.paths`.
+
+### `open-questions/` — considered, deliberately not excluded
+
+The reviewer also suggested *"fully excluding 'open-questions' (which is a
+planning archive directory)"*. **Not done**, and the reasons are worth keeping:
+
+1. `series.open_questions` already classifies those documents. Adding them to
+   `[exclude]` would be a *second* classification, which the loader rejects —
+   loudly and correctly. Making it possible means changing classification
+   precedence in `manifest.py`.
+2. That is a change to the audit machinery *while an audit is running*, which is
+   the rule the reviewer stated one message earlier.
+3. The three `check_citations` findings that remain all live in
+   `open-questions/06`. Excluding the directory takes that tool to **0
+   findings** — for a reason that has nothing to do with the findings being
+   fixed. A tool that reports clean because it stopped looking is the exact
+   failure shape this review has been finding all along.
+
+Recorded in findings.md §4 so the next pass sees the reasoning rather than
+re-deriving it.
+
+### D58–D61 — `findings.md` corrections
+
+- **D58:** §0's A7 column dated 04/04b/04c at 2026-09-29/30 and 10-01, all
+  before this review. Those three gained Follow-ups 9, 11–12 and 3–6 since, and
+  were re-covered on every axis — now `✓✓` on A1/A2/A3 with A7 at 2026-10-15.
+- **D59:** §2's measurements were stale. Re-measured: `check_citations` 388 →
+  **502** resolved (same three problems throughout); tiers 412/104/16 →
+  **547/112/16**. The rise is §7.7's self-check property — this review's own
+  Follow-ups are now scanned. **A count that moves while the problem set does
+  not is growth, not regression**, and the table says so.
+- **D60:** §5's invariants table was split into *three* tables by blank lines,
+  so rows 10–11 and 13/12 rendered with no header; rows 12 and 13 were also
+  transposed. One contiguous table, in order.
+- **D61:** §3 still carried `_sample.py:171` for the `STRESS_FIELD` blocker —
+  the pointer batch 27 corrected to `:272` in the README, surviving here because
+  it lives in a different file. **A pointer fixed in one document is not fixed**;
+  the same wrong value propagates to wherever else it was copied.
+
+### D62 — `implementation-prompt.txt`, line references only
+
+The reviewer's standing instruction: this file is adjusted before each subspec's
+implementation begins and **should otherwise be left alone unless explicitly
+asked**. Only the line references were touched, on explicit direction.
+
+Its "known-stale citations, with current values" block had itself gone stale on
+the right-hand side: `peakCollectionRanges` 419-529 → **446-559**, `_append_peak`
+309-381 → **331-404**, `init_group` 289-306 → **305-329**, the sort-order
+docstring 51-58 → **53-60**, the four raise sites 499/505/519/524 →
+**528/534/548/553**, `_fit.py` 98 → **109**, the overwrite guard 163-164 →
+**278**, `_input_data.py` 32-74/78-103 → **32-81/83-151**, and `04c:41` →
+**04c:49**. Left-hand values untouched: those are the historical "was", which is
+the content. All twelve targets re-asserted against current source.
+
+### Verification
+
+`check_links` 0 across 25 documents · `check_citations` 3 of 502 · `check_ownership`
+10 · `check_drift` 10 of 14 — all four load the new manifest key and report
+exactly as before. The two new `[exclude] dirs` behaviours tested directly. No
+PyRS code changed in this batch; tiers not re-run.

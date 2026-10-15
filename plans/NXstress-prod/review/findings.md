@@ -33,9 +33,9 @@ exist at the first pass · **~** partial (scope stated below) · **✗** not run
 | `01-config-and-test-infra-PR.md` | ✗ | ✗ | ✗ | ✓ | ✗ | n/a | ✓ |
 | `02-peak-and-texture-nxstress.md` | ✗ | ✗ | ~ | ✗ | ✗ | n/a | ✓ |
 | `03-combine-runs-nxstress.md` | ✗ | ✗ | ~ | ✗ | ✗ | n/a | ✓ |
-| `04-nxstress-internal-cleanup.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-09-29) |
-| `04b-multi-workspace-nxstress.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-09-30) |
-| `04c-nxstress-append.md` | ✓ | ✓ | ✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-10-01) |
+| `04-nxstress-internal-cleanup.md` | ✓✓ | ✓✓ | ✓✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-10-15) |
+| `04b-multi-workspace-nxstress.md` | ✓✓ | ✓✓ | ✓✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-10-15) |
+| `04c-nxstress-append.md` | ✓✓ | ✓✓ | ✓✓ | ✓✓ | ✓✓ | n/a | ✓ (2026-10-15) |
 | `05-strain-stress-viewer.md` | ✓ | ✓ | ✓ | ✓ | ~ | n/a | ✓ |
 | `06-manual-reduction-prereqs.md` | ✓ | ✓ | ✓ | ex | ex | n/a | ✓ |
 | `07-manual-reduction-nxstress.md` | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | ✓ |
@@ -210,6 +210,29 @@ to the code, so no new row appeared. Test tiers re-measured after the PR:
 `test-unit` **412 passed** / 150 deselected · `test-integration` 104 passed /
 28 skipped / 2 xfailed · `test-gui` 16 passed.
 
+**Updated 2026-10-15 (human PR review of 04 + 04b + 04c, batch 28).** Measured,
+not carried forward:
+
+| Tool | Exit | Result |
+|---|---|---|
+| `check_links.py` | 0 | 0 findings across 25 documents |
+| `check_citations.py` | 1 | 3 problems out of **502** resolved citations — still the same three bare-`Lnn` tokens in `open-questions/06`, and nothing else |
+| `check_ownership.py` | 1 | 10 findings over 8 rows, 12 subspecs — unchanged accepted residue |
+| `check_drift.py` | 1 | 10 of 14 sections diverge — unchanged |
+
+Test tiers: `test-unit` **547 passed** / 158 deselected · `test-integration`
+**112 passed** / 28 skipped / 2 xfailed · `test-gui` **16 passed**.
+
+The citation total rose from 388 to 502 because this review's own `## Follow-up`
+sections are themselves scanned — §7.7's self-check property, the same mechanism
+that caught 22 findings in round one's Follow-ups. **The three remaining
+problems are the same three throughout**, which is the point: a count that moves
+while the problem set does not is growth, not regression.
+
+`manifest.py` gained `[exclude] dirs` in this batch, so `prompts/` is excluded on
+a directory basis rather than relying on it happening to hold no `*.md` — see
+§4.
+
 **Test tiers re-measured at `68639d3b`** under `QT_QPA_PLATFORM=offscreen`,
 rather than carried forward from the `8634088a` figures — identical:
 `test-unit` 298 passed / 140 deselected · `test-integration` 94 passed /
@@ -227,7 +250,7 @@ Stated so gaps are not mistaken for coverage.
 | ~~04c's conflict classification, Case-A/B dispatch, `entry_number` targeting~~ | A5 | **Closed 2026-10-01 by the 04c PR.** Listed here so the first round's gap is not lost from the record. The note that "the *mechanism* beneath it **is** covered" is the part that proved misleading — it was covered for the peak-index family only. |
 | 08's fit-spectrum reconstruction, `beam_intensity_profile`, `DENEXDetectorGeometry` repairs | A5 | Net-new PyRS code. 08's claims about the **current** broken state are A3 and were checked. |
 | ~~`uncertainties` propagation; Mantid diagonal fit errors~~ | A4 | **Closed in round two** — see 08's Follow-up 2. Listed here only so the first round's gap is not lost from the record. |
-| `STRESS_FIELD` shape (`_sample.py:171`) | A4/A5 | Externally blocked — no file in the repository carries the log. Genuinely exempt. |
+| `STRESS_FIELD` shape (`_sample.py:272`) | A4/A5 | Externally blocked — no file in the repository carries the log. Genuinely exempt. |
 | The NXstress `.xml`/`.html` schema doc | A4 | Not in the repo. The absence *is* the finding. |
 | `open-questions/` prose (10 of 12) | A1 | Scope decision for this pass; mechanically checked, not read. |
 
@@ -248,6 +271,29 @@ as normal cost.
   *scanning* and `[scope]` controls *reading depth*, and the manifest has no
   tier meaning "classified and scanned but not read" — which is exactly what
   `open-questions/` now is.
+- **`prompts/` is now excluded by directory, not by accident (2026-10-15).**
+  It was previously uncovered on the reasoning that it "holds no `*.md` (only
+  `append.prompt.txt`)" — a parenthetical that was itself wrong, the directory
+  holding two `.txt` files. More to the point the reasoning was **load-bearing
+  on a coincidence**: the day a `*.md` landed there, the loader would fail,
+  because `prompts/*.md` matches zero files today and the zero-match rule makes
+  that pattern an error. A glob cannot express "and anything added here later".
+  `manifest.py` gained `[exclude] dirs`, whose staleness check is that the
+  directory exists — the same guarantee `paths` gets from zero-match, expressed
+  for a directory. Both halves verified: a `*.md` dropped into `prompts/` leaves
+  the document count at 25, and a `dirs` entry naming a missing directory fails
+  at load with a message saying why. `prompts/` is the author's working
+  directory — `implementation-prompt.txt` is adjusted before each subspec's
+  implementation begins — so it is an input to the work, not a record of it.
+- **`open-questions/` stays scanned.** Excluding it was considered in the same
+  batch and **not done**, because `series.open_questions` classifies those
+  documents and `[exclude]` would be a second classification — which the loader
+  rejects, loudly and correctly. Making it possible would mean changing
+  `manifest.py`'s classification precedence mid-review. Two reasons not to:
+  the series rule is that the audit process is not altered while it is running,
+  and the three `check_citations` findings that remain all live in
+  `open-questions/06`, so excluding it would take the tool to **0 findings** for
+  a reason that has nothing to do with the findings being fixed.
 - **`manifest.py` gained an `audit_output` classification.** `series.probes` and
   `series.findings` are declared as output paths but were never wired into the
   exhaustiveness rule, so the loader failed the moment this pass wrote
@@ -276,12 +322,10 @@ follow `CLAUDE.md`.
 | 7 | `encode(name)` matches `VALID_ITEM_NAME` and fits the 63-char cap, for every name — *restated: was `isidentifier()`, superseded by Decisions row 25* | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
 | 8 | `decode(encode(name)) == name` over adversarial inputs (`a_3Ab`, `__`, `_3A`) and the real `tests/data` log names | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
 | 9 | `encode` is injective — no two distinct inputs share an output (regression for F3.1) | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
-
 | 10 | Every transformation written is reachable by following `depends_on` from the detector | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
 | 11 | Default and named masks round-trip, and `DEFAULT_TAG` never leaks into the workspace as a mask name | 04 | **WRITTEN** (04 PR, 2026-09-29) | unit |
-
-| 13 | Every refusal an append can make is reachable from `NXstress.write` and leaves the file byte-for-byte unchanged — asserted by `digest()`, not by `pytest.raises` | 04c | **WRITTEN** (04c PR, 2026-10-01) | unit |
 | 12 | Every per-scan-point dataset the writer emits is resizable — a **sweep** of the written entry, not a list of field names | 04c | **WRITTEN** (04c PR, 2026-10-01) | unit |
+| 13 | Every refusal an append can make is reachable from `NXstress.write` and leaves the file byte-for-byte unchanged — asserted by `digest()`, not by `pytest.raises` | 04c | **WRITTEN** (04c PR, 2026-10-01) | unit |
 
 Item 13 is the one that matters most and the one nothing asked for. Its absence
 is why F3.1 shipped: the two-theta refusal *was* tested, at the `tail_append`
