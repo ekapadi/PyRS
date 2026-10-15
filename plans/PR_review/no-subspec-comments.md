@@ -185,3 +185,206 @@ cleanly in 0.12s.
 ### Verification
 
 534 unit / 112 integration / 16 GUI; `ruff` clean.
+
+---
+
+## Batch 27 — `probes/README.md` + the probe files
+
+Appendix A row 27 says "the twelve probe files". The PR touches **14**, of 21 in
+the directory. Fourth row-vs-reality mismatch in the batch plan.
+
+### The main check: every probe was run
+
+20 of 21 exit 0. `a5_nxstress_roundtrip.py` exits 1, which is **correct** — it
+is retired to record and sets `AUDIT_STATUS = "retired"`; it is the only file
+carrying that marker, so the README's documented sweep idiom
+(`grep -q '^AUDIT_STATUS'`) selects exactly it. **No probe is silently broken**,
+which is what batch 3 found last time (`a5_transformations_chain.py` had been
+dead since 04b).
+
+One false alarm, recorded because the mechanism will recur: the first sweep
+reported `a5_scan_point_family_resizable.py` timing out at 300 s. That was an
+artefact of running two full sweeps concurrently — re-timed cleanly it finishes
+in 4 s. **A probe sweep is not safe to parallelise with itself**, and a timeout
+under contention is indistinguishable from a hang in the output.
+
+### D49 — a probe in the PR was never added to the index
+
+`a4_growable_string_fields.py`: 21 files on disk, 20 listed. Not orphaned —
+`04c:615` cites it as a Follow-up 2 referent — it simply never got its row. The
+04c plan called for three new rows here and two were written. Row added, with
+the probe's real output: all three writer string forms grow correctly, bare
+`<U` still fails outright, and **claim 5 is the finding** — a fixed-width `|S`
+column silently truncates a longer appended value
+(`b'a_considerably_longer_filename.h5'` → `b'a_consid'`, no exception).
+
+### D50 — five stale `04c:` anchors in `probes/README.md`, self-inflicted
+
+Batch 26's edits to 04c added ~8 lines in the Overview and ~28 in the Scope
+section, shifting every anchor after them. **No tool reports this**:
+`check_citations` verifies a citation *resolves*, and all five still landed
+in-bounds on the wrong text. Eleven anchors re-resolved by content, plus one in
+04b (`04c-nxstress-append.md:41` → `:49`).
+
+### D51 — stale code citations inside four probe files
+
+`a4_growable_string_fields.py` (`NXstress.py:459-460` → `1093-1094`, ×3),
+`a5_nxstress_internals_today.py` (`_sample.py:127-137` → `191-201`),
+`a5_peakcollection_ranges.py` (`_peaks.py:246-338` → `446-559` ×2,
+`sample_logs.py:164-166` → `167-168`), `a5_subruns_nonmonotonic.py`
+(`workspaces.py:517` → `574`).
+
+Two wrinkles worth keeping:
+
+- In `a4_growable_string_fields.py` the citation is a **dict key the probe
+  prints**, so correcting it changes the probe's own output. Harmless here
+  (confirmed that output is pasted into no document) — but this is how a
+  pointer fix can silently invalidate pasted evidence somewhere else. The four
+  edited probes were re-run and diffed against their pre-edit output: three
+  byte-identical, and the fourth differing in exactly the one renamed key.
+- In `a5_peakcollection_ranges.py` and `a5_subruns_nonmonotonic.py` the stale
+  pointers sit **inside quotations** of README/04b text that batches 25–26 had
+  since corrected, so the quotes had become unfaithful to their sources.
+  Updating them restores fidelity *and* fixes the pointer.
+
+### D52 — one stale document anchor
+
+`a5_subruns_nonmonotonic.py` cited `04b:304` for the "reuse the merge logic"
+bullet; that line is now `ws.set_sample_log(...)`. Corrected to `04b:336-339`.
+The other document anchors in the probes (`04b:37-43`, `:43-45`, `:49-55`,
+`README:729`, `README:335-342`) all still resolve — checked individually.
+
+### Found by a reviewer correction, and fixed here rather than deferred
+
+I had set `README:99`'s stale `NXstress.py:149` aside as "a batch-23 matter".
+The reviewer's response — *"note that batch 23 is in the past!"* — is the
+finding: **deferring to a completed batch is deferring to nowhere.** A defect
+found while auditing document B does not become someone else's problem because
+it lives in document A and A was walked earlier. Corrected to
+`NXstress.py:156-164`, `write()`'s entry-targeting table, along with the
+retired probe's quotation of that sentence so the quote stays faithful.
+
+### D53 — fixed, and it was one bullet in eleven
+
+The reported defect was that `README:114-123` still said append *"raise[s] on
+any operation that would extend an existing `NXentry`"*. Auditing the section it
+sits in showed the problem is the section, not the bullet: **§2.1 is a gap list
+that was never revisited as gaps closed.** Of its eleven entries, **six have
+since closed** (one only in part) and were still written as open, and **nine of
+eleven carried stale pointers.**
+
+| Entry | State | Pointer |
+|---|---|---|
+| Appending to an existing entry | **closed in part** by 04c | `_input_data.py:44,63`, `NXstress.py:151-152` → `NXstress.py:156-164`, `:278` |
+| NXbeam intensity profile | open | `_instrument.py:127` → `:250` (+ `:348`) |
+| Detector L2 not extractable | open | `_instrument.py:138-140` → `:261` |
+| Detector rotation-order TODO | **closed** by 04 | `_instrument.py:165` → `:288` |
+| Instrument name hardcoded | **closed** by 04 | `_instrument.py:70` → `:69-81` |
+| `sx`/`sy`/`sz` hardcoded NaN | **closed** by 04 | `_peaks.py:235-239` → `:237-262` |
+| Fit `fit`/`fit_errors` NaN | open | `_fit.py:425-429`, `:430-438` → `:527-530`, `:531-536` |
+| Mask naming inconsistency | **closed** by 04 F8 | `_fit.py:546-549` → `_definitions.py:491`, `:509` |
+| `STRESS_FIELD` shape unverified | open (blocked) | `_sample.py:171` → `:272` |
+| Group-name validator workarounds | open | `_definitions.py:106,…`, `_fit.py:414` → `_definitions.py:270,273,280,286,291,297,299` |
+| `allowed_identifier` coverage | **closed** by 04 | `_definitions.py:229` → `:574-640` |
+
+Closed entries are **kept and marked `CLOSED`**, with what closed them and the
+evidence, rather than deleted: a gap list that silently drops its resolved
+entries cannot be checked afterwards against what was actually delivered. The
+section now opens by saying it is a snapshot, so the next reader knows to date
+it.
+
+**One of these was made worse by my own batch 24.** The `STRESS_FIELD` bullet
+cited `_sample.py:107`, which pointed at the NaN-fill line and never at the
+`STRESS_FIELD` comment. Batch 24's bulk `_sample.py:107` → `:171` substitution
+moved it faithfully to a line that is *also* the NaN-fill line. That is the F6.2
+lesson a second time, now with a worked example of the bulk-sed variant: **a
+mechanical remap cannot notice that the pointer it is moving was already wrong**,
+and it launders the error into something that looks freshly checked. The claim
+belongs at `_sample.py:272`, found by searching for the comment text the bullet
+actually quotes.
+
+### D54 — the rotation-order TODO, closed; and a different defect underneath it
+
+The `# TODO: check order of rotations here!!!` comment at `_instrument.py:288`
+is **removed**. The order it asked about is settled: the written sub-chain
+composes to `Rx @ Ry @ Rz`, matching `generate_rotation_matrix`.
+
+Closing it properly needed more than deleting a comment. The order was proven by
+`probes/a5_transformations_chain.py`, **but a probe runs during an audit, not on
+every commit**, and the two existing chain tests pin *reachability* and
+*pairwise links* — neither of which a reordering breaks, because a reordered
+chain is still fully connected and still reaches every link. So
+`test_instrument.py::TestDetectorRotationOrder` now composes the written
+rotation sub-chain and compares it against `generate_rotation_matrix` itself,
+the function the reduction actually uses.
+
+**Mutation testing caught a real flaw in that test's first draft.** It iterated
+a hardcoded `("rotation_x", "rotation_y", "rotation_z")` and looked each up by
+name, so it composed in *the test's* order no matter what the writer emitted —
+and passed against a writer with the rotations reversed. It now reads the order
+out of the file by traversing `depends_on`. Both mutants fail against the fixed
+version: reversing the three links, and swapping the `x`/`z` axis vectors (the
+latter caught *only* by the composition test, which is its purpose).
+
+The tolerance is `1e-6`, not tighter, because `generate_rotation_matrix` builds
+its factors in **float32** — measured max elementwise difference `6.5e-8`. A
+tighter bound would assert the referent's precision rather than this writer's
+order, so the test asserts `expected.dtype == np.float32` to say which it means.
+
+### D55 — carried forward, not fixed: `two_theta_zero`'s axis
+
+Found while closing D54, and **distinct from it** — an axis question, not an
+order one, which is why it could not be fixed under that heading.
+
+`_instrument.py` writes `two_theta_zero` about `ex`. The reduction applies
+two-theta about **Y** (`reduce_hb2b_pyrs.py::rotate_detector_2theta` →
+`_cal_rotation_matrix_y`), after folding `two_theta_0` into the arm angle as a
+**scalar offset** (`reduce_hb2b_pyrs.py:139`) rather than as a transformation of
+its own. So there are two questions: which axis, and whether it belongs in the
+chain as an independent link at all.
+
+Underneath sits a contradiction inside PyRS, not introduced by NXstress:
+`instrument_geometry.py:166` documents `two_theta_0` as *"in rotation of
+detector arm about X"*, disagreeing with the reduction's own code. **This writer
+followed the comment.** The code is the authority, so the comment is the likelier
+error — but that is a judgement for the spec that owns `DENEXDetectorShift`, not
+for a PR review of the writer.
+
+Carried into **spec 08** (resolve the contradiction, fix whichever is wrong) and
+**spec 09** (emit the link on the settled axis), both now carrying it in their
+`## Scope`.
+
+### The gap list had no forward consumer
+
+Raised by the reviewer: *"where is this gap list; is it something later
+subspecs will even see?"*
+
+**It is spec 04's work list and nothing else's.** The only reference to it
+anywhere in the series is `04-nxstress-internal-cleanup.md:11` — *"Close the
+NXstress-internal TODOs from Section 2.1 of the README"*. Specs 04, 04b and 04c
+have now landed, so every remaining open entry was sitting in a list whose only
+reader is finished.
+
+Checked individually: four of the five pre-existing open entries *are* owned by
+spec 08's `## Scope` (beam profile, L2/arm-shift, fit-spectrum reconstruction,
+`STRESS_FIELD` as explicitly blocked) and one by spec 10
+(`use_production_names`). So nothing was lost — but nothing was carried by
+§2.1 either, and D55 had **no owner at all** until it was added.
+
+§2.1 is now a closed-out record that says so in its first line, with a table
+naming where each open entry went. The one entry deliberately left unscheduled
+— extending an existing key, and overwriting an entry — is labelled as such
+rather than left looking tracked.
+
+**The general shape, worth keeping:** a list of open work is only as live as its
+consumers. When the spec that reads it lands, the list stops being a schedule
+and becomes a record, silently — and anything still open in it stops being
+scheduled without anyone deciding that.
+
+### Verification
+
+Every probe run: 20 OK, 1 retired-by-design. The four edited probes re-run and
+output-diffed. 8 of 8 corrected code pointers assert against current source.
+`check_links` 0 across 25 documents; `check_citations` 3 of 504 (known
+`open-questions/06` residue). 21 of 21 probe files now listed in the index. No
+PyRS code changed; tiers not re-run.

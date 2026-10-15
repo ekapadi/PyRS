@@ -517,7 +517,7 @@ already raises `"subruns are not sorted in increasing order"` unless
     RESULT  RAISED RuntimeError: subruns are not sorted in increasing order
   ```
 - Action: corrected in place to lines 167-168, here and at
-  `04c-nxstress-append.md:41` and `README.md:729`.
+  `04c-nxstress-append.md:49` and `README.md:729`.
 
 **F1.2** (A3) — `pyrs/core/workspaces.py` citations are systematically stale, from
 a single upstream cause.

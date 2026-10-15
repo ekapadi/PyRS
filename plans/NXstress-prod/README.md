@@ -96,7 +96,7 @@ Its input/output types are **exactly** the pair
 TextureFittingViewer already produce and consume, making those two viewers
 the natural first integration point.
 
-Multiple `NXentry` groups per file are supported (`NXstress.py:149`). These
+Multiple `NXentry` groups per file are supported (`NXstress.py:156-164`). These
 are reserved for "distinct data-reduction or sample conditions" — not for
 multi-direction stress data, which is handled via the compound `PeakIndex`
 (see Section 2.4).
@@ -111,51 +111,100 @@ These are things the NXstress implementation itself cannot yet do. Some are
 self-contained fixes; others require upstream PyRS changes (scheduled in the
 phases below).
 
-- **Appending to an existing entry** — `_input_data.py:44,63` and
-  `NXstress.py:151-152` raise on any operation that would extend an existing
-  `NXentry`. Each write must currently be a fresh entry (save-as). Scheduled:
-  Phase 3 (spec 04c) — as a library capability only, and only for adding a
-  genuinely *new* workspace/compound key (tail-append); extending an
-  existing key already in the file with more scan points remains
-  unsupported (`NotImplementedError`) even after Phase 3 — a real,
-  currently-unscheduled gap, not something Phase 3 fully closes. No GUI
-  wiring is scheduled for append in this pass, since spec 07's reduction
-  pathway is decided to always write a fresh file.
-- **NXbeam intensity profile empty** — `_instrument.py:127`. Fine for Phase 1;
-  readers must tolerate absence. Scheduled: Phase 5 (depends on reduction
-  pipeline producing a profile).
-- **Detector L2 not extractable from `DENEXDetectorGeometry`** —
-  `_instrument.py:138-140`. Round-tripping a calibrated geometry may lose the
+**This section is now a closed-out record, not a live work list.** Its only
+consumer was spec 04, whose Overview opens *"Close the NXstress-internal TODOs
+from Section 2.1 of the README"* — and specs 04, 04b and 04c have landed. A list
+whose only reader is finished cannot be where open work waits, so **every entry
+still open has been carried forward into the subspec that owns it**. Nothing
+here is scheduled by being here.
+
+Six of the eleven entries have since closed (one only in part). They are kept,
+marked **CLOSED**, with what closed them and the evidence: a gap list that
+silently drops its resolved entries cannot be checked afterwards against what
+was actually delivered.
+
+| Still open | Carried forward to |
+|---|---|
+| NXbeam intensity profile empty | spec 08 (`HidraWorkspace.beam_intensity_profile`), then spec 09 |
+| Detector L2 / arm-shift not recoverable | spec 08 (`DENEXDetectorGeometry.arm_shift_applied`), spec 09 |
+| Fit `fit`/`fit_errors` are NaN placeholders | spec 08 (fit-engine method), spec 09 (populate) |
+| `STRESS_FIELD` shape unverified | spec 08, explicitly as **blocked**; `open-questions/08` Q3 |
+| Group-name validator workarounds | spec 10 (`nxstress.use_production_names`) |
+| **`two_theta_zero`'s rotation axis** | **spec 08** (resolve the contradiction), **spec 09** (emit it) — new, found by this review |
+| Extending an existing key, and overwriting an entry | **unscheduled, and deliberately so** — 04c delivers tail-append of a *new* key only |
+
+Audited in full, re-pointed and carried forward 2026-10-15 — see
+`plans/PR_review/no-subspec-comments.md`, batch 27.
+
+- **Appending to an existing entry** — **CLOSED in part (Phase 3, spec 04c).**
+  Append is implemented as a library capability: `write()` dispatches on
+  whether the resolved entry already exists
+  ([NXstress.py:156-164](../../pyrs/utilities/NXstress/NXstress.py#L156)), and
+  tail-appends a genuinely *new* workspace/compound key. **Still open**, and
+  unchanged by Phase 3: extending a key *already in the file* with more scan
+  points raises `NotImplementedError`, and overwriting an existing entry's
+  contents raises
+  ([NXstress.py:278](../../pyrs/utilities/NXstress/NXstress.py#L278)) — a real,
+  currently-unscheduled gap. No GUI wiring is scheduled for append in this
+  pass, since spec 07's reduction pathway is decided to always write a fresh
+  file.
+- **NXbeam intensity profile empty** — **OPEN.** `_instrument.py:250`
+  (`# TODO: fill in the beam-intensity profile.`); the `NXbeam` group is
+  written but unpopulated (`_instrument.py:348`). Fine for Phase 1; readers
+  must tolerate absence. Scheduled: Phase 5 (depends on the reduction pipeline
+  producing a profile).
+- **Detector L2 not extractable from `DENEXDetectorGeometry`** — **OPEN.**
+  `_instrument.py:261`. Round-tripping a calibrated geometry may lose the
   arm-shift information. Requires a new accessor on `DENEXDetectorGeometry`.
   Scheduled: Phase 5.
-- **Detector rotation-order TODO** — `_instrument.py:165`. A wrong order
-  silently mis-orients the instrument in the file. Must be cross-checked
-  against the reduction code's convention. Scheduled: Phase 2.
-- **Instrument name hardcoded to `"HB2B"`** — `_instrument.py:70`. Fine for
-  single-beamline use; parameterize before any HB2A/other-instrument use.
-  Scheduled: Phase 2.
-- **Scan-point positions `sx`/`sy`/`sz` hardcoded to NaN** —
-  `_peaks.py:235-239`. The commented-out `logs['sx'/'sy'/'sz']` block was
-  disabled pending log-key naming confirmation. Needs to be restored and the
-  key names reconciled against what the reduction pipeline emits. Scheduled:
-  Phase 2.
-- **Fit diffractogram `fit`/`fit_errors` initialized to NaN** —
-  `_fit.py:425-429` (placeholder comment), `:430-438` (zero-sized resizable
-  field creation). PyRS does not currently reconstruct the fitted
-  model spectrum after peak-fitting. Blocked on a PyRS fit-engine change.
-  Scheduled: Phase 5.
-- **Mask naming/storage inconsistency** — `_fit.py:546-549`. Default vs. named
-  masks are addressed differently in the current writer; needs a single
-  convention before external readers can rely on the layout. Scheduled:
-  Phase 2.
-- **Sample `STRESS_FIELD` shape unverified** — `_sample.py:171` (actual
+- **Detector rotation-order TODO** — **CLOSED (Phase 2, spec 04).** The written
+  order was already correct: traversed from the last link, the rotation
+  sub-chain composes to `Rx @ Ry @ Rz`, matching
+  `reduce_hb2b_pyrs.py::generate_rotation_matrix`. Proven by
+  [`probes/a5_transformations_chain.py`](probes/a5_transformations_chain.py),
+  which also found the real defect here — the chain's `depends_on` named the
+  *first* link, so 1 of 8 transformations was reachable (Decisions item 26,
+  spec 04 Follow-up 7 F7.5). The
+  `# TODO: check order of rotations here!!!` comment that stood in the source
+  has been removed, and the order is now asserted on every commit rather than
+  only during an audit: `test_instrument.py::TestDetectorRotationOrder`
+  composes the written rotation sub-chain and compares it against
+  `generate_rotation_matrix` itself. **Rotation *order* is closed.** The
+  separate question of `two_theta_zero`'s *axis* is open and carried forward —
+  see the table above.
+- **Instrument name hardcoded to `"HB2B"`** — **CLOSED (Phase 2, spec 04).**
+  Now read from configuration by `_Instrument._instrument_names`
+  ([_instrument.py:69-81](../../pyrs/utilities/NXstress/_instrument.py#L69)),
+  via `nxstress.instrument_name` / `nxstress.instrument_short_name`, with
+  `"HB2B"` as the fallback rather than the only option.
+- **Scan-point positions `sx`/`sy`/`sz` hardcoded to NaN** — **CLOSED
+  (Phase 2, spec 04).** Written from the sample coordinate logs
+  ([_peaks.py:237-262](../../pyrs/utilities/NXstress/_peaks.py#L237)), each
+  column carrying a `local_name` recording the PyRS log it came from; the key
+  names were reconciled in `open-questions/04` Q3. They still read NaN when the
+  source coordinates are non-finite, which is now detected by asking rather
+  than by catching an assertion message — see spec 04's
+  `TestNonFiniteCoordinatesAreAsked`.
+- **Fit diffractogram `fit`/`fit_errors` initialized to NaN** — **OPEN.**
+  `_fit.py:527-530` (placeholder comment), `:531-536` (field creation). PyRS
+  does not currently reconstruct the fitted model spectrum after peak-fitting.
+  Blocked on a PyRS fit-engine change. Scheduled: Phase 5.
+- **Mask naming/storage inconsistency** — **CLOSED (spec 04 Follow-up 8).** The
+  root cause was one namespace being asked to hold two different kinds of
+  string. `_definitions.py` now separates them: `nxstress_mask_names`
+  ([:491](../../pyrs/utilities/NXstress/_definitions.py#L491)) reads
+  `_mask_dict` and injects `DEFAULT_TAG`; `nxstress_diffractogram_keys`
+  ([:509](../../pyrs/utilities/NXstress/_definitions.py#L509)) reads
+  `_diff_data_set` and does not.
+- **Sample `STRESS_FIELD` shape unverified** — `_sample.py:272` (actual
   comment: *"we don't have an example of these entries, so the dimensions
   may not be correct!"*). Confirmed no real dataset with a genuine
   `STRESS_FIELD` log exists anywhere in the repo — blocked, see
   `open-questions/08-fit-spectrum-prereqs.md` Q3. Scheduled: Phase 5.
 - **Group-name validator workarounds** — several `GROUP_NAME` values
-  (`_definitions.py:106,109,116,122,127-135`) and
-  `DGRAM_TWO_THETA_NAME = "XAXIS"` (`_fit.py:414`) were set to upper-case /
+  (`_definitions.py:270`, `:273`, `:280`, `:286`, `:291`, `:297` — each marked
+  `# *** DEBUG *** validator bug`) and `DGRAM_TWO_THETA_NAME = "XAXIS"`
+  (`_definitions.py:299`) were set to upper-case /
   generic forms to work around a `nexusformat` validator bug. The generic names
   are likely acceptable on-disk schema-wise, but the production intent is
   meaningful lowercase names. **Resolution:** expose as a `Config` toggle
@@ -164,7 +213,13 @@ phases below).
   schema-spec check. Scheduled: Phase 1 (Config infrastructure) + Phase 2
   (flip default once validator bug is resolved upstream).
 - **`allowed_identifier` disallowed-character coverage incomplete** —
-  `_definitions.py:229`. Scheduled: Phase 2.
+  **CLOSED (Phase 2, spec 04).** The encoding is now defined over an explicit
+  alphabet with an underscore-doubling escape, injective and round-tripping
+  (`_definitions.py:574-640`), proven by
+  [`probes/a5_identifier_policy.py`](probes/a5_identifier_policy.py) and
+  [`probes/a4_validitemname_rule.py`](probes/a4_validitemname_rule.py) and
+  pinned by `test_definitions.py`, which iterates `GROUP_NAME` rather than
+  restating it. Decisions items 23 and 25.
 
 ### 2.2 Upstream PyRS data-object gaps
 

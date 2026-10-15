@@ -39,6 +39,18 @@ three items are unaffected by that block and proceed normally.
   Phase 2/3 bridge, well before this Phase 5 spec) — the real shape to
   resize to is the *total* concatenated scan-point count across all input
   workspaces, not one workspace's count. See "Multi-workspace scope" below.
+- **Emit `two_theta_zero` about the axis spec 08 settles.** The detector
+  transformation chain currently writes it about `ex`
+  (`_instrument.py`, the `two_theta_zero` entry), which follows
+  `instrument_geometry.py:166`'s comment rather than the reduction's own code —
+  see spec 08's scope item. The rotation *order* of the chain is settled and
+  tested (`test_instrument.py::TestDetectorRotationOrder`, which composes the
+  written sub-chain against `generate_rotation_matrix`); this is the one
+  remaining question about the detector chain. Also decide whether
+  `two_theta_zero` belongs in the chain as an independent link at all, given the
+  reduction treats it as an offset added to the arm angle before a single Y
+  rotation. **Carried forward from README Section 2.1 by the 04/04b/04c PR
+  review (batch 27).**
 - Fix the L2 arm-shift round-trip in `_instrument.py:132-150` (the
   calibrated/uncalibrated branch; the specific TODO + `distance =
   geom.arm_length` line is at `:138-140`, unchanged from the earlier

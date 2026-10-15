@@ -40,7 +40,7 @@ Claims under test
    logs, masks, reduced diffraction data, and peak collections. It does NOT
    reconstruct raw counts unless the optional ``input_data`` group was written."
 3. ``README.md:99-102`` -- "Multiple ``NXentry`` groups per file are supported
-   (``NXstress.py:149``)."
+   (``NXstress.py:156-164``)."
 4. ``README.md:114-123`` -- "``_input_data.py:44,63`` and ``NXstress.py:151-152``
    raise on any operation that would extend an existing ``NXentry``. Each write
    must currently be a fresh entry (save-as)."

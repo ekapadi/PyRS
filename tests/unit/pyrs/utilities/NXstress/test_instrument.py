@@ -10,6 +10,8 @@ import numpy as np
 from nexusformat.nexus import NXcollection, NXinstrument, NXdetector_module
 import pytest
 
+from pyrs.core.instrument_geometry import DENEXDetectorGeometry, DENEXDetectorShift
+from pyrs.core.reduce_hb2b_pyrs import ResidualStressInstrument
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.NXstress._instrument import _Instrument, _Masks
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG
@@ -291,6 +293,134 @@ class TestInstrument:
 
         # Assert
         assert set(reached) == written, f"unreachable: {sorted(written - set(reached))}"
+
+
+def _written_order(detector) -> list:
+    """The chain's links in WRITE order, read from the file rather than assumed.
+
+    Traversal from the entry point yields reverse write order, since each link
+    depends on the one written before it.
+    """
+    order = []
+    trans = detector["transformations"]
+    current = str(detector["depends_on"].nxvalue)
+    while current != ".":
+        name = current.rsplit("/", 1)[-1]
+        assert name not in order, f"cycle at {name!r}"
+        order.append(name)
+        current = str(trans[name].attrs["depends_on"])
+    return list(reversed(order))
+
+
+def _rodrigues(axis, degrees: float):
+    """Right-handed rotation of `degrees` about `axis`.
+
+    Written here rather than imported from the writer, so
+    `test_rotation_subchain_composes_to_the_reduction_convention` fails when the
+    writer changes rather than tracking it (`plans/audit-process/process.md` 5.3).
+    """
+    k = np.asarray(axis, dtype=float)
+    k = k / np.linalg.norm(k)
+    theta = np.radians(degrees)
+    cross = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    return np.eye(3) + np.sin(theta) * cross + (1.0 - np.cos(theta)) * (cross @ cross)
+
+
+class TestDetectorRotationOrder:
+    """The written rotation order is the reduction's, and that is now asserted.
+
+    `_instrument.py` carried `# TODO: check order of rotations here!!!` from the
+    first implementation until this review. The order turned out to be correct,
+    which `probes/a5_transformations_chain.py` established — but a probe is run
+    during an audit, not on every commit, and the two existing chain tests pin
+    *reachability* and *pairwise links*, neither of which would catch a reordering
+    that kept the chain connected. Swapping `rotation_x` and `rotation_z` in the
+    writer leaves both of them green.
+
+    So the claim is asserted against its referent: the composed sub-chain equals
+    `ResidualStressInstrument.generate_rotation_matrix`, the function the
+    reduction actually uses.
+
+    **`two_theta_zero` is deliberately excluded.** Its axis is a separate open
+    question — the writer emits it about `ex` while the reduction applies
+    two-theta about Y, after folding `two_theta_0` into the arm angle as a scalar
+    offset rather than as a transformation. Carried forward; see README
+    Section 2.1.
+    """
+
+    ROTATIONS = ("rotation_x", "rotation_y", "rotation_z")
+
+    def test_rotation_subchain_composes_to_the_reduction_convention(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    ):
+        # Arrange -- angles large and asymmetric, so no two orderings coincide
+        ws = minimal_HidraWorkspace(with_instrument=True)
+        rot_x, rot_y, rot_z = 37.0, -52.0, 113.0
+        ws.set_detector_shift(
+            DENEXDetectorShift(
+                shift_x=0.01,
+                shift_y=0.02,
+                shift_z=0.03,
+                rotation_x=rot_x,
+                rotation_y=rot_y,
+                rotation_z=rot_z,
+                tth_0=0.0,
+            )
+        )
+        detector = _Instrument.init_group([ws])["DETECTOR"]
+        trans = detector["transformations"]
+
+        # Act -- compose in the order the file actually says, which means reading
+        # the chain rather than a list declared here. Iterating a hardcoded tuple
+        # would compose in *this test's* order whatever the writer emitted, and
+        # would pass against a reversed writer -- measured, not assumed.
+        composed = np.eye(3)
+        for name in _written_order(detector):
+            if name not in self.ROTATIONS:
+                continue
+            link = trans[name]
+            composed = composed @ _rodrigues(link.attrs["vector"], float(link.nxdata))
+
+        # Assert -- against the referent, not against a restatement of it
+        geometry = DENEXDetectorGeometry(
+            num_rows=4,
+            num_columns=4,
+            pixel_size_x=0.001,
+            pixel_size_y=0.001,
+            arm_length=2.0,
+            calibrated=True,
+        )
+        expected = ResidualStressInstrument(geometry).generate_rotation_matrix(
+            np.deg2rad(rot_x), np.deg2rad(rot_y), np.deg2rad(rot_z)
+        )
+        # `generate_rotation_matrix` builds its factors in **float32**, so the
+        # agreement is bounded by that, not by the comparison: measured max
+        # elementwise difference 6.5e-8. A tighter tolerance here would be
+        # asserting the referent's precision rather than this writer's order.
+        assert expected.dtype == np.float32
+        np.testing.assert_allclose(composed, expected, atol=1e-6)
+
+    def test_the_rotation_links_are_written_in_xyz_order(
+        self,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    ):
+        """The order the composition test depends on, stated separately.
+
+        If the writer stops emitting the three rotations consecutively, the
+        composition above would silently start testing something else.
+        """
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=True)
+
+        # Act
+        written = _written_order(_Instrument.init_group([ws])["DETECTOR"])
+
+        # Assert
+        rotations = [n for n in written if n in self.ROTATIONS]
+        assert rotations == list(self.ROTATIONS)
+        start = written.index("rotation_x")
+        assert written[start : start + 3] == list(self.ROTATIONS), written
 
 
 class TestMaskGroupHoldsOnlyRealMasks:

@@ -25,8 +25,8 @@ Claims under test
 3. ``_sample.py:162`` -- ``_Sample.sampleLogsFromNexus`` does
    ``logs.subruns = SubRuns(scan_point)`` over the whole on-disk array, so a
    multi-workspace entry read *before* splitting hits claim 2 directly.
-4. ``04b:304`` -- "reuse the merge logic ``HidraWorkspace.append_hidra_project``
-   already implements in-memory (``pyrs/core/workspaces.py:517``)": whether that
+4. ``04b:336-339`` -- "reuse the merge logic ``HidraWorkspace.append_hidra_project``
+   already implements in-memory (``pyrs/core/workspaces.py:574``)": whether that
    method takes an in-memory workspace, and whether it preserves scan points.
 
 Per ``probes/README.md``'s failure-modes table, each claim reports the resulting

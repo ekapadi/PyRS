@@ -285,7 +285,16 @@ class _Instrument:
             ("rotation_x", rotx, ex, "deg", "rotation"),
             ("rotation_y", roty, ey, "deg", "rotation"),
             ("rotation_z", rotz, ez, "deg", "rotation"),
-            # TODO: check order of rotations here!!!
+            # Rotation ORDER is settled -- see the `depends_on` note below. The axis
+            # on the next line is NOT: `two_theta_zero` is written about `ex`, while
+            # the reduction applies two-theta about Y
+            # (`reduce_hb2b_pyrs.py::rotate_detector_2theta` -> `_cal_rotation_matrix_y`)
+            # after folding `two_theta_0` into the arm angle as a scalar offset
+            # (`reduce_hb2b_pyrs.py:139`) rather than as a transformation of its own.
+            # `instrument_geometry.py:166` calls it "rotation of detector arm about X",
+            # contradicting that code; this writer followed the comment. Unresolved and
+            # carried forward -- README Section 2.1, and spec 08/09's detector-calibration
+            # fidelity work, which owns `DENEXDetectorShift`.
             ("two_theta_zero", tth0, ex, "deg", "rotation"),
         ]:
             f = NXfield(val, units=units)
@@ -311,10 +320,13 @@ class _Instrument:
         # reached. `instrumentFromNexus` reads each field by name and ignores the
         # chain, which is why nothing in PyRS ever noticed.
         #
-        # The written ORDER was already correct: traversed from the last link, the
-        # rotation sub-chain composes to Rx @ Ry @ Rz, matching
-        # `reduce_hb2b_pyrs.py::generate_rotation_matrix`. Verified by
-        # `plans/NXstress-prod/probes/a5_transformations_chain.py`.
+        # The written ORDER was already correct, and this is now settled rather than
+        # assumed: traversed from the last link, the rotation sub-chain composes to
+        # Rx @ Ry @ Rz, matching `reduce_hb2b_pyrs.py::generate_rotation_matrix`.
+        # Verified by `plans/NXstress-prod/probes/a5_transformations_chain.py` and
+        # pinned by `test_instrument.py`. The order question that stood open here is
+        # closed; the separate question of `two_theta_zero`'s AXIS is not -- see the
+        # note at its entry in the chain above.
         det["depends_on"] = depends
 
         # Add a calibrated flag as extra metadata

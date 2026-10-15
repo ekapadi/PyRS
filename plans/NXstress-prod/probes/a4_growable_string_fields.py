@@ -16,7 +16,7 @@ area:
 
 Neither covers the forms the writer actually uses. ``entry/start_time`` and
 ``entry/end_time`` are built from a plain Python ``list[str]``
-(``NXstress.py:459-460``) and handed to ``NXfield`` with no dtype at all, letting
+(``NXstress.py:1093-1094``) and handed to ``NXfield`` with no dtype at all, letting
 ``nexusformat`` choose. ``SAMPLE_DESCRIPTION/logs/*`` are whatever
 ``_Sample._writable`` returns, which for a bytes log is an ``|S`` array that
 passes through untouched. Adding ``chunks`` moves every one of these off h5py's
@@ -72,14 +72,14 @@ def report(claim: str, result: str) -> None:
 
 # The four value forms the NXstress writer actually produces for a string column.
 CASES = {
-    "list[str] (entry/start_time, NXstress.py:459)": ["2024-01-15T10:00:00", "2024-01-15T10:01:00"],
+    "list[str] (entry/start_time, NXstress.py:1093)": ["2024-01-15T10:00:00", "2024-01-15T10:01:00"],
     "np.array of |S bytes (_Sample._writable passthrough)": np.array([b"run_a.h5", b"run_b.h5"]),
     "vlen UTF-8 (_Sample._writable converts <U to this)": np.array(["11", "11"], dtype=STRING_DTYPE),
     "bare <U (what _writable exists to prevent)": np.array(["11", "11"]),
 }
 
 EXTRA = {
-    "list[str] (entry/start_time, NXstress.py:459)": ["2024-01-15T10:02:00"],
+    "list[str] (entry/start_time, NXstress.py:1093)": ["2024-01-15T10:02:00"],
     "np.array of |S bytes (_Sample._writable passthrough)": np.array([b"run_c.h5"]),
     "vlen UTF-8 (_Sample._writable converts <U to this)": np.array(["22"], dtype=STRING_DTYPE),
     "bare <U (what _writable exists to prevent)": np.array(["22"]),
