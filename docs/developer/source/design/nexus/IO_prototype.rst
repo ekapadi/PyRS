@@ -27,7 +27,9 @@ directory as :download:`NXstress.nxdl.xml <NXstress.nxdl.xml>`, copied verbatim
 from the NeXus definitions repository:
 
 * source: ``nexusformat/definitions``, ``applications/NXstress.nxdl.xml``
-* NXDL version: ``v2026.01``
+* definitions release: ``v2026.01`` (the repository's release tag -- not the
+  ``version="1.0"`` attribute on the file's own root element, which is the NXDL
+  schema-language version and a different thing)
 * commit: ``004da96ef29bc6b7529e1f8e5d9415cd000bccb8`` ("Update copytright dates to 2026")
 * sha256: ``bee46c0723720bc440570cc8f74be37cea6145b15b7e6f4c3ec00c421144b905``
 

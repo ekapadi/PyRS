@@ -575,3 +575,151 @@ review has named repeatedly.
 `open-questions/06` residue). Every claim in the three Follow-ups re-verified
 against code, the vendored artifact's sha256 recomputed, and two probes re-run.
 No PyRS code changed; tiers not re-run.
+
+---
+
+## Batch 30 — `PR_review/04_commit.txt`
+
+**No changes. Five reported defects withdrawn.**
+
+### What I got wrong
+
+I audited this as the PR description for the PR under review, and raised five
+defects against it: that it covers subspec 04 while the PR spans 04 + 04b + 04c
+(zero occurrences of "04b" or "04c"); that `FILES CHANGED` lists 5 production
+files and 9 test files where the PR touches 24 and 30; that every number in
+`VERIFICATION RUN` is stale (`test-unit` 315 → 547, `check_citations` 358 → 502
+citations, `check_ownership` 9 → 10); that its `ground_truths.md` paragraph
+argues against something this PR now does in +249 lines; and that its
+`POST-MERGE` list names a completed task (`04-*.md` is already in
+`[scope] freshness_only`) while omitting the live one (`04c-*.md`).
+
+Every one of those observations is factually true. **They are not defects**,
+because the document is not what I took it to be. The reviewer:
+
+> it was only used as a suggestion for the actual commit message (which was much
+> more abbreviated). For the actual PR including 04, 04a, 04b, and 04c (, which
+> we are not quite ready for yet), the commit-message used will be much more
+> comprehensive; and all of that will be drafted later.
+
+It is a **spent drafting artifact** — input to a commit message that was written
+and abbreviated — not a live description anyone will read as an account of the
+PR. Measuring a draft against the thing it was drafted toward produces findings
+that are all true and all pointless.
+
+### Why the misreading was available, which is the part worth keeping
+
+`review-process.md` §6a describes this file as *"a 360-line PR description
+written for the reviewer"* and justifies its late placement with *"Read after
+the code, it is checkable against it."* That framing states a purpose
+(description for the reviewer) and an invitation (check it against the code),
+and both overstate what the file is. The batch plan's row 30 repeats it:
+"narrative; deliberately late (§6a)".
+
+**A document's status is not inferable from its content**, and this one reads
+exactly like a live PR description — sectioned, specific, numerate. Nothing in
+or around it says "draft, superseded, do not audit". The nearest analogue in
+this series is `prompts/`, which batch 28 made explicit in `audit.toml` rather
+than leaving it to be inferred; and `archive/`, whose exclusion comment states
+*"a superseded draft is stale BY DEFINITION and reporting its staleness would
+bury the live findings."* That is precisely what happened here.
+
+No tooling change is needed: `plans/PR_review/` sits outside the series
+directory, so `manifest.py`'s walk never reaches it — verified, 25 documents
+scanned, none outside `plans/NXstress-prod/`. The gap is in the human-facing
+process description, not the loader.
+
+### Recorded for whoever drafts the real thing
+
+Not findings against this file — inputs to the commit message that replaces it,
+gathered while checking:
+
+- The PR is **99 files, +21937/−857**: 24 production, 30 test, the rest plans
+  and docs.
+- Current tiers: `test-unit` **547** passed / 158 deselected · `test-integration`
+  **112** passed / 28 skipped / 2 xfailed · `test-gui` **16** passed.
+- Toolkit: `check_links` 0 · `check_citations` 3 of 502 · `check_ownership` 10 ·
+  `check_drift` 10 of 14.
+- The live post-merge `audit.toml` item is moving **`04c-*.md`** from
+  `[scope] full` to `freshness_only`; `04-*.md` and `04b-*.md` are already there.
+- `docs/ground_truths.md` gains **+249 lines** in this PR, which the superseded
+  draft argues against. Whatever the real message says about ground truths
+  should be written from the current rule, not from that paragraph.
+
+---
+
+## Batch 31 — `IO_prototype.rst` + `NXstress.nxdl.xml` + `.pre-commit-config.yaml`
+
+The cleanest batch of the review: no defects, two comment-accuracy
+observations, both fixed.
+
+### The check nobody had run
+
+The recorded sha256 proved only that the vendored file matched **itself**. It
+was computed from the copy, so verifying the copy against it is circular — and
+that is the entire evidentiary weight behind the word "verbatim".
+
+An upstream checkout is reachable at `/home/ux0/workspaces/NeXuS-definitions`,
+which the probes' search list already knows about, so the real check was
+available all along:
+
+- commit `004da96ef29bc6b7529e1f8e5d9415cd000bccb8` exists upstream with subject
+  *"Update copytright dates to 2026"* — matching the recorded provenance exactly,
+  the typo faithfully preserved;
+- `git show 004da96e:applications/NXstress.nxdl.xml` is **byte-identical** to the
+  vendored copy — `cmp` clean, both `bee46c07…b905`;
+- upstream has made **no change** to that file since, nor to `nxdl.xsd` where
+  `validItemName` lives.
+
+So the snapshot is faithful *and* current. It also means
+`a4_validitemname_rule.py` runs here in its live mode rather than its degraded
+one — reading the real `nxdl.xsd` and confirming both the pattern and the
+63-char cap against what the series records.
+
+**Worth keeping:** a recorded hash is a tripwire for *later* corruption, not
+evidence of *original* fidelity. The two look identical in a document and are
+different claims, and only one of them had been checked.
+
+### Claims verified against the schema, now that the referent is in-repo
+
+`IO_prototype.rst`'s two resolved doubts are directly checkable against the
+vendored definition, and both hold: `peaks/sx`, `sy`, `sz` are `minOccurs=1`
+with `dims=['n_Peaks']`, exactly as the resolution states; and `vx`/`vy`/`vz`
+are absent from the definition entirely, confirming "a PyRS extension — the
+schema does not define them".
+
+### An unremarked improvement in the diff
+
+`.pre-commit-config.yaml`'s previous pattern was `"^pixi.lock$"` — an
+**unescaped dot**, which as a regex matches any character. The new pattern
+escapes both. This change quietly fixed a latent bug in a pre-existing entry,
+which the commit message did not claim and nobody would have noticed.
+
+### O36 — the exclusion comment was narrower than the exclusion
+
+It said the file is excluded *"so whitespace/format hooks cannot alter it"*. But
+`exclude:` is **top-level**: it removes the file from *every* hook. Measured
+rather than reasoned — running the hooks against it reports `(no files to
+check)` twelve times, including the read-only `check-xml` and `detect-secrets`.
+
+Nothing is broken; the XML is well-formed, which I confirmed independently with
+`ElementTree` since `check-xml` no longer does. But a reader was told the scope
+was "whitespace/format" when it is "everything", and would have to run the hooks
+to find out. The comment now says so, and says why that is acceptable: the
+guarantee is upstream's, and the copy is verified by sha256 rather than by
+re-validating it here.
+
+### O37 — "NXDL version: `v2026.01`" contradicted the file it describes
+
+The vendored file's own root carries `version="1.0"`, the NXDL
+*schema-language* version; `v2026.01` is the definitions-repo *release tag*.
+Both true, of different things — and a reader who opens the file to check the
+provenance finds an apparent contradiction. Relabelled `definitions release`,
+with the distinction stated inline.
+
+### Verification
+
+`pre-commit` re-run: the config still parses, the exclusion still holds (12
+hooks skipped), and the two edited files pass their own hooks. The vendored
+file's sha256 is unchanged at `bee46c07…`, confirming nothing in this batch
+touched it. No PyRS code changed; tiers not re-run.
