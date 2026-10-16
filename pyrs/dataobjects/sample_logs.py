@@ -165,6 +165,12 @@ class SubRuns(Iterable):
                     "Cannot change subruns when non-empty (previous={}, new={})".format(self._value, value)
                 )
         if not np.all(value[:-1] < value[1:]):
+            # `__init__` routes through here, so a non-monotonic array cannot be
+            # held at all -- which is why merging workspaces with interleaved scan
+            # points has to concatenate at the array level rather than building a
+            # merged workspace. `append` bypasses this check. See
+            # `docs/ground_truths.md`, "Two data-model limits that bite any
+            # multi-record NeXus write".
             raise RuntimeError("subruns are not sorted in increasing order")
         self._value = value.astype(int)
 

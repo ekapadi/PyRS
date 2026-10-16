@@ -803,3 +803,68 @@ sha256 is unchanged at `bee46c07…`, confirming nothing in this batch touched
 it. `IO_prototype.rst` parses under `docutils` with no new warnings — the only
 messages are the pre-existing Sphinx-only `:download:` role and an unreferenced
 label, neither in the added range. No PyRS code changed; tiers not re-run.
+
+---
+
+## Batch 32 — `docs/ground_truths.md`
+
++249/−0 across five new sections. Four are my own writing from earlier batches,
+so the risk here was re-reading them approvingly — the anti-pattern
+`process.md` names first. Every claim was checked by running it.
+
+### Everything substantive verifies, including the quoted error text
+
+| Claim | Measured |
+|---|---|
+| contiguous dataset cannot be resized | `NeXusError: Shape incompatible with current NXfield` — the exact quoted message; `maxshape=(3,) chunks=None` |
+| `growable(rank)` supplies the kwargs | `{'maxshape': (None,), 'chunks': (100,)}` |
+| fixed-width `\|S` truncates **silently** | `b'a_considerably_longer_filename.h5'` → `b'a_consid'`, no exception |
+| `<U` cannot be written to HDF5 | `TypeError: No conversion path for dtype: dtype('<U2')` |
+| `SubRuns` rejects non-monotonic | `RuntimeError: subruns are not sorted in increasing order`; `__init__` routes through `set`; `append` bypasses it |
+| `append_hidra_project` takes a file | `(self, hidra_file)` |
+| vlen UTF-8 reads back object-of-bytes | `dtype=object kind='O' elem=bytes`, from **both** h5py and `nexusformat` |
+| `READONLY` unconditional + `finally` | `reduction_manager.py:188`, `:200` |
+| stage-convention numbers | probe: 2880 candidates, 2 matches, `5.818e-14`, `diag(1,-1,-1)` = 180° about `+x` |
+
+Both cross-referenced test classes are in the files claimed —
+`TestStringLogsAreTextInMemory` in `dataobjects/`, `TestStringLogsAreBytesOnDisk`
+in `projectfile/`, near-identical filenames and the right way round — and
+`TestLoadDoesNotModifyTheFile` really does cover the failing and succeeding
+paths separately, as its entry says.
+
+### D70 — one section had no date
+
+Every other heading carries one, including the four other additions, and the
+dates are what let the file be read as an accumulating record rather than a
+pile. The stage-convention section had none. Added `(2026-10-14)`; all headings
+are now dated, checked by pattern rather than by eye.
+
+### O38 — four of the five had no inbound link
+
+The file's own header says *"Link to this file from related documentation and
+code comments when relevant"*, and `CLAUDE.md` says the same. Only the
+string-dtype truth was linked, from `file_object.py` and `sample_logs.py`.
+
+**A ground truth nobody is routed to is one that gets rediscovered** — which is
+precisely what the file exists to prevent, so an unlinked entry is closer to a
+private note than to a ground truth. Links added at the place each rule would
+be needed, not at a convenient one:
+
+- `_definitions.py:growable` — the function where resizability is decided, and
+  the decision cannot be revisited later;
+- `reduction_manager.py` — above the `READONLY` open, stating the general rule
+  (choose the mode from what the operation *does*, never from what the
+  filesystem *permits*) before the local justification;
+- `_sample.py:TRANSFORMATION_CHAIN` — beside the recovered axes, carrying the
+  generalisable half: an underdetermined decomposition may mean the candidate
+  space is too small rather than the referent ambiguous;
+- `sample_logs.py` — at the `raise` itself, noting that `__init__` routes
+  through it, that `append` bypasses it, and what that forces on any
+  workspace merge.
+
+### Verification
+
+ruff format and check clean on all four touched files; mypy clean. Tiers re-run
+because production files changed: `test-unit`, `test-integration` and
+`test-gui` all pass. Every heading in `docs/ground_truths.md` now matches the
+date pattern, and all five new sections have at least one inbound link.

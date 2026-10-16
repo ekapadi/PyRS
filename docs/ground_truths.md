@@ -1025,7 +1025,7 @@ which reference each other so neither half can be removed as redundant.
 
 ---
 
-## PyRS's sample stage convention is recoverable from `rotate_project_q`, offset included
+## PyRS's sample stage convention is recoverable from `rotate_project_q`, offset included (2026-10-14)
 
 `PoleFigureCalculator.rotate_project_q` (`pyrs/core/polefigurecalculator.py:186`)
 is the only place PyRS applies the three sample stage angles, and it applies them

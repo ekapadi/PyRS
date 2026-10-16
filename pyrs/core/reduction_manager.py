@@ -171,6 +171,12 @@ class HB2BReductionManager:
             raise RuntimeError("Call init_session to create a ReductionWorkspace")
 
         # PyRS HDF5
+        # Choose the mode from what the operation does, never from what the
+        # filesystem permits -- `os.access(..., os.W_OK)` says a write is allowed,
+        # not that one is intended. See `docs/ground_truths.md`, "Loading a
+        # project file modified it on disk, because the mode came from
+        # permissions".
+        #
         # Opened READONLY unconditionally: this method only ever reads, and it
         # closes the handle before returning, so no caller can write through it.
         # Every save path opens its own READWRITE handle by filename --

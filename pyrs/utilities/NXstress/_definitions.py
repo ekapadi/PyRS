@@ -74,7 +74,10 @@ def growable(rank: int) -> dict:
     resized by any mechanism -- so a field written without these kwargs can
     never be tail-appended, however the append is implemented. Every
     per-scan-point and per-peak-row field therefore has to carry them at
-    creation; see `plans/NXstress-prod/probes/a5_scan_point_family_resizable.py`
+    creation -- it cannot be decided later and a written file cannot be
+    retrofitted (`docs/ground_truths.md`, "An HDF5 dataset written without
+    `maxshape` can never be appended to"). See
+    `plans/NXstress-prod/probes/a5_scan_point_family_resizable.py`
     for the measurement that found several of them missing, and
     `plans/NXstress-prod/04c-nxstress-append.md`'s Follow-up 2.
 

@@ -75,7 +75,11 @@ class _Sample:
     #: NXtransformations describes **sample -> lab**, so what is written is the
     #: transpose of the lab -> sample matrix the projection applies. The detector
     #: side composes `Rx @ Ry @ Rz` about `+x/+y/+z`
-    #: (`reduce_hb2b_pyrs.py::generate_rotation_matrix`), confirming the lab
+    #: (`reduce_hb2b_pyrs.py::generate_rotation_matrix`) -- see
+    #: `docs/ground_truths.md`, "PyRS's sample stage convention is recoverable
+    #: from `rotate_project_q`, offset included", for the general statement and
+    #: the warning that an underdetermined decomposition may mean the candidate
+    #: space is too small rather than the referent ambiguous -- confirming the lab
     #: frame is right-handed with conventional axes -- so the negative sample
     #: axes here are a real feature of the stage, not a sign error.
     TRANSFORMATION_CHAIN = (
