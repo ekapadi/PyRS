@@ -222,7 +222,6 @@ class TestInstrument:
     def test_Instrument_name_defaults_when_not_overridden(
         self,
         minimal_HidraWorkspace: Callable[..., HidraWorkspace],
-        default_config,
     ):
         """And the shipped default is what arrives when nothing overrides it.
 
@@ -251,7 +250,12 @@ class TestInstrument:
         this covers that path.
         """
         # Arrange
-        config_override({"nxstress": {"instrument_name": "   ", "instrument_short_name": ""}})
+        # `validate=False`: as the docstring says, this state is unreachable once
+        # `validate_config` has run -- the fixture would otherwise refuse it first.
+        config_override(
+            {"nxstress": {"instrument_name": "   ", "instrument_short_name": ""}},
+            validate=False,
+        )
         ws = minimal_HidraWorkspace(with_instrument=True)
 
         # Act

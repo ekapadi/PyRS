@@ -73,3 +73,78 @@ narrow PyRS fix is for the `config_override` test fixture to call
 `validate_config()` after merging, so at least every overridden configuration a
 test installs is one production would have accepted — which is where a malformed
 override would otherwise first mislead someone.
+
+### Update, 2026-10-16 — partially mitigated in tests; the gap itself is unchanged
+
+Re-verified before acting, rather than recalled. The reproduction still holds
+exactly as recorded above:
+
+```console
+before override: False
+after loadEnv  : 'yes'   (type str, truthy=True)
+validate_config(): RuntimeError -- so it WOULD catch it, if called
+```
+
+`_Config.validate` is still `pass`, `refresh` still mentions no validation, and
+nothing re-validates after `loadEnv`. **The deferral stands.**
+
+**Done — the narrow fix this entry proposed.** `config_override`
+(`tests/unit/pyrs/utilities/conftest.py`) now calls `validate_config()` after
+each merge, so a test cannot install a configuration production would have
+rejected. 104 call sites; a malformed override is refused by default and
+accepted only under the opt-out below.
+
+> **Correction, same day.** This paragraph originally claimed the guarantee
+> "was checked by measurement rather than assumed". That was true of a
+> standalone script and **false of the suite**: an independent test review
+> deleted the hook and all 675 tests stayed green, so the guarantee was real
+> but unconstrained. The hook had also made `test_config.py:354`'s own
+> `validate_config()` unreachable, leaving the 8 tests in
+> `TestValidateConfigRejectsMalformedValues` asserting against the *fixture's*
+> exception rather than the subject's — passing, and no longer testing what
+> their names said. Both closed:
+> `test_config.py::TestConfigOverrideRefusesMalformedConfig` now pins the hook
+> and the dead line is gone; deleting the hook fails 11 tests. Recorded in full
+> in `04b-comments.md`'s `RE-REVIEW RECOMMENDED` section as D10. **Measuring a
+> guarantee once is not the same as constraining it**, and only the second
+> survives the next refactor.
+
+**Still to do — the actual fix.** Ask `neutrons_standard` for a validation hook
+that `refresh`/`loadEnv` invoke, so a runtime override is checked by the package
+that performs it. PyRS cannot add this from outside, and the three PyRS-side
+workarounds rejected above are still worse than the gap. Recorded here so the
+request is not re-derived; **not yet raised with the package's owners.**
+
+### What the fix uncovered: three consumer checks that production cannot reach
+
+Adding validation broke 3 of the 104 uses, and the reason is worth more than the
+fix was.
+
+All three install a malformed configuration in order to test that a *consumer*
+rejects it — `_discriminator.field_names()` on a blank and on a repeated
+discriminator name, `_Instrument._instrument_names()` on a blank instrument
+name. Measured against `ConfigSchema` directly:
+
+```console
+blank discriminator   : rejected by schema -> consumer check NOT reachable in production
+repeated discriminator: rejected by schema -> consumer check NOT reachable in production
+blank instrument_name : rejected by schema -> consumer check NOT reachable in production
+```
+
+`NonBlankText` and `_distinct` already refuse all three at import, and the `env`
+OS-variable override is merged *before* `validate_config()` runs — so no
+production path can deliver such a configuration to a consumer. **The three
+tests passed only because nothing validated the override**, which is the very
+gap this entry is about.
+
+This is the review's recurring finding inverted: not an assertion that cannot
+fail, but a test that can only pass by installing a state production forbids.
+One of the three already said so in its own docstring — *"reachable only by
+bypassing `validate_config`"* — so it was known at one site and not generalised.
+
+**Resolved by opt-out, not by deletion.** `override(..., validate=False)`, used
+at exactly those three sites, each carrying a comment saying why. Whether that
+defence-in-depth should remain is a layering question — the schema validates
+once at a boundary, the consumers re-check at point of use — and settling it
+means touching `_discriminator.py` and `_instrument.py`, which is not something
+to decide inside a PR about append. Recorded here as the open half.

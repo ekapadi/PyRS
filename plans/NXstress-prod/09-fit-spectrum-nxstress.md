@@ -50,7 +50,8 @@ three items are unaffected by that block and proceed normally.
   `two_theta_zero` belongs in the chain as an independent link at all, given the
   reduction treats it as an offset added to the arm angle before a single Y
   rotation. **Carried forward from README Section 2.1 by the 04/04b/04c PR
-  review (batch 27).**
+  review (batch 27).** Written up as
+  [open-questions/implementation-pass/04c-questions.md](open-questions/implementation-pass/04c-questions.md) Q1.
 - Fix the L2 arm-shift round-trip in `_instrument.py:132-150` (the
   calibrated/uncalibrated branch; the specific TODO + `distance =
   geom.arm_length` line is at `:138-140`, unchanged from the earlier

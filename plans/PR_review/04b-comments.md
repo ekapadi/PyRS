@@ -144,6 +144,160 @@ really hold everywhere it is used?), and the `config_override` / `default_config
 interaction, which is subtle enough that it failed in a full run after passing in
 isolation.
 
+### Second pass, 2026-10-16 — both named concerns answered; one defect found
+
+**Read-only holds everywhere it is used.** Verified by execution, not reading,
+on both real properties (`HidraWorkspace.direction`,
+`HidraWorkspace.hidra_project_file`) and on synthetic cases: assignment raises
+`AttributeError`, `.setter()` raises `TypeError`, and `restore()` writes the
+correct backing attribute in both the derived and the explicit-`restores` form.
+`_discriminator.field_names()`'s guard also fires as intended — a discriminator
+naming a plain read-only property is refused at configuration time, so the
+`resolve`-reads-property / `apply`-writes-log divergence cannot arise.
+
+**The `config_override` / `default_config` interaction holds**, and this
+mattered more than when the concern was written: `config_override` gained a
+`validate_config()` call in the same session (DD-1), and it binds
+`config_module` at fixture setup while `default_config` *reloads* that module —
+so a stale binding was plausible. Probed directly: an override applied after a
+`default_config` test still reaches the bindings production modules hold, the
+validation call reads the same object the merge wrote to, and cleanup restores.
+Passes in isolation **and** in a full run, which is the exact split the original
+concern named.
+
+#### REQUIRED FIX — `restorable_property.deleter()` silently corrupts `restores`
+
+**Not yet fixed.** Recorded here so it is not lost.
+
+`restorable_property` overrides `getter` and `setter` — the former carrying the
+comment *"must not silently drop `restores`"*, so the hazard was understood —
+but **not `deleter`**. `property.deleter` reconstructs through
+`type(self)(fget, fset, fdel, doc)` without passing `restores`, so `__init__`
+falls back to re-deriving it from the getter's name:
+
+```console
+declared          : _file_path
+after .deleter    : _source_file   <-- re-derived, not preserved
+restore() wrote   : _file_path='a.h5'  source_file='a.h5'
+stray attribute   : ['_source_file']
+round trip LOST?  : True
+```
+
+No exception. The wrong attribute is written, a stray one is created, and the
+value is lost — which is exactly what the module docstring says `restore()`
+exists to prevent: *"restoring something that merely looks assignable is how a
+reconstruction quietly writes to the wrong place."*
+
+**Live hazard, not hypothetical.** `workspaces.py:118` is
+`@restorable(restores="_project_file_name")` — a property whose backing name
+does not correspond to its getter, which is precisely the case this breaks.
+Nothing calls `.deleter()` today, so it is latent; the fix is a three-line
+override mirroring `getter`, plus a test.
+
+**Also:** `is_restorable()` accepts a class or an instance — documented, and
+used with a class at `_discriminator.py:166` — while `restore()` accepts only an
+instance. The module docstring presents them as a pair
+(`if is_restorable(ws, name): restore(ws, name, value)`), so the asymmetry is an
+invitation to write a call that fails only for the class form.
+
+#### Independence — and it was worth it
+
+The two findings above came from the same author who wrote the code, which is
+the weakness this note exists to name and is not resolved by looking harder.
+`design-reviewer` and `test-reviewer` were run over all five files as an
+independent pass. **Both found more than I did, and one of them found a defect
+I introduced during this very session.**
+
+Process error worth recording: I launched both reviewers while still editing
+`conftest.py`. The design reviewer caught the tree changing under it, re-ran
+everything and said so — but that was avoidable noise, and a reviewer that had
+*not* noticed would have reported artefacts as findings.
+
+##### The mechanism was wrong, and only a type checker could see it
+
+`restorable_property` subclassed `property` so a value could stay read-only
+while an I/O reader restored it. **mypy special-cases the literal `@property`
+decorator syntactically** and does not recognise a subclass used as a
+decorator, so:
+
+```
+t.plain       -> "str"   @property       t.plain      = "x" -> error: read-only
+t.viafactory  -> "Any"   @restorable()   t.viafactory = "x" -> (no error)
+```
+
+The construct whose entire purpose was to keep a value read-only was the one
+option on the table that **removed the static guarantee**, and degraded every
+annotated return type to `Any` at the same time. `ws.direction = "22"` was a
+mypy error before this module existed and silent after it.
+
+Replaced: the mark now goes on the **getter**, under an ordinary `@property`
+(`@restores("_direction")`). Verified on the real class — `ws.direction` reveals
+`str`, assignment is an error again. This also dissolves two other findings by
+construction: `deleter` and `setter` carry `fget` across unchanged, so the mark
+cannot be lost by a rebuild that someone forgot to override.
+
+##### What the two reviewers found between them
+
+| | Finding | Status |
+|---|---|---|
+| D1 | `property` subclass defeats mypy's read-only enforcement and return types | **fixed** — mark moved to the getter |
+| D2 | `.deleter()` silently re-derived `restores` | **dissolved** by D1's fix; pinned by test |
+| D3 | `restore()` never checked the backing attribute exists — a typo in `@restores(...)` wrote a second, unread attribute and lost the value silently | **fixed** — raises `AttributeError` naming the spelling |
+| D4 | `setter()` guard bypassable: `__init__` still accepted `fset` positionally | **dissolved** — no subclass any more |
+| D5 | `apply()` fell through to a sample log for a read-only unmarked property, while `resolve()` read the property — the exact silent divergence the module exists to prevent, still reachable | **fixed** — `apply` now raises where the violation happens, not only in a different function at config-read time |
+| D6 | `apply()` did not normalise through `_as_text` while `resolve()` did, so `numpy.str_` landed on a property annotated `-> str` | **fixed** |
+| D7 | `restore()`/`is_restorable()` disagreed about accepting a class, while the module docstring pairs them as one idiom | **fixed** — `restore` rejects a class with a message naming the real problem |
+| D8 | **No test file for `restorable_property.py` at all**; coverage 87%, the three uncovered lines being its three `raise` guardrails | **fixed** — `tests/unit/pyrs/utilities/test_restorable_property.py`, 18 tests |
+| D9 | The whole mechanism could be deleted with the suite green | **fixed** — see below |
+| D10 | The `config_override` validation hook was unpinned, and had silently killed 8 assertions | **fixed** — see below |
+| D11 | `_validate_round_trippable`'s `prop.fset is not None` clause never exercised; the test's name promised more than it checked | **fixed** — settable half covered explicitly on a stub |
+| D12 | `test_multi_workspace.py:27` read *"`config_override` rather than `config_override`"* | **fixed** |
+
+##### D9 — the mechanism could be removed with everything green
+
+The test reviewer's mutation pass found that `direction` is **self-masking**:
+delete `apply()`'s restorable branch and `apply` writes a `direction` sample
+log, which `workspaces.py`'s legacy log fallback then answers from, so
+`resolve` still returns the right value. Only `hidra_project_file` constrained
+the branch — and *its* marking was unpinned too, because the `vars()` sweep is
+self-adjusting and an un-marked property simply moves buckets.
+
+Compound mutant — un-mark `hidra_project_file` **and** delete the branch:
+**entire suite green**. Two edits, neither failing anything on its own,
+removing the feature this PR exists to add.
+
+Closed by a test that defeats the mask: a workspace with **no** `direction`
+log, so the fallback has nothing to answer with and only the property can.
+Re-run of that compound mutant now: **13 failures**.
+
+##### D10 — I introduced this one today, while fixing DD-1
+
+I added `validate_config()` to `config_override` and wrote in DD-1 that the
+guarantee "was checked by measurement rather than assumed". True of a
+standalone script; **false of the suite** — deleting the hook left all 675
+tests green. Worse, the hook made `test_config.py:354`'s own `validate_config()`
+unreachable, so the 8 tests in `TestValidateConfigRejectsMalformedValues` were
+capturing the *fixture's* exception instead of the subject's. They passed, and
+had stopped testing what their names said.
+
+This is the review's recurring finding — an assertion that cannot fail —
+committed by me in the same session I spent writing about assertions that
+cannot fail, and found by an independent reviewer rather than by me.
+
+Closed: `TestConfigOverrideRefusesMalformedConfig` pins the hook directly, and
+the dead line is gone. Re-run of that mutant now: **11 failures**.
+
+##### Checked and not acted on
+
+- `default_config` at `test_instrument.py:225` reported as a no-op: **does not
+  apply** — there is no `default_config` anywhere in that file. The reviewer saw
+  a transient tree state. Verified rather than "fixed".
+- `restore()` as a public back-door setter, where the codebase's other readers
+  use ordinary public setters (`NXstress.py:889-899`): a real API-scope
+  judgement, not a defect, and a larger change than this pass. Left as written.
+- The `config_override` / `default_config` fixtures were independently cleared
+  by both reviewers, agreeing with the finding above.
+
 ---
 
 ## Batch 3 — `pyrs/utilities/NXstress/_peaks.py`

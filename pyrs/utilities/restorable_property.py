@@ -18,104 +18,105 @@ registry of "property -> backing attribute" somewhere else works, but it is a
 second place to edit and it drifts silently when someone adds a property and
 forgets.
 
-`restorable_property` instead puts the declaration **on the property itself**:
+The mark therefore goes on the **getter**, under an ordinary `@property`::
 
     class Thing:
-        @restorable()                        # restores `_colour`
-        def colour(self): return self._colour
+        @property
+        @restores("_colour")
+        def colour(self) -> str: return self._colour
 
-        @restorable(restores="_file_path")   # when the names do not correspond
-        def source_file(self): return self._file_path
-
-The property stays read-only -- `thing.colour = "red"` still raises
-`AttributeError` -- and because it subclasses `property`, every `isinstance(...,
-property)` test elsewhere continues to see it. A reader restores through
-`restore()`, and code that needs to know in advance whether a name can be
-restored asks `is_restorable()`. Both are total: a sweep over `vars(cls)`
-partitions properties into restorable and not, so a test can assert something
-about *every* property without naming any of them.
+A reader restores through `restore()`, and code that needs to know in advance
+whether a name can be restored asks `is_restorable()`. Both are total: a sweep
+over `vars(cls)` partitions properties into restorable and not, so a test can
+assert something about *every* property without naming any of them.
 
 Typical use, from `pyrs/utilities/NXstress/_discriminator.py`::
 
     if is_restorable(ws, name):
         restore(ws, name, value)
+
+**Why the mark is on the getter and not on a `property` subclass.** The obvious
+design is a `restorable_property(property)` subclass carrying the attribute
+name. It was implemented that way first, and it is wrong for a reason that only
+shows up when you run a type checker: **mypy special-cases the literal
+`@property` decorator syntactically**, and does not recognise a subclass used as
+a decorator. Measured, on the subclass version:
+
+    t.plain       -> "str"   @property           t.plain       = "x"  -> error: read-only
+    t.viafactory  -> "Any"   @restorable()       t.viafactory  = "x"  -> (no error)
+
+So the construct whose entire purpose was to keep a value read-only was the one
+option that **removed** the static read-only guarantee, and degraded every
+annotated return type to `Any` at the same time. A `TYPE_CHECKING` shim does not
+recover it. Marking the getter keeps `@property` literal, so mypy keeps both.
+
+It is also safer by construction. The subclass had to re-implement `getter`,
+`setter` and `deleter` to avoid losing the attribute name, and `deleter` was
+missed -- CPython's `property_copy` rebuilds through `type(self)(fget, fset,
+fdel, doc)` with no way to pass extra state, so the name was silently
+re-derived from the getter and `restore()` then wrote to the wrong attribute.
+A mark on the function cannot be lost that way: every one of those methods
+carries `fget` across unchanged.
 """
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable, TypeVar
+
+#: Attribute set on a getter function by `restores`. Private by name because
+#: nothing outside this module should read it directly -- `is_restorable` and
+#: `restore` are the supported way in, and they are what the sweep tests use.
+_RESTORES = "_restores_"
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
-class restorable_property(property):
-    """A read-only `property` that names a backing attribute an I/O reader may write.
+def restores(attr: str) -> Callable[[F], F]:
+    """Mark a property getter with the backing attribute an I/O reader may write.
 
-    Subclasses `property` rather than replacing it, so a `restorable_property` is
-    still a `property` to every `isinstance` check in the codebase and behaves
-    identically on read. No setter is installed, so assignment through the
-    property raises `AttributeError` exactly as it did before.
+    Applied *under* `@property`, so the property itself is an ordinary one and
+    stays read-only to both the interpreter and the type checker::
 
-    Attributes:
-        restores: Name of the instance attribute `restore()` writes. Defaults to
-            the getter's name with a leading underscore.
+        @property
+        @restores("_colour")
+        def colour(self) -> str: ...
+
+    Args:
+        attr: Name of the instance attribute `restore()` writes. Given
+            explicitly rather than derived, so that reading the declaration
+            tells you where the value lands.
+
+    Returns:
+        The getter, unchanged apart from the mark -- so the decorator is
+        invisible to `property`, to `mypy`, and to `inspect`.
+
+    Raises:
+        TypeError: If `attr` is not a non-empty string. `restore()` passes it
+            to `setattr`, where anything else would fail far from the cause.
 
     Example:
         >>> class Thing:
         ...     def __init__(self): self._colour = "blue"
-        ...     @restorable_property
+        ...     @property
+        ...     @restores("_colour")
         ...     def colour(self): return self._colour
         >>> Thing().colour
         'blue'
-        >>> type(Thing()).colour.restores
-        '_colour'
     """
+    if not isinstance(attr, str) or not attr:
+        raise TypeError(f"`restores` needs a non-empty attribute name, got {attr!r}.")
 
-    def __init__(self, fget=None, fset=None, fdel=None, doc=None, *, restores: Optional[str] = None):
-        super().__init__(fget, fset, fdel, doc)
-        if restores is None:
-            if fget is None:
-                raise TypeError(
-                    "`restorable_property` needs either a getter to derive the backing attribute "
-                    "name from, or an explicit `restores=`."
-                )
-            restores = f"_{fget.__name__}"
-        # Always a `str` from here: `restore()` passes it straight to `setattr`, and
-        # an optional name would make that call unsound for no benefit.
-        self.restores: str = restores
-
-    def getter(self, fget):  # pragma: no cover - not used, but must not silently drop `restores`
-        return type(self)(fget, self.fset, self.fdel, self.__doc__, restores=self.restores)
-
-    def setter(self, fset):
-        raise TypeError(
-            "A `restorable_property` is read-only by construction: it exists so that a value can be "
-            "restored by an I/O reader WITHOUT becoming publicly writable.\n"
-            "  If the value should be publicly settable, use an ordinary read/write `property` instead."
-        )
-
-
-def restorable(restores: Optional[str] = None) -> Callable[[Callable], restorable_property]:
-    """Decorator form of `restorable_property`, with an optional backing-attribute name.
-
-    Args:
-        restores: Instance attribute `restore()` should write. Defaults to the
-            decorated function's name with a leading underscore, which is the
-            common case; give it explicitly when the property and its backing
-            attribute are not spelled alike.
-
-    Returns:
-        A decorator producing a `restorable_property`.
-
-    Example:
-        >>> class Thing:
-        ...     def __init__(self): self._file_path = None
-        ...     @restorable(restores="_file_path")
-        ...     def source_file(self): return self._file_path
-        >>> type(Thing()).source_file.restores
-        '_file_path'
-    """
-
-    def decorate(fget: Callable) -> restorable_property:
-        return restorable_property(fget, restores=restores)
+    def decorate(fget: F) -> F:
+        setattr(fget, _RESTORES, attr)
+        return fget
 
     return decorate
+
+
+def _restorable_getter(owner: type, name: str) -> Callable[..., Any] | None:
+    """The marked getter of `owner.name`, or None if there is not one."""
+    prop = getattr(owner, name, None)
+    if not isinstance(prop, property) or prop.fget is None:
+        return None
+    return prop.fget if hasattr(prop.fget, _RESTORES) else None
 
 
 def is_restorable(obj: Any, name: str) -> bool:
@@ -126,37 +127,61 @@ def is_restorable(obj: Any, name: str) -> bool:
         name: Attribute name to test.
 
     Returns:
-        True when `name` resolves to a `restorable_property` on the type.
+        True when `name` resolves to a property whose getter carries a
+        `@restores(...)` mark.
     """
     owner = obj if isinstance(obj, type) else type(obj)
-    return isinstance(getattr(owner, name, None), restorable_property)
+    return _restorable_getter(owner, name) is not None
 
 
 def restore(obj: Any, name: str, value: Any) -> None:
     """Write `value` to the backing attribute of `obj`'s restorable property `name`.
 
     Args:
-        obj: Instance being reconstructed.
-        name: Name of a `restorable_property` on its type.
+        obj: Instance being reconstructed. A **class** is rejected: restoring
+            writes instance state, and `is_restorable` accepting a class while
+            this did not was an asymmetry that invited exactly that call.
+        name: Name of a restorable property on its type.
         value: Value to restore.
 
     Raises:
-        TypeError: If `name` is not a restorable property of `obj` -- restoring
-            something that merely *looks* assignable is how a reconstruction
-            quietly writes to the wrong place.
+        TypeError: If `obj` is a class, or if `name` is not a restorable
+            property of `obj` -- restoring something that merely *looks*
+            assignable is how a reconstruction quietly writes to the wrong place.
+        AttributeError: If the marked attribute does not exist on `obj`. A
+            misspelled `@restores("_colour")` would otherwise create a second,
+            unread attribute and lose the value in silence, which is the failure
+            this whole module exists to prevent.
 
     Example:
         >>> class Thing:
         ...     def __init__(self): self._colour = "blue"
-        ...     @restorable()
+        ...     @property
+        ...     @restores("_colour")
         ...     def colour(self): return self._colour
         >>> t = Thing(); restore(t, "colour", "red"); t.colour
         'red'
     """
-    prop = getattr(type(obj), name, None)
-    if not isinstance(prop, restorable_property):
+    if isinstance(obj, type):
+        raise TypeError(
+            f"`restore` needs an instance, not the class '{obj.__name__}' -- it writes instance "
+            f"state. (`is_restorable` accepts either, which is why this is worth saying.)"
+        )
+
+    fget = _restorable_getter(type(obj), name)
+    if fget is None:
         raise TypeError(
             f"'{type(obj).__name__}.{name}' is not a restorable property, so it cannot be restored.\n"
-            f"  Mark it with `@restorable()` if an I/O reader is expected to put its value back."
+            f"  Mark its getter with `@restores('_<attribute>')` under `@property` if an I/O reader "
+            f"is expected to put its value back."
         )
-    setattr(obj, prop.restores, value)
+
+    attr = getattr(fget, _RESTORES)
+    if not hasattr(obj, attr):
+        raise AttributeError(
+            f"'{type(obj).__name__}.{name}' declares `@restores({attr!r})`, but the instance has no "
+            f"attribute '{attr}'.\n"
+            f"  Setting it anyway would create a second attribute that '{name}' never reads, losing "
+            f"the restored value silently. Check the spelling against what `__init__` assigns."
+        )
+    setattr(obj, attr, value)

@@ -17,7 +17,7 @@ from pyrs.utilities.NXstress import _discriminator
 from pyrs.utilities.NXstress._peaks import _Peaks
 
 
-def configure(config_override, yaml_text: str) -> None:
+def configure(config_override, yaml_text: str, *, validate: bool = True) -> None:
     """Apply an `nxstress` config override that production modules can actually see.
 
     Goes through `config_override` rather than `default_config.loadEnv(...)`:
@@ -25,8 +25,11 @@ def configure(config_override, yaml_text: str) -> None:
     documented way keeps reading the previous instance and never sees the
     override. `config_override` deep-merges into the live one instead. See that
     fixture's docstring.
+
+    `validate=False` is for the tests whose subject is a configuration
+    `ConfigSchema` refuses; see `config_override`'s docstring.
     """
-    config_override(yaml.safe_load(yaml_text))
+    config_override(yaml.safe_load(yaml_text), validate=validate)
 
 
 def workspace_with_logs(**logs) -> HidraWorkspace:
@@ -91,13 +94,23 @@ class TestFieldNames:
         assert _discriminator.field_names() == ("b_field", "a_field")
 
     def test_blank_name_raises(self, config_override):
-        configure(config_override, "nxstress:\n  discriminator_fields: ['  ']\n")
+        # `validate=False`: `ConfigSchema`'s `NonBlankText` refuses this at import, so
+        # `field_names()`'s own blank check cannot be reached by any production path.
+        # It is kept as defence-in-depth; whether it should be is DD-1's layering
+        # question, not this test's.
+        configure(config_override, "nxstress:\n  discriminator_fields: ['  ']\n", validate=False)
 
         with pytest.raises(ValueError, match="non-blank strings"):
             _discriminator.field_names()
 
     def test_repeated_name_raises(self, config_override):
-        configure(config_override, "nxstress:\n  discriminator_fields: ['direction', 'direction']\n")
+        # `validate=False`: `ConfigSchema`'s `_distinct` refuses a repeat at import,
+        # so this check too is unreachable in production. See the test above.
+        configure(
+            config_override,
+            "nxstress:\n  discriminator_fields: ['direction', 'direction']\n",
+            validate=False,
+        )
 
         with pytest.raises(ValueError, match="more than once"):
             _discriminator.field_names()
@@ -225,15 +238,68 @@ class TestApply:
 
         assert _discriminator.resolve(ws, "direction") == "33"
 
-    def test_read_only_property_falls_back_to_the_log(self):
-        """`prop.fset is not None` is what stops `setattr` raising here."""
+    def test_read_only_unmarked_property_raises(self):
+        """An unrestorable read-only property is refused, not written to a log.
+
+        This test previously asserted the opposite -- that `apply` wrote a
+        sample log and left the property answering with its constructor value:
+
+            assert ws.name == "discriminator-test"
+            assert ws.get_sample_log_value("name") == "written-to-the-log"
+
+        Both assertions passed, and together they pinned the exact silent
+        round-trip loss this module exists to prevent: `resolve` reads the
+        property, `apply` wrote the log, and the value changed across a round
+        trip with nothing raising. `_validate_round_trippable` refuses such a
+        field when the configuration is read, but it runs in a different
+        function, at a different time, against the class rather than the
+        instance -- so `apply` now enforces it where the violation happens.
+        """
         ws = workspace_with_logs(direction=np.array(["11"] * 3))
 
-        # `name` is a read-only property on HidraWorkspace.
-        _discriminator.apply(ws, "name", "written-to-the-log")
+        # `name` is a read-only property on HidraWorkspace, and unmarked.
+        with pytest.raises(TypeError, match="read-only property that is not marked"):
+            _discriminator.apply(ws, "name", "written-to-the-log")
 
-        assert ws.name == "discriminator-test"
-        assert ws.get_sample_log_value("name") == "written-to-the-log"
+        assert "name" not in ws.sample_log_names
+
+    def test_direction_is_restored_onto_the_property_not_a_log(self):
+        """`direction`'s restorable path, pinned without relying on the sweep.
+
+        An independent mutation pass found that deleting `apply`'s restorable
+        branch was caught by exactly one test -- the `vars(HidraWorkspace)`
+        sweep -- and only through `hidra_project_file`. `direction` is
+        **self-masking**: with the branch gone `apply` writes a `direction`
+        sample log, and `workspaces.py`'s legacy log fallback makes `resolve`
+        answer correctly anyway, so the feature's headline property constrained
+        nothing. Un-marking `hidra_project_file` *and* deleting the branch left
+        the whole suite green -- two edits, neither failing anything alone.
+
+        This defeats the mask by giving the workspace **no** `direction` log, so
+        the fallback has nothing to answer with and only the property can.
+        """
+        ws = HidraWorkspace("no-direction-log")
+        ws.set_sample_log("dummy", np.array([1, 2, 3]), np.zeros(3))
+        assert "direction" not in ws.sample_log_names
+
+        _discriminator.apply(ws, "direction", "33")
+
+        assert ws._direction == "33"
+        assert "direction" not in ws.sample_log_names, "must not have gone to a log"
+        assert _discriminator.resolve(ws, "direction") == "33"
+
+    def test_apply_normalises_like_resolve(self):
+        """The two halves must agree on type, not only on value.
+
+        `resolve` routes everything through `_as_text`; `apply` did not, so a
+        `numpy.str_` from the file landed on a property annotated `-> str`.
+        """
+        ws = workspace_with_logs(direction=np.array(["11"] * 3))
+
+        _discriminator.apply(ws, "direction", np.str_("33"))
+
+        assert type(ws.direction) is str
+        assert _discriminator.resolve(ws, "direction") == "33"
 
 
 class TestKey:
@@ -351,9 +417,35 @@ class TestEveryPropertyRoundTripsOrIsRefused:
             assert _discriminator.resolve(ws, name) == "sentinel-value", name
 
     def test_settable_or_restorable_properties_are_accepted_as_fields(self, config_override):
+        """Both halves of "settable **or** restorable", not just the one in use.
+
+        `HidraWorkspace` happens to have no settable property, so sweeping its
+        real properties exercises only the restorable half -- measured: deleting
+        `prop.fset is not None` from `_validate_round_trippable` left the whole
+        suite green, so the test's name promised more than it checked. The
+        settable half is covered explicitly below, on a stub, the same way
+        `TestApply` covers the matching branch in `apply`.
+        """
         for name in self._accepted():
             config_override({"nxstress": {"discriminator_fields": [name]}})
             assert _discriminator.field_names() == (name,), name
+
+    def test_a_settable_property_is_accepted_as_a_field(self, config_override, monkeypatch):
+        """The `prop.fset is not None` half, which no real property reaches."""
+
+        # Arrange -- a read/write property on the class `_validate_round_trippable`
+        # inspects, which is `HidraWorkspace` itself.
+        monkeypatch.setattr(
+            HidraWorkspace,
+            "settable_stub",
+            property(lambda self: getattr(self, "_stub", None), lambda self, v: setattr(self, "_stub", v)),
+            raising=False,
+        )
+        config_override({"nxstress": {"discriminator_fields": ["settable_stub"]}})
+
+        # Act / Assert -- accepted because it is settable, not because it is marked
+        assert not is_restorable(HidraWorkspace, "settable_stub")
+        assert _discriminator.field_names() == ("settable_stub",)
 
     def test_plain_read_only_properties_are_refused_as_fields(self, config_override):
         """Refused at configuration time, before any file exists to be written wrong."""

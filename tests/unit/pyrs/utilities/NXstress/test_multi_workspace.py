@@ -24,7 +24,7 @@ from pyrs.utilities.NXstress.NXstress import NXstress
 def configure(config_override, yaml_text: str) -> None:
     """Apply an `nxstress` config override that production modules can actually see.
 
-    Goes through `config_override` rather than `config_override`: the latter swaps
+    Goes through `config_override` rather than `default_config`: the latter swaps
     the `Config` singleton, leaving every module that bound it the documented way
     reading the previous instance. See that fixture's docstring.
     """

@@ -6,7 +6,7 @@ from pyrs.dataobjects import HidraConstants, SampleLogs  # type: ignore
 from pyrs.projectfile import HidraProjectFile  # type: ignore
 from pyrs.utilities import checkdatatypes
 from pyrs.utilities.convertdatatypes import to_int, to_text
-from pyrs.utilities.restorable_property import restorable
+from pyrs.utilities.restorable_property import restores
 from typing import Any, Optional, Tuple
 
 _logger = logging.getLogger(__name__)
@@ -72,7 +72,8 @@ class HidraWorkspace:
         """
         return self._name
 
-    @restorable()
+    @property
+    @restores("_direction")
     def direction(self) -> str:
         """Strain direction this workspace represents -- `'11'`, `'22'` or `'33'`.
 
@@ -115,9 +116,10 @@ class HidraWorkspace:
         # is an `AttributeError` in whichever caller meets the other spelling.
         return to_text(self.get_sample_log_value("direction"))
 
-    @restorable(restores="_project_file_name")
-    def hidra_project_file(self):
-        """Name of the associated HiDRA project file
+    @property
+    @restores("_project_file_name")
+    def hidra_project_file(self) -> Optional[str]:
+        """Name of the associated HiDRA project file.
 
         Read-only, and **restorable**: normally set as a side effect of
         `load_hidra_project`, which means a workspace rebuilt from any other
@@ -125,9 +127,9 @@ class HidraWorkspace:
         A reader restores it through
         `pyrs.utilities.restorable_property.restore`.
 
-        Returns
-        -------
-
+        Returns:
+            The project file name, or None for a workspace that was not loaded
+            from one and has not had the value restored.
         """
         return self._project_file_name
 

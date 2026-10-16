@@ -63,7 +63,8 @@ Like spec 06, this is **PyRS-only** and can be developed independently.
   (`reduce_hb2b_pyrs.py:139`) rather than as a transformation of its own. The
   code is the authority, so the comment is the thing most likely wrong — but
   decide it, do not assume it, and fix whichever is. **Carried forward from
-  README Section 2.1 by the 04/04b/04c PR review (batch 27).** Spec 09 owns the
+  README Section 2.1 by the 04/04b/04c PR review (batch 27).** Written up as
+  [open-questions/implementation-pass/04c-questions.md](open-questions/implementation-pass/04c-questions.md) Q1. Spec 09 owns the
   NXstress side; nothing there can be correct until this is settled.
 
 **Out of scope:**

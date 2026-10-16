@@ -137,10 +137,35 @@ def config_override() -> Generator[Callable[[dict], None]]:
     is written: `tests/conftest.py` already performed the one unavoidable
     first-ever import under a throwaway `HOME`.
 
+    Each merge is followed by `validate_config()`, so a test cannot install a
+    configuration production would have rejected. That is **not** a fix for the
+    underlying gap -- `neutrons_standard.Config` re-validates nothing on
+    `refresh`/`loadEnv`, and `_Config.validate` is a documented no-op, so a
+    runtime override in production would still go unchecked (recorded as DD-1 in
+    `plans/PR_review/deferred-defects.md`). It closes the narrower thing a test
+    fixture can close: a malformed override here would otherwise be discovered
+    as a confusing failure somewhere downstream, or not at all.
+
+    `validate=False` opts out, for the small number of tests whose *subject* is
+    a configuration `ConfigSchema` rejects. Those tests exercise checks inside
+    consumers -- `_discriminator.field_names()`, `_Instrument._instrument_names()`
+    -- that schema validation has made **unreachable in production**: measured,
+    a blank discriminator name, a repeated one and a blank instrument name are
+    each refused at import, and the `env` OS-variable override is merged before
+    `validate_config()` runs, so nothing can deliver such a config to a
+    consumer. Whether that defence-in-depth should stay is a layering question
+    recorded in DD-1, not one to settle in a test fixture; until it is settled,
+    the tests need the state production forbids, and say so at each call.
+
     Yields:
         A callable taking a nested mapping to deep-merge into the live config,
-        e.g. `override({"nxstress": {"discriminator_fields": ["direction"]}})`.
-        It may be called more than once; each call merges onto the last.
+        e.g. `override({"nxstress": {"discriminator_fields": ["direction"]}})`,
+        and an optional `validate=False`. It may be called more than once; each
+        call merges onto the last.
+
+    Raises:
+        RuntimeError: From `validate_config`, if a merge leaves the
+            configuration malformed -- naming the offending key.
     """
     # Safe at fixture time: `pyrs.utilities.config` is long since imported (see
     # `tests/conftest.py`), so `init("pyrs")` has already run and touching
@@ -153,8 +178,10 @@ def config_override() -> Generator[Callable[[dict], None]]:
     config = config_module.Config
     saved = copy.deepcopy(config._config)
 
-    def override(mapping: dict) -> None:
+    def override(mapping: dict, *, validate: bool = True) -> None:
         merge_dicts(config._config, mapping)
+        if validate:
+            config_module.validate_config()
 
     yield override
 

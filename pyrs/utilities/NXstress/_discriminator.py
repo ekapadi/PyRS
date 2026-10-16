@@ -156,7 +156,7 @@ def _validate_round_trippable(name: str) -> None:
 
     Raises:
         ValueError: If `name` is a read-only `HidraWorkspace` property that is
-            neither settable nor marked `@restorable()`.
+            neither settable nor marked `@restores(...)`.
     """
     if not name.isidentifier():
         return
@@ -168,7 +168,7 @@ def _validate_round_trippable(name: str) -> None:
     raise ValueError(
         f"Discriminator field '{name}' is a read-only `HidraWorkspace` property, so its value "
         f"could be written to a file but never restored when the file is read back.\n"
-        f"  Mark it `@restorable()` in `pyrs/core/workspaces.py` if it should participate in "
+        f"  Mark its getter `@restores('_<attribute>')` in `pyrs/core/workspaces.py` if it should participate in "
         f"NXstress round trips, or name a sample log instead."
     )
 
@@ -284,8 +284,9 @@ def apply(ws: HidraWorkspace, name: str, value: Any) -> None:
 
     Mirrors `resolve`, so a field backed by a property round-trips rather than
     being read from one place and written to another. Three cases, in order: a
-    read/write property is assigned; a read-only `restorable_property` has its
-    declared backing attribute written; anything else becomes a sample log.
+    read/write property is assigned; a read-only property marked `@restores(...)`
+    has its declared backing attribute written; a non-property becomes a sample
+    log; and a property that is neither settable nor restorable **raises**.
 
     The middle case is the one that is easy to omit, and omitting it is silent:
     `resolve` reads any property, so a read-only one would be read from the
@@ -298,6 +299,12 @@ def apply(ws: HidraWorkspace, name: str, value: Any) -> None:
         name: A configured discriminator field name.
         value: The value recovered from the file.
     """
+    # Normalised exactly as `resolve` normalises what it reads. Without this the
+    # two halves disagree on type: `resolve` returns `str` while `apply` would
+    # write back whatever the file handed up, so `direction` could come out as
+    # `numpy.str_` against a property annotated `-> str`.
+    value = _as_text(value)
+
     prop = getattr(type(ws), name, None) if name.isidentifier() else None
     if isinstance(prop, property) and prop.fset is not None:
         setattr(ws, name, value)
@@ -310,6 +317,20 @@ def apply(ws: HidraWorkspace, name: str, value: Any) -> None:
     if is_restorable(ws, name):
         restore(ws, name, value)
         return
+
+    if isinstance(prop, property):
+        # Read-only and unmarked: `resolve` would read this property while the
+        # line below wrote a sample log, and the round trip would silently return
+        # the constructor default. `_validate_round_trippable` refuses such a
+        # field when the configuration is read, but that runs in a different
+        # function, at a different time, against the class rather than this
+        # instance -- so the invariant is enforced here too, where it is violated.
+        raise TypeError(
+            f"'{type(ws).__name__}.{name}' is a read-only property that is not marked "
+            f"`@restores(...)`, so a value read from the file cannot be put back onto it.\n"
+            f"  Writing a sample log instead would leave the property answering with its "
+            f"constructor default, and nothing would raise."
+        )
 
     sub_runs = ws.get_sub_runs().raw_copy()
     ws.set_sample_log(name, sub_runs, np.full(len(sub_runs), value))

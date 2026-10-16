@@ -343,15 +343,45 @@ class TestEveryShippedKeyIsValidated:
         assert not missing, f"`ConfigSchema` names key(s) `application.yml` does not ship: {sorted(missing)}"
 
 
+class TestConfigOverrideRefusesMalformedConfig:
+    """The `config_override` fixture validates after merging, and that is pinned.
+
+    Added because an independent mutation pass deleted the fixture's
+    `validate_config()` call and the entire 675-test suite stayed green -- the
+    guarantee was real but unconstrained, so a later refactor could drop it
+    silently and reintroduce the defect recorded as DD-1 in
+    `plans/PR_review/deferred-defects.md`.
+    """
+
+    def test_a_malformed_override_is_refused_by_the_fixture(self, config_override):
+        with pytest.raises(RuntimeError, match="Invalid PyRS configuration"):
+            config_override({"nxstress": {"instrument_name": 123}})
+
+    def test_the_opt_out_installs_it_anyway(self, config_override):
+        """`validate=False` is what the three deliberately-malformed tests use."""
+        from pyrs.utilities.config import Config
+
+        config_override({"nxstress": {"instrument_name": "   "}}, validate=False)
+
+        assert Config["nxstress.instrument_name"] == "   "
+
+
 class TestValidateConfigRejectsMalformedValues:
     """One case per rule, since each rule exists for a different silent failure."""
 
     @staticmethod
     def _validate(config_override, override: dict):
-        from pyrs.utilities.config import validate_config
+        """Install a malformed override and let the refusal surface.
 
+        `config_override` itself calls `validate_config()` after merging, so the
+        refusal comes from the fixture. This used to call `validate_config()`
+        again on the next line; once the fixture gained the hook that line
+        became unreachable, and these tests were silently asserting against the
+        fixture rather than against the subject. The dead line is gone and
+        `TestConfigOverrideRefusesMalformedConfig` below pins the hook itself,
+        so removing it fails something.
+        """
         config_override(override)
-        validate_config()
 
     @pytest.mark.parametrize("value", ["false", "yes", 1], ids=["false", "yes", "one"])
     def test_a_non_boolean_for_a_boolean_key_raises(self, config_override, value):
