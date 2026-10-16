@@ -42,25 +42,38 @@ followup_prefix = "## Follow-up"     # scanned by check_citations.py; see sectio
 
 [git]
 main_branch  = "next"
-base_commit  = "d69e1834e73"
-base_subject = ".. defer PR review: subspec 04: final audit pass, ready for 04b"
+base_commit  = "eb5457b16dab"
+base_subject = "Working subspec-implementation prompt, now *applying* the audit process."
 # `base_subject` is the defense against the one manifest error that would
 # otherwise fail SILENTLY: a hash from another branch will exist, and may even be
 # an ancestor, but will not match the subject a human wrote down beside it.
 #
-# Advanced for subspec 04c (2026-09-30): this is the commit immediately BEFORE
-# subspec 04b's first commit, NOT its merge, so `base_commit..HEAD` spans exactly
-# 04b's changes (one commit, "subspec 04b"). The landing pass looks only at the
-# most-recent subspec before the one being implemented, so pointing this at a
-# merge commit would leave an empty range and `landing_trigger.py` would report
-# clean while the claims went stale -- the one manifest error that fails silently
-# in the safe-looking direction.
+# THE RULE: `base_commit..HEAD` must span **every landed change the next subspec
+# must see** -- not "the previous subspec's changes". Usually those are the same
+# thing, which is why this was previously written the narrower way. They are not
+# the same when a series is implemented and reviewed as one unit.
 #
-# Previously "eb5457b16dab" ("Working subspec-implementation prompt, now
-# *applying* the audit process."), which spanned 04. Before that, 7a5ef73f
-# ("Merge pull request #1000 from neutrons/qt_lock_fix"), this branch's point of
-# divergence, set wide on purpose so the first audit pass could see 01-03 at
-# once. Both rationales are discharged.
+# Never a merge commit: that leaves an EMPTY range, and `landing_trigger.py`
+# would report clean while the claims went stale. Too wide is the benign
+# direction -- it reports citations into files that were already audited, which
+# is noise; too narrow hides citations into files that changed, which is a
+# missed finding. When in doubt, go wider.
+#
+# Advanced for subspec 05 (2026-10-16): set to the commit preceding subspec 04's
+# first commit, so the range spans the ENTIRE 04 series -- 04, 04b, 04c -- plus
+# the 32-batch human PR review of all three. 43 commits. The narrow reading would
+# have pointed this at 04c's predecessor, and 05 would then never see that the
+# review changed `_discriminator.py`, `restorable_property.py`, `workspaces.py`,
+# `_sample.py` and `_instrument.py` under it. The review treated the 04 series as
+# one unit, so the base does too. Expect a correspondingly large
+# `landing_trigger.py` signal; that is the range working, not a fault.
+#
+# Previously "d69e1834e73" (".. defer PR review: subspec 04: final audit pass,
+# ready for 04b"), which spanned 04b alone and whose comment stated the narrow
+# rule superseded above. Before that "eb5457b16dab" -- this same commit, then
+# scoped to 04 only. Before that, 7a5ef73f ("Merge pull request #1000 from
+# neutrons/qt_lock_fix"), this branch's point of divergence, set wide on purpose
+# so the first audit pass could see 01-03 at once. All rationales discharged.
 #
 # The plan documents were authored on an unsquashed parent branch before plans/
 # was re-added at 5b9dfe98, so `git log <planfile>` does NOT date their claims.
@@ -73,11 +86,11 @@ claims_written_against = "492350bd"
 # the silent gap this whole system exists to prevent.
 full = [
   "README.md",
-  "04c-*.md", "05-*.md", "06-*.md",
+  "05-*.md", "06-*.md",
   "07-*.md", "08-*.md", "09-*.md", "10-*.md",
 ]
 freshness_only = [
-  "01-*.md", "02-*.md", "03-*.md", "04-*.md", "04b-*.md",
+  "01-*.md", "02-*.md", "03-*.md", "04-*.md", "04b-*.md", "04c-*.md",
 ]   # landed; claims settled by shipped code
 
 [exclude]

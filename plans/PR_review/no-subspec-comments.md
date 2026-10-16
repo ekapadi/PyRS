@@ -868,3 +868,72 @@ ruff format and check clean on all four touched files; mypy clean. Tiers re-run
 because production files changed: `test-unit`, `test-integration` and
 `test-gui` all pass. Every heading in `docs/ground_truths.md` now matches the
 date pattern, and all five new sections have at least one inbound link.
+
+---
+
+## Close-out — final audit pass, ready for subspec 05 (2026-10-16)
+
+The 32-batch walk is complete through 04c. This records the handoff tasks and
+the two contradictions found while doing them.
+
+### `audit.toml`
+
+`base_commit` advanced to **`eb5457b16dab`** ("Working subspec-implementation
+prompt, now *applying* the audit process."), with `base_subject` updated in the
+same edit — they are cross-checked at load, so a half-update makes every tool
+exit 2. `04c-*.md` moved from `[scope] full` to `freshness_only`; the manifest
+loads with 12 subspecs classified exactly once.
+
+**The stated rule had to be rewritten, not just the value.** Both `audit.toml`
+and the prompt said the range should span *"exactly the previous subspec's
+changes"*. `eb5457b16dab` spans four subspecs and 43 commits, so the value the
+reviewer chose and the rule as written contradicted each other.
+
+This is the **D56 shape with the roles reversed**. In batch 28 I treated a
+rationale as a specification and reported the value as wrong; the reviewer
+corrected me. Here the value is deliberate — subspec 05's landing pass must see
+every change the review made underneath it, and the 04 series was implemented
+*and reviewed* as one unit — so leaving the old rule in place would have
+recreated the same defect pointing the other way. The rule now reads: span
+**every landed change the next subspec must see**, usually one subspec but a
+whole series when one was reviewed as a unit; never a merge commit, because that
+leaves an empty range; and too wide is the benign direction.
+
+Measured and written into the prompt so the next session is not alarmed by it:
+`landing_trigger.py` now reports **390 citations into 24 changed files across 17
+documents** — an order of magnitude more than previous passes, with the heaviest
+being `_peaks.py` (74), `_fit.py` (47), `_instrument.py` (45),
+`file_object.py` (45), `_sample.py` (33). That is the range working.
+
+### Decisions row 9 was contradicted by shipped code, and 05 is the spec it names
+
+Row 9: *"`HidraWorkspace` gains a **settable** `direction` `@property`
+(get/set)"*, "Spec: 05". Measured: `direction.fset is None`, assignment raises
+`AttributeError`, and mypy reports the property read-only. What landed is a
+read-only property marked `@restores("_direction")` — the better design, and one
+that survived two independent reviews — but **nothing said row 9 was
+superseded**, and row 9 is what a session starting 05 reads first.
+
+Added **row 42**, which supersedes it and explains why; row 9 now opens with a
+forward pointer rather than being left to mislead. Row 9's *other* half stands
+and is still 05's work: flipping `nxstress.discriminator_fields` from `[]` to
+`["direction"]`, which is only safe **because** `direction` is marked restorable
+— `field_names()` refuses a read-only property that is not.
+
+**The general shape:** a Decisions Log records what was decided, and shipped code
+can silently stop matching it. Nothing in the toolkit checks that — `check_*`
+verify links, citations, ownership and drift, none of which notices a decision
+the code has outgrown. The only thing that caught this was reading row 9 while
+preparing the spec that points at it.
+
+### Prompt
+
+`prompts/implementation-prompt.txt`'s header rewritten for 05: SUBSPEC, LANDED
+THROUGH 04c, the new AUDIT BASE with its measured signal, and LAST AUDIT PASS
+replaced by a briefing on what the review changed *underneath* 05 — the
+read-only `direction`, the still-unflipped config default, `apply()`'s new
+refusal, the list-shaped `read`/`write`, and append. 05's own documents were not
+touched by the review; the code under them was, which is exactly the trap the
+briefing exists to prevent.
+
+05's dependencies (01, 04, 04b) have all landed, as has 04c. **05 is unblocked.**
