@@ -111,6 +111,196 @@ Issues found:
 #. **There is a whole lot of room for adjustments and *corrections* in this section!**
 
 
+Multiple workspaces in one ``NXentry``
+--------------------------------------
+
+The prototype wrote one ``HidraWorkspace`` per entry.  It now writes *N* of
+them into a single entry, which is what a stress/strain measurement needs: the
+three strain directions belong to one experiment, not three.
+
+.. code-block:: python
+
+   with NXstress(path, "w") as nxs:
+       nxs.write(wss, peakss)      # wss: list[HidraWorkspace]
+                                   # peakss: list[list[PeakCollection]]
+
+``peakss`` carries **one list per workspace**, positionally parallel to ``wss``.
+A workspace that has no peak fits contributes an empty *inner* list, so a single
+workspace with no fits is ``write([ws], [[]])`` -- not ``write([ws], [])``,
+which is a different (and wrong) shape.
+
+Reading is the inverse, and returns the same pair:
+
+.. code-block:: python
+
+   with NXstress(path, "r") as nxs:
+       wss, peakss = nxs.read(entry_number=1)
+
+How the *N* workspaces are told apart on read is a configuration decision, since
+nothing in the schema distinguishes them:
+
+* ``nxstress.discriminator_fields`` names sample logs (or ``HidraWorkspace``
+  properties) whose values differ between the workspaces -- ``direction``, for
+  the stress/strain case.  Each becomes an extra column on ``peaks``, and
+  ``read`` groups the rows by the tuple of their values.  A PV-style log name
+  such as ``BL7:CS:Sample:Dir`` is encoded reversibly for the on-disk column and
+  recovered exactly on read, by the same ``validItemName`` rule described above.
+* ``nxstress.merge_workspaces`` is consulted **only** when
+  ``discriminator_fields`` is empty.  ``false`` rejects a multi-workspace write
+  outright rather than writing a file that cannot be split again; ``true`` says
+  the merge is intentional and indistinguishable, and ``read`` then returns one
+  merged workspace rather than *N*.
+
+Two data *families* behave differently under this, and the distinction runs
+through the whole implementation:
+
+* the **scan-point family** -- ``input_data/detector_counts``, the
+  ``SAMPLE_DESCRIPTION`` per-scan-point fields, ``monochromator/wavelength``,
+  the diffractograms and the entry-level times -- is plain concatenation along
+  ``scan_point``, in workspace order;
+* the **peak-index family** -- ``peaks`` and the ``FIT`` parameter groups -- is
+  ordered by the compound key ``(discriminators, phase, h, k, l, mask)``, with
+  the discriminator values as its most slowly varying coordinates.  Note the key
+  does *not* include ``scan_point``: one key identifies one ``PeakCollection``,
+  and ``scan_point`` orders the rows *within* that key's run.  Putting the
+  discriminators first is what makes each workspace's rows one contiguous block,
+  which is what makes the read-side split a grouping rather than new indexing
+  machinery.
+
+Issues found:
+
+#. The format guarantees **two** things about row order, and *not* a global
+   lexicographic sort: each compound key occupies one contiguous run, and
+   ``scan_point`` increases within a run.  A file may therefore be "locally
+   sorted, globally segmented".  This was relaxed deliberately, so that append
+   could be a plain tail-append; the reader never required more.
+
+#. **A discriminator field that resolves to nothing is a configuration error,
+   not a missing value**, and is reported as one.  A field named in the
+   configuration but absent from the workspace cannot be defaulted -- the whole
+   point of the column is to tell workspaces apart.
+
+Multiple ``NXentry`` groups in one file
+----------------------------------------
+
+A ``.nxs`` file may hold several entries, and this is the *other* way to put
+more data into one file -- the alternative to appending, not a part of it.  The
+two answer different questions:
+
+* **a new ``NXentry``** for a distinct data-reduction or sample *condition*.
+  The entries are independent: nothing is shared or aligned between them.
+* **appending to an existing entry** (next section) for more data belonging to
+  the *same* condition.
+* and, within one entry, the compound peak index for finer variation --
+  masks, phases, directions.  Multi-direction stress data is **not** multiple
+  entries; it is one entry with ``direction`` as a discriminator field.
+
+.. code-block:: python
+
+   with NXstress(path, "w") as nxs:            # new file
+       nxs.write(wss, peakss)                  # -> entry 1
+
+   with NXstress(path, "a", entry_number=2) as nxs:   # existing file
+       nxs.write(other_wss, other_peakss)             # -> a second entry
+
+   with NXstress(path, "r") as nxs:
+       nxs.entry_numbers()                     # -> (1, 2)
+       wss, peakss = nxs.read(entry_number=2)
+
+On disk the first entry is named ``entry`` and later ones ``entry_2``,
+``entry_3``, ... -- the number is a suffix, and entry 1 carries none.
+``entry_numbers()`` derives its result from the names actually present rather
+than from a count, so a file with a gap in its numbering reads correctly.
+
+Issues found:
+
+#. **Omitting ``entry_number`` on an existing file appends; it does not add an
+   entry.**  Before append existed, every write created a new auto-numbered
+   entry, and that is no longer what an unqualified ``write`` does.  Adding an
+   entry to a file that already has one is now an explicit request --
+   ``entry_number = max + 1``.  This is the one behavioural change most likely
+   to surprise code written against the earlier implementation.
+
+#. Overwriting the *contents* of an existing entry is not implemented, and
+   raises rather than doing something partial.
+
+Appending to an existing ``NXentry``
+-------------------------------------
+
+An entry already on disk can be *grown* with more data, rather than every write
+creating a fresh entry.  Use this for more of the *same* condition's data; for
+a distinct condition, add an entry instead (previous section).
+
+.. code-block:: python
+
+   with NXstress(path, "a", entry_number=2) as nxs:   # or per call:
+       nxs.write(wss, peakss, entry_number=2)
+
+   with NXstress(path, "r") as nxs:
+       nxs.entry_numbers()        # -> (1, 2, ...), 1-based, ascending
+
+``entry_numbers()`` is a method rather than a property, and must be called
+inside the ``with`` block: it reads the open file, and a property that silently
+returned nothing outside the context manager would be worse than one that
+raises.
+
+**Whether a call appends or writes afresh is decided by the targeted entry, not
+by the file mode:**
+
+.. list-table::
+   :header-rows: 1
+
+   * - ``entry_number``
+     - targets
+     - effect
+   * - omitted
+     - the highest-numbered existing entry
+     - **append**
+   * - an existing entry
+     - that entry
+     - **append**
+   * - no existing entry, ``<= max + 1``
+     - a new entry there
+     - fresh write
+   * - omitted, file has no entries
+     - entry 1
+     - fresh write
+
+An ``entry_number`` beyond ``max + 1`` raises ``ValueError`` naming the next
+free number, rather than leaving a gap.
+
+Append is **tail-append only**.  The incoming batch is sorted among itself and
+added after each dataset's current end; nothing already on disk is read back,
+reordered or rewritten.  The three outcomes:
+
+* a compound key **not** already in the entry -- appended;
+* a compound key already present, with new scan points -- ``NotImplementedError``.
+  The entry is untouched and the instance stays usable;
+* a compound key already present, sharing a scan point -- ``RuntimeError``.  The
+  entry is untouched and the instance is **invalidated**: a later ``write`` on
+  it raises.
+
+Issues found:
+
+#. **Every check runs before the first resize.**  This is not tidiness: an
+   append that failed part-way would leave some datasets grown and others not,
+   which no reader could detect.  A refused append leaves the file
+   byte-for-byte unchanged, and that is asserted by digest rather than by
+   ``pytest.raises`` -- an exception reaching the caller says nothing about what
+   was written before it was raised.
+
+#. **A file written by a PyRS predating this work cannot be appended to**, and
+   says so rather than failing obscurely.  Per-scan-point datasets used to be
+   created at their final size; HDF5 cannot extend a contiguous dataset by any
+   mechanism, so they are now written with ``maxshape``/``chunks``.  The
+   pre-flight names the first dataset it finds that cannot grow.
+
+#. **Extending a key already in the file remains unimplemented**, as does
+   overwriting an entry's contents.  Both are real gaps rather than oversights:
+   each would mean inserting into the middle of a position-aligned family, which
+   is the thing tail-append exists to avoid.
+
+
 Possible extensions
 -------------------
 

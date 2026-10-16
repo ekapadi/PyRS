@@ -717,9 +717,89 @@ Both true, of different things — and a reader who opens the file to check the
 provenance finds an apparent contradiction. Relabelled `definitions release`,
 with the distinction stated inline.
 
+### D69 — the developer documentation stopped at the prototype
+
+Raised by the reviewer after the O36/O37 fixes:
+
+> please re-read 'IO_prototype.rst', which is the developer documentation for
+> the NXstress-I/O implementation. I think that we need to add a few
+> sub-sections to this document describing the multi-workspace + append
+> features (and their calling signatures) that we just added?
+
+Correct, and it is the one gap a reader of this document would actually fall
+into. `IO_prototype.rst` is organised by NXstress *group* — `PEAKS`, `FIT`,
+`SAMPLE`, `INSTRUMENT` — because the prototype's question was "where does each
+PyRS object go in the schema". 04b and 04c do not add groups; they change what
+an entry *is* (N workspaces, not one) and what a write *does* (grow an entry,
+not only create one). Nothing group-shaped changed, so nothing in a
+group-shaped document did either, and the document silently went on describing
+a one-workspace, write-once format.
+
+Two sections added before `Possible extensions`, in the document's existing
+voice and with its `Issues found:` convention:
+
+- **Multiple workspaces in one `NXentry`** — `write(wss, peakss)` with the
+  per-workspace `peakss` shape spelled out (including that one workspace with
+  no fits is `[[]]`, not `[]` — the error 03 and 07 made in prose);
+  `read` returning the same pair; `discriminator_fields` and the
+  `merge_workspaces` fallback; and the scan-point / peak-index family split,
+  which is the distinction that runs through the whole implementation.
+- **Multiple `NXentry` groups in one file** — added after the reviewer noticed
+  the first draft had missed it: *"That doesn't seem to include the fact that
+  we can now write additional `NXentry`[s] (as an alternative append format)?"*
+  Correct, and the omission mattered, because it is the axis the other two are
+  **not**. A new entry is for a distinct reduction or sample condition;
+  appending is for more of the same condition; and the compound peak index is
+  for finer variation within one. Multi-direction stress data is the case most
+  likely to be filed wrongly — it is *one* entry with `direction` as a
+  discriminator, not one entry per direction.
+- **Appending to an existing `NXentry`** — the mode-independent entry-targeting
+  table, `entry_numbers()`, the three append outcomes with which of them
+  invalidates the instance, and the three `Issues found:` that matter to a
+  caller: every check runs before the first resize, a pre-04c file cannot be
+  appended to, and extending an existing key is still unimplemented.
+
+**One error caught by checking rather than recalling.** I first wrote the
+compound key as `(discriminators, phase, h, k, l, mask, scan_point)`.
+`IndexedPeaks.sort_key` returns `(*discriminators, phase, h, k, l, mask)` —
+**no `scan_point`**. The distinction is the whole basis of the two row-order
+guarantees: one key identifies one `PeakCollection`, and `scan_point` orders
+rows *within* that key's run. Writing it the wrong way would have contradicted
+the guarantee stated four paragraphs above it. `_peaks.py`'s own module
+docstring is the trap — it describes the row *index* as
+`(<phase>, h, k, l, <mask>, <scan point>)`, which is a different thing from the
+grouping key and differs by exactly that element.
+
+**The multi-entry section was written from measurement, not from reading.** A
+script wrote an entry with `mode="w"`, added a second with
+`mode="a", entry_number=2`, then listed and read both back. Three facts came
+out of running it that would have been easy to state wrongly:
+
+- on disk the first entry is named **`entry`**, not `entry_1`; later ones are
+  `entry_2`, `entry_3`. Confirmed in the code afterwards —
+  `numbers = {1} if GROUP_NAME.ENTRY in root else set()`, with `entry_N`
+  suffixes added to it, which is also why `entry_numbers()` is correct on a
+  file whose numbering has a gap;
+- **omitting `entry_number` on an existing file appends; it does not add an
+  entry.** The run proved it by failing the way an *append* fails — "the target
+  entry carries no discriminator columns" — rather than quietly writing entry 2.
+  This is the behavioural change most likely to surprise code written against
+  the earlier implementation, and it now has its own `Issues found:` entry;
+- `entry_number=9` against a two-entry file raises `ValueError` naming the next
+  free number, as the targeting table says.
+
+Everything else in the three sections was verified against the code as written:
+the signatures, the targeting table (`NXstress.py:156-164`), that
+`NotImplementedError` leaves the instance usable while the duplicate
+`RuntimeError` sets `_invalid`, that `entry_numbers()` raises outside the
+context manager, and that byte-neutrality really is asserted by digest —
+`test_append.py:436-442`, not by `pytest.raises`.
+
 ### Verification
 
 `pre-commit` re-run: the config still parses, the exclusion still holds (12
-hooks skipped), and the two edited files pass their own hooks. The vendored
-file's sha256 is unchanged at `bee46c07…`, confirming nothing in this batch
-touched it. No PyRS code changed; tiers not re-run.
+hooks skipped), and the edited files pass their own hooks. The vendored file's
+sha256 is unchanged at `bee46c07…`, confirming nothing in this batch touched
+it. `IO_prototype.rst` parses under `docutils` with no new warnings — the only
+messages are the pre-existing Sphinx-only `:download:` role and an unreferenced
+label, neither in the added range. No PyRS code changed; tiers not re-run.
