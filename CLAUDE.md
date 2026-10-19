@@ -1,6 +1,7 @@
 # Claude Code Instructions
 
 This file configures how Claude Code should assist with development in this repository. This project is designed for scientists who may be new to software engineering, so all interactions should be educational, clear, and follow best practices.
+<!-- cherry-pick 30231c18: removed trailing sentence "These instructions mirror [.github/copilot-instructions.md](.github/copilot-instructions.md) — keep both in sync when you change one." -->
 
 ## 🎯 Core Principles
 
@@ -44,6 +45,7 @@ After implementation:
 - For UI work, actually exercise the feature in a browser — type checking and tests verify code correctness, not feature correctness.
 
 ### Step 5: Review (For Major Changes)
+<!-- cherry-pick 30231c18: reviewer links below changed from .github/agents/ to .claude/agents/ -->
 After a significant feature or refactor, delegate review using the `Agent` tool. Prefer the project's purpose-built reviewers in [.claude/agents/](.claude/agents/):
 - [security-reviewer](.claude/agents/security-reviewer.md) — security-focused review.
 - [design-reviewer](.claude/agents/design-reviewer.md) — architecture and design review.
@@ -232,13 +234,13 @@ Notes:
   names the blocking line. Override per-test with `@pytest.mark.timeout(N)` for a
   genuinely long-running case rather than raising the global limit.
 
+<!-- cherry-pick 30231c18: BEGIN added block "Pytest markers" -->
 **Pytest markers** — apply the correct marker(s) when a test is *written*,
 not as a later audit pass. See `pyproject.toml`'s
 `[tool.pytest.ini_options] markers` for the authoritative definitions.
 - `@pytest.mark.integration` (or a module-level `pytestmark`) for a test
   that reads/writes real data (`tests/data`, `/HFIR` archive) **or**
   exercises a multi-component workflow.
-- `@pytest.mark.gui` for a test that constructs or drives a Qt widget.
 - The dividing line for "multi-component": a synthetic in-memory round trip
   through `tmp_path` that stays inside one component's own public API
   (e.g. a library's own `write`/`read`) is unit, unmarked — it's testing
@@ -250,6 +252,7 @@ not as a later audit pass. See `pyproject.toml`'s
 - Marker (not file location) is what actually selects the fast tier
   (`-m "not integration and not gui"`) — a correctly-marked test doesn't
   need to move directories to be classified correctly.
+<!-- cherry-pick 30231c18: END added block "Pytest markers" -->
 
 ## 🔍 Code Review Process
 
@@ -261,6 +264,7 @@ Trigger a review when:
 
 When delegating to a sub-agent via the `Agent` tool, hand over a self-contained brief: what changed, why, the files touched, and the specific concerns to weigh (style, tests, docs, bugs, perf, security). Sub-agents do not see your conversation — give them the context they need to make judgment calls.
 
+<!-- cherry-pick 30231c18: BEGIN added section "Auditing a Plan or Subspec" -->
 ## 🔬 Auditing a Plan or Subspec
 
 This is **not** the Code Review Process above. That reviews code that was written;
@@ -366,7 +370,7 @@ edited. Findings do **not** go in `open-questions/NN-*.md` (stakeholder Q&A) or
 `README.md`'s `## 4. Decisions Log` (decisions taken) — both are human-facing
 records with different audiences. When a finding forces a design change, the
 *decision* goes to the Decisions Log and the Follow-up holds the evidence.
-
+<!-- cherry-pick 30231c18: END added section "Auditing a Plan or Subspec" -->
 
 ## 📚 Documentation Standards
 
@@ -387,6 +391,7 @@ the XYZ instrument. Typical workflow:
 ```
 
 Class docstring: describe purpose, key attributes, and a usage example.
+<!-- cherry-pick 30231c18: removed trailing sentence "See [.github/copilot-instructions.md](.github/copilot-instructions.md) for the full template." -->
 
 ## 🚨 Common Scenarios
 

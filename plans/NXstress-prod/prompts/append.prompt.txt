@@ -8,4 +8,3 @@ attribute.  I don't want to drop sorting entirely, but it should be OK to relax 
 Please do an analysis and let me know if this helps to simplify what's going on in the 04 subspec[s]?
 
 Modify the existing 'NXstress' test fixtures, so that they do not *taint* the unit tests?  Then let's unmark those tests that were only marked "integration" due to the tainting fixtures?
-

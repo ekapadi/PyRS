@@ -8,21 +8,21 @@
 # section 7.2 for the full failure table and the reasoning.
 
 [series]
-name           = "NXstress-prod"
-readme         = "README.md"
-earlier_draft  = "archive/overview.md"   # "" means none; ABSENT is an error
-subspecs       = "[0-9]*.md"             # the 12 subspecs; excludes README.md
+name = "NXstress-prod"
+readme = "README.md"
+earlier_draft = "archive/overview.md" # "" means none; ABSENT is an error
+subspecs = "[0-9]*.md"                # the 12 subspecs; excludes README.md
 open_questions = "open-questions/"
-probes         = "probes/"
-findings       = "review/findings.md"
+probes = "probes/"
+findings = "review/findings.md"
 
 [series.ownership]
 # The table naming which document owns which file.
-heading      = "## 5. Files to be Modified"
-spec_column  = 1
+heading = "## 5. Files to be Modified"
+spec_column = 1
 file_columns = [2, 3]
-spec_pattern = '\(?(\d+[a-z]?)\)?'   # "2/3 (04b)" -> 04b ; "3 (05)" -> 05 ; "1" -> phase
-brace_expand = true                  # "{_peaks,_fit}.py" is pervasive in that table
+spec_pattern = '\(?(\d+[a-z]?)\)?'     # "2/3 (04b)" -> 04b ; "3 (05)" -> 05 ; "1" -> phase
+brace_expand = true                    # "{_peaks,_fit}.py" is pervasive in that table
 
 [series.dependencies]
 marker = "**Depends on:**"
@@ -30,19 +30,23 @@ marker = "**Depends on:**"
 #   inline link ......... 02, 03, 04, 04c, 10
 #   bullet list below ... 04b, 05, 09
 #   em dash + prose ..... 01, 06, 07, 08
-wraps  = true
+wraps = true
 
 [series.subspec_sections]
 # Non-uniform across this series -- itself an A2 finding, to be surfaced and not
 # papered over: "## NXstress / GUI Changes" in 02 and 03, "## NXstress Changes"
 # in 04, 04b, 04c, 05, 07 and 09.
-change_headings = ["## PyRS Changes", "## NXstress Changes", "## NXstress / GUI Changes"]
-verification    = "## Verification"
-followup_prefix = "## Follow-up"     # scanned by check_citations.py; see section 7.7
+change_headings = [
+  "## PyRS Changes",
+  "## NXstress Changes",
+  "## NXstress / GUI Changes",
+]
+verification = "## Verification"
+followup_prefix = "## Follow-up" # scanned by check_citations.py; see section 7.7
 
 [git]
-main_branch  = "next"
-base_commit  = "7a5ef73f"
+main_branch = "next"
+base_commit = "7a5ef73f"
 base_subject = "Merge pull request #1000 from neutrons/qt_lock_fix"
 # `base_subject` is the defense against the one manifest error that would
 # otherwise fail SILENTLY: a hash from another branch will exist, and may even be
@@ -59,10 +63,21 @@ claims_written_against = "492350bd"
 # the silent gap this whole system exists to prevent.
 full = [
   "README.md",
-  "04-*.md", "04b-*.md", "04c-*.md", "05-*.md", "06-*.md",
-  "07-*.md", "08-*.md", "09-*.md", "10-*.md",
+  "04-*.md",
+  "04b-*.md",
+  "04c-*.md",
+  "05-*.md",
+  "06-*.md",
+  "07-*.md",
+  "08-*.md",
+  "09-*.md",
+  "10-*.md",
 ]
-freshness_only = ["01-*.md", "02-*.md", "03-*.md"]   # landed; claims settled by shipped code
+freshness_only = [
+  "01-*.md",
+  "02-*.md",
+  "03-*.md",
+] # landed; claims settled by shipped code
 
 [exclude]
 # Tools DISCOVER documents by walking the series directory; they do not scan only

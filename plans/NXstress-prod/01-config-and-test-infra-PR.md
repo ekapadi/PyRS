@@ -4,7 +4,7 @@
 **Phase:** 1
 **Depends on:** —
 
-> **Notes**: 
+> **Notes**:
 >
 >  * For the moment, the contents of `plans/` is not included in the PRs.
 >  * To completely follow what's going on, see the non-squashed parent branch:
@@ -22,7 +22,7 @@ infrastructure that every subsequent spec relies on:
    NXstress behaviour (field naming, default file extension, etc.) to be
    controlled without code changes.  Longer term, this allows control of any PyRS
    feature or behavior that _opts-in_ to using this config.
-   To override any section of this config, we create an appropriate `pyrs/resources/dev.yml` file 
+   To override any section of this config, we create an appropriate `pyrs/resources/dev.yml` file
    including the required overrides, and then use `env=dev pyrsplot` (e.g.).
 2. **Test-framework fixups** — shared pytest fixtures and conventions for the
    NXstress test suite, so every subsequent spec can write clean, consistent

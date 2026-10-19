@@ -110,4 +110,3 @@ two real corrections:
   part of the installed package) and the schema doc (to
   `docs/developer/source/design/nexus/`, linked from that directory's
   existing `IO_prototype.rst`).
-

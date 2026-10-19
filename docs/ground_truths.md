@@ -787,6 +787,7 @@ changes from nothing more than
 
 ```python
 import neutrons_standard
+
 neutrons_standard.init("pyrs")
 from neutrons_standard.config import Config
 ```

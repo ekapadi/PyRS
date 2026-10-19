@@ -25,7 +25,7 @@ what's listed in this spec's own NXstress Changes section.
 keys they touch, and compare against what `_sample.py` / `_peaks.py` key off
 of today.
 
-**Response from Chris:** 
+**Response from Chris:**
 
 `file_object.py:404` has been updated to return `two_theta_vec = self._project_h5[HidraConstants.REDUCED_DATA][HidraConstants.TWO_THETA][()]`
 
@@ -71,7 +71,7 @@ whatever populates `SampleLogs`) for the actual key names used for sample
 x/y/z position before uncommenting.
 
 **Response from Chris:** `'sx'`, `'sy'`, and `'sz'` are teh specific `SampleLogs`
-keys for the stage motor positions.  But, these enteries not used as part of the 
+keys for the stage motor positions.  But, these enteries not used as part of the
 StressStrain workflow. Instead, the `'vx'`, `'vy'`, and `'vz'` are the critical keys.
 The stress/strain calculator pulls these enteries from the HIDRAWorkspace.
 
@@ -94,6 +94,6 @@ restrictions (and any additional NXstress schema restrictions) as a single
 reference list, rather than accumulating disallowed characters ad hoc as
 they're discovered.
 
-**Response from Chris:** We can define a specific schema. 
+**Response from Chris:** We can define a specific schema.
 
 ---

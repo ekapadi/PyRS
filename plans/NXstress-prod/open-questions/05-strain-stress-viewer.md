@@ -44,7 +44,7 @@ direction-merged `HidraWorkspace` container is needed. That is exactly
 This spec's PyRS Changes section no longer carries a direction-aware
 container item; it depends on 04b instead.
 
-**Response from Chris:** The current approach is that a user would provide 1 `HidraWorkspace` per direction. A final NXstress output should contain the 2/3 directions with provenance about the calculation. 
+**Response from Chris:** The current approach is that a user would provide 1 `HidraWorkspace` per direction. A final NXstress output should contain the 2/3 directions with provenance about the calculation.
 
 Could we define the nexusformat to have the following approach? A user provides 3 nexus formated files with a single direction and with a header note that states `NXstrain`. The stress calulator would offer the option to output a NXstress file with 2 or 3 directions with provenance about the calculation.
 
@@ -75,7 +75,7 @@ than "fix only what's hit" implies at a glance.
 `StressField` reconstruction), run it, and let the resulting
 `NotImplementedError` tracebacks enumerate the actual method list.
 
-**Chris:** Do existing tests define the `NotImplementedError`? 
+**Chris:** Do existing tests define the `NotImplementedError`?
 
 ---
 

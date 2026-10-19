@@ -17,7 +17,7 @@ PR review comments for 1_1:
                 raise ValueError('Cannot determine direction type from "{}"'.format(direction)) from None
 ```
 
-3. RE 'tests/plot_sample_points.py': why was this script deleted? 
+3. RE 'tests/plot_sample_points.py': why was this script deleted?
 
 4. RE 'test_fields.py' (and *all* other files in the changed set):
    We need separate lists of:
@@ -26,8 +26,7 @@ PR review comments for 1_1:
      (2) Any specific tests which were moved or split, by file and test name;
      (3) Any added 'xfail' markers, with explanations for each.
    These will be added as a sub-section to the PR comments.  Otherwise the reviewer[s] are going to be confused!
-   
+
 5. RE 'tests/unit/pyrs/test_trigger.py' why was this file deleted?
 
 6. Several of the new test *names* need to be significantly *shorter*!
-

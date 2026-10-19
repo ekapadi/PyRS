@@ -20,7 +20,7 @@ passthrough (`manual_reduction_model.py:179-181`), which is itself never
 called. There is no double-invocation risk to weigh, because nothing
 currently invokes `save_project` at all — implement it however is cleanest.
 
-**Chris:** There was a dead code instance of `save_diffraction_data` that has been deleted in a recent PR. 
+**Chris:** There was a dead code instance of `save_diffraction_data` that has been deleted in a recent PR.
 
 **Correction:** this refers to a different, already-removed call site — the
 one at `pyrs_api.py:348`, inside `reduce_hidra_workflow`, is still live and
