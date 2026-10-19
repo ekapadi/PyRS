@@ -23,6 +23,7 @@ from typing import Optional
 # import traceback
 import os
 import copy
+from pathlib import Path
 
 COLOR_FAILED_FITTING = QColor(247, 173, 13)  # orange
 SUCCESS = "success"
@@ -102,6 +103,7 @@ class FileLoad(QWidget):
         self._parent.plot_select.setup_out_of_plane_angle(self._parent.model.ws.reduction_masks)
 
         self._parent.VizSetup.enable_polar_plot(self._parent.model.ws.reduction_masks)
+        self._parent.update_nxstress_action()
 
         self._parent.update_param_plots()
 
@@ -904,7 +906,7 @@ class TextureFittingViewer(QMainWindow):
         self.saveAsNXstressAction.setStatusTip("Save project state as NXstress (.nxs)")
         self.saveAsNXstressAction.triggered.connect(self.save_as_nxstress)
         # setEnabled (not setVisible): stays visible, just grayed out, when disabled.
-        self.saveAsNXstressAction.setEnabled(Config["nxstress.enable"])
+        self.update_nxstress_action()
         fileMenu.addAction(self.saveAsNXstressAction)
 
         self.loadAction = QAction("&Load state", self)
@@ -1099,11 +1101,38 @@ class TextureFittingViewer(QMainWindow):
             filename = impose_extension(filename, Config["legacy_io.extension"])
             self.controller.save(filename, self._parent.fit_summary.fit_table_operator.fit_result)
 
+    def update_nxstress_action(self) -> None:
+        """Enable *Save as NXstress...* only when NXstress output is enabled in the
+        config and the loaded workspace has the instrument geometry it requires.
+
+        Disabled, not hidden: the action stays in the menu, grayed out, so the
+        save dialog never opens for a workspace that cannot be written.
+        """
+        ws = self._model.ws
+        has_geometry = ws is not None and ws.get_instrument_setup() is not None
+        self.saveAsNXstressAction.setEnabled(bool(Config["nxstress.enable"]) and has_geometry)
+
     def save_as_nxstress(self) -> None:
+        # Backstop only: the action is disabled whenever this would fail for want
+        # of instrument geometry (see `update_nxstress_action`).
+        if not self.saveAsNXstressAction.isEnabled():
+            return
+        fit_result = self.fit_summary.fit_table_operator.fit_result
+        if fit_result is None:
+            pop_message(self, "No fitted peaks to save", "Fit peaks before saving as NXstress.", "error")
+            return
+
         filename, _ = QFileDialog.getSaveFileName(self, "Save HidraWorkspace (NXstress)", "", "NXstress (*.nxs)")
-        if filename:
-            filename = impose_extension(filename, Config["nxstress.extension"])
-            self.controller.save(filename, self._parent.fit_summary.fit_table_operator.fit_result)
+        if not filename:
+            return  # user clicked cancel
+
+        filename = impose_extension(filename, Config["nxstress.extension"])
+        try:
+            self.controller.save(filename, fit_result)
+        except Exception as save_err:  # noqa: BLE001 -- an uncaught slot exception aborts the app under PyQt6
+            # NXstress writes incrementally, so a failure leaves a truncated file behind.
+            Path(filename).unlink(missing_ok=True)
+            pop_message(self, "Failed to save NXstress file", str(save_err), "error")
 
     def load(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Load Stress state", "", "JSON (*.json);;All Files (*)")

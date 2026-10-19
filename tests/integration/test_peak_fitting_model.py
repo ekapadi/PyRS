@@ -127,3 +127,22 @@ class TestPeakFittingModelSuffixRouting:
         out_path = tmp_path / "saved.h5"
         peak_model.save_fit_result(str(out_path))
         assert out_path.exists()
+
+    def test_load_hidra_project_h5_bare_string_loads(
+        self,
+        peak_model: PeakFittingModel,
+        write_minimal_h5_project: Callable[..., Path],
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+    ) -> None:
+        """A bare-string .h5 path behaves like a one-element list (it used to be
+        indexed character-by-character, loading "/" as the project file)."""
+        # Arrange
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+        project_path = str(write_minimal_h5_project(ws, filename="source.h5"))
+
+        # Act
+        loaded = peak_model.load_hidra_project(project_path)
+
+        # Assert
+        assert len(loaded.get_sub_runs()) == len(ws.get_sub_runs())
+        assert peak_model._curr_file_name == project_path

@@ -75,8 +75,8 @@ class PeakFittingModel(QObject):
         """Load one or more Hidra project files into a workspace.
 
         Args:
-            project_files: A list of project-file paths. The first is loaded and
-                any remaining files are appended.
+            project_files: A project-file path, or a list of them. The first is
+                loaded and any remaining files are appended.
 
         Returns:
             The loaded ``HidraWorkspace``.
@@ -112,10 +112,10 @@ class PeakFittingModel(QObject):
 
             return ws
 
-        self._set_up_project_name(project_files)
-        ws = self._load_multiple_file(project_files)
+        self._set_up_project_name(project_files_list)
+        ws = self._load_multiple_file(project_files_list)
 
-        self._curr_file_name = self._parse_working_files(project_files)
+        self._curr_file_name = self._parse_working_files(project_files_list)
         self.hidra_workspace = ws
         self.fit_result = None
 
