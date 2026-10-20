@@ -16,8 +16,9 @@ the requirements are split across two disjoint sets of files:
   Miller-index parser accepts**;
 * non-NaN sample positions additionally need **finite vx/vy/vz**.
 
-Every file with finite ``vx``/``vy``/``vz`` lacks geometry; the one file with
-geometry has non-finite coordinates. Recorded as spec 04's Follow-up 7 F7.10.
+Every file with finite ``vx``/``vy``/``vz`` lacks geometry; every file with
+geometry has non-finite coordinates, and of those only ``HB2B_938_peak.h5`` also
+has a peak tag. Recorded as spec 04's Follow-up 7 F7.10.
 
 What is real here, and what is not
 ----------------------------------

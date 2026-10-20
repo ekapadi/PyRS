@@ -115,10 +115,20 @@ class _InputData:
         appended either.
 
         Raises:
-            RuntimeError: If raw counts are present on one side and not the
-                other, or if the pixel counts differ.
+            RuntimeError: If raw counts are loaded for some incoming workspaces
+                and not others, are present on one side and not the other, or
+                if the pixel counts differ.
         """
-        incoming_loaded = any(len(ws._raw_counts) for ws in wss)
+        # The same all-or-none rule `init_group` enforces, asked here because by
+        # the time `init_group` refuses, the entry times have already grown.
+        loaded = [bool(len(ws._raw_counts)) for ws in wss]
+        if any(loaded) and not all(loaded):
+            raise RuntimeError(
+                "NXstress._input_data: cannot append -- raw detector counts are loaded for some "
+                f"incoming workspaces and not others (loaded={loaded}).\n"
+                "  Load raw counts for every input, or for none of them."
+            )
+        incoming_loaded = any(loaded)
         on_disk_loaded = data["detector_counts"].shape[0] > 0
         if on_disk_loaded != incoming_loaded:
             raise RuntimeError(
@@ -135,10 +145,9 @@ class _InputData:
             # One scan point is representative: a workspace's detector does not change
             # between its own scan points, and `init_group`'s `np.stack` would fail if
             # it did. Stated with `next` rather than a loop that `break`s on its first
-            # iteration, which reads like a bug.
-            point = next(iter(ws._raw_counts), None)
-            if point is None:
-                continue
+            # iteration, which reads like a bug. Every workspace has counts by now:
+            # a mixed batch was refused above.
+            point = next(iter(ws._raw_counts))
             incoming_pixels = int(np.asarray(ws.get_detector_counts(point)).shape[0])
             if incoming_pixels != existing_pixels:
                 raise RuntimeError(

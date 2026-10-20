@@ -280,6 +280,7 @@ class Model(QObject):
         return "HB2B_{}_stress_grid_{}.csv".format("_".join(runnumbers), self.selectedPeak)
 
     def load_hidra_project_file(self, filename, direction):
+        source_project = None
         try:
             source_project = HidraProjectFile(filename, mode=HidraProjectFileMode.READONLY)
             ws = HidraWorkspace(direction)
@@ -311,6 +312,11 @@ class Model(QObject):
                 f"Failed to load {filename}. Check that this is a Hidra Project File", str(e), traceback.format_exc()
             )
             return None, dict()
+        finally:
+            # Closed explicitly, as every other project-file load does, rather than
+            # left to garbage collection; everything above reads eagerly.
+            if source_project is not None:
+                source_project.close()
 
     def load_hidra_project_files(self, filenames, direction):
         # remove existing stress as it will need to be recreated

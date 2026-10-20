@@ -143,9 +143,8 @@ def test_stage_and_sample_axes_differ_in_frame(nxstress_from_real_data):
 
     Recorded as a test rather than prose because it is the concrete evidence for
     `open-questions/04` Q5: the schema expresses `peaks/sx,sy,sz` in the frame
-    defined by SAMPLE_DESCRIPTION's NXtransformations, PyRS does not write that
-    group, and this anti-correlation is what an external consumer would need it
-    for. If a future change makes the two frames coincide, this test fails and
+    defined by SAMPLE_DESCRIPTION's NXtransformations, which PyRS now writes, and
+    this anti-correlation is what an external consumer needs that group for. If a future change makes the two frames coincide, this test fails and
     that open question needs revisiting rather than silently lapsing.
     """
     # Arrange

@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from pyrs.core.workspaces import HidraWorkspace
+import pyrs.interface.strainstressviewer.model as model_module
 from pyrs.interface.strainstressviewer.model import Model
 from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode
 
@@ -98,3 +99,48 @@ class TestDirectionMismatchIsReported:
         assert not failures
         assert ws is not None
         assert ws.direction == "33"
+
+
+class TestProjectFileIsClosed:
+    """The loader closes the project file it opens, whoever else holds a reference.
+
+    `HidraProjectFile.__del__` also closes it, so with no other reference CPython's
+    reference counting hides a missing `close()`: the file is closed as the
+    loader's frame is torn down. Any surviving reference -- a stored traceback, a
+    reference cycle, a debugger -- would keep it open. The recording subclass
+    below is such a reference.
+    """
+
+    @pytest.fixture
+    def opened(self, monkeypatch) -> list:
+        """Every project file the model opens, kept alive by this list."""
+        opened: list = []
+
+        class Recording(HidraProjectFile):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                opened.append(self)
+
+        monkeypatch.setattr(model_module, "HidraProjectFile", Recording)
+        return opened
+
+    @pytest.mark.parametrize("recorded, selected", [("11", "11"), ("22", "11")], ids=["loaded", "refused"])
+    def test_the_file_is_closed_after_loading(
+        self,
+        model_and_failures,
+        minimal_HidraWorkspace: Callable[..., HidraWorkspace],
+        tmp_path: Path,
+        opened: list,
+        recorded: str,
+        selected: str,
+    ) -> None:
+        # Arrange
+        model, _ = model_and_failures
+        path = _project_with_direction(tmp_path, minimal_HidraWorkspace, recorded)
+
+        # Act
+        model.load_hidra_project_file(str(path), selected)
+
+        # Assert
+        assert len(opened) == 1
+        assert opened[0]._project_h5 is None, "the project file was left open"

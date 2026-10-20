@@ -170,7 +170,8 @@ class SubRuns(Iterable):
             # points has to concatenate at the array level rather than building a
             # merged workspace. `append` bypasses this check. See
             # `docs/ground_truths.md`, "Two data-model limits that bite any
-            # multi-record NeXus write".
+            # multi-record NeXus write". Only uniqueness is actually needed: see
+            # DD-2 in `plans/PR_review/deferred-defects.md`.
             raise RuntimeError("subruns are not sorted in increasing order")
         self._value = value.astype(int)
 

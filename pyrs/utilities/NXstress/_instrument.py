@@ -34,6 +34,7 @@ from ._definitions import (
     FIELD_DTYPE,
     GROUP_NAME,
     growable,
+    nxstress_mask_name,
     nxstress_mask_names,
     tail_append,
 )
@@ -377,13 +378,31 @@ class _Instrument:
 
     @classmethod
     def _validate_masks_agree(cls, wss: list[HidraWorkspace]) -> None:
-        """Every input must define the same mask names."""
+        """Every input must define the same masks: the same names, with the same arrays.
+
+        Masks are entry-wide and written from the first input alone, so an input
+        whose mask of the same name differs would have it silently replaced by the
+        first input's on read.
+        """
         key_sets = [set(_Masks.mask_keys(ws)) for ws in wss]
         if any(keys != key_sets[0] for keys in key_sets):
             raise RuntimeError(
                 "NXstress._instrument: input workspaces define different masks:\n"
                 + "".join(f"    [{n}] {sorted(keys)}\n" for n, keys in enumerate(key_sets))
                 + "  Every input must define the same mask names."
+            )
+        reference = _Masks.mask_arrays(wss[0])
+        differing = [
+            f"    [{n}] {name}"
+            for n, ws in enumerate(wss[1:], start=1)
+            for name, array in sorted(_Masks.mask_arrays(ws).items())
+            if not np.array_equal(array, reference[name])
+        ]
+        if differing:
+            raise RuntimeError(
+                "NXstress._instrument: input workspaces define masks of the same name with different "
+                "contents than input [0]:\n" + "\n".join(differing) + "\n"
+                "  Masks are entry-wide; every input must use the same mask arrays."
             )
 
     @classmethod
@@ -448,6 +467,19 @@ class _Instrument:
                 f"    incoming: {sorted(incoming_masks)}\n"
                 "  Masks are entry-wide and are written once; an append grows the scan-point axis "
                 "only, so a mask set that differs cannot be recorded."
+            )
+        default_on_disk, masks_on_disk = _Masks.masksFromNexus(instrument[GROUP_NAME.MASKS])
+        masks_on_disk[DEFAULT_TAG] = default_on_disk
+        differing = sorted(
+            name
+            for name, array in _Masks.mask_arrays(wss[0]).items()
+            if not np.array_equal(array, masks_on_disk.get(name))
+        )
+        if differing:
+            raise RuntimeError(
+                f"NXstress._instrument: cannot append -- the incoming workspaces' detector masks "
+                f"{differing} have different contents from the target entry's.\n"
+                "  Masks are entry-wide and are written once, so a different array cannot be recorded."
             )
 
         for label, existing, incoming, key in (
@@ -642,6 +674,21 @@ class _Masks:
         masks["names"] = names
 
         return masks
+
+    @classmethod
+    def mask_arrays(cls, ws: HidraWorkspace) -> dict[str, np.ndarray]:
+        """The detector-mask arrays `init_group` writes for `ws`, keyed by NXstress name.
+
+        Includes the default mask, generated when the workspace has none, exactly as
+        `init_group` does -- so two workspaces compare equal here exactly when they
+        would write the same masks.
+        """
+        arrays = {nxstress_mask_name(key): np.asarray(value) for key, value in ws._mask_dict.items()}
+        default_mask = ws.get_detector_mask(True)
+        arrays[DEFAULT_TAG] = np.asarray(
+            default_mask if default_mask is not None else cls._generate_default_mask(ws, detector_mask=True)
+        )
+        return arrays
 
     @classmethod
     def mask_keys(cls, ws: HidraWorkspace):

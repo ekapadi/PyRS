@@ -235,15 +235,16 @@ class TestRowSelectionHappensInH5py:
         assert sorted(target._raw_counts) == sub_runs
 
 
-class TestPixelCheckHandlesAWorkspaceWithNoCounts:
-    """`validateAppend`'s pixel check skips a workspace carrying no raw counts.
+class TestValidateAppendRefusesAMixedBatch:
+    """`validateAppend` refuses a batch with raw counts on some workspaces only.
 
-    It reads one scan point per workspace -- representative, since a workspace's
-    detector does not change between its own scan points -- and a workspace with
-    none must be stepped over rather than indexed.
+    `init_group` refuses the same batch, but during the append's mutation phase --
+    after the entry's `start_time`/`end_time` have already grown -- so the check
+    has to happen here, before anything is resized. This replaces a test that
+    pinned the old behaviour, in which such a batch passed.
     """
 
-    def test_an_unloaded_workspace_among_loaded_ones_does_not_raise(
+    def test_an_unloaded_workspace_among_loaded_ones_raises(
         self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]
     ):
         # Arrange
@@ -251,6 +252,6 @@ class TestPixelCheckHandlesAWorkspaceWithNoCounts:
         data = _InputData.init_group([loaded])
         empty = minimal_HidraWorkspace(with_instrument=True, with_raw_counts=False, sub_runs=np.array([3, 4]))
 
-        # Act / Assert -- the pixel loop steps over `empty`; the loaded/unloaded
-        # disagreement is a separate check, and `loaded` satisfies it.
-        _InputData.validateAppend([loaded, empty], data)
+        # Act / Assert
+        with pytest.raises(RuntimeError, match="some incoming workspaces and not others"):
+            _InputData.validateAppend([loaded, empty], data)

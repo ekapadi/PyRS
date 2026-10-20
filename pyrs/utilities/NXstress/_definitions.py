@@ -129,6 +129,30 @@ def appendable(field) -> bool:
     return maxshape is not None and len(maxshape) > 0 and maxshape[0] is None
 
 
+def appendable_dtype(incoming: np.dtype, on_disk: np.dtype) -> bool:
+    """Whether values of dtype `incoming` can be tail-appended to a dataset of dtype `on_disk`.
+
+    A dataset's dtype is fixed by the write that created it. Text onto a numeric
+    dataset, or a number onto a text one, raises inside h5py -- during an append's
+    mutation phase, after other groups have already grown. A float onto an integer
+    dataset raises nothing and is silently truncated. So: text onto text, or a
+    number that casts within its kind (an integer onto a float, not the reverse).
+
+    Args:
+        incoming: dtype of the values to append.
+        on_disk: dtype of the existing dataset; h5py reports variable-length
+            strings as `object`.
+
+    Returns:
+        True when the append neither fails nor loses information to the cast.
+    """
+    incoming, on_disk = np.dtype(incoming), np.dtype(on_disk)
+    incoming_text, on_disk_text = incoming.kind in "USO", on_disk.kind in "USO"
+    if incoming_text or on_disk_text:
+        return incoming_text and on_disk_text
+    return bool(np.can_cast(incoming, on_disk, "same_kind"))
+
+
 def row_aligned_fields(group, prefix: str = "") -> dict:
     """Every non-scalar `NXfield` directly under `group`, keyed by path.
 

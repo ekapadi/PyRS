@@ -1108,3 +1108,27 @@ what happens; the whole application exits. And an NXstress save must write to a
 temporary file and rename it on success, never write in place. Both are done by
 `pyrs.interface.gui_helper.write_nxstress_or_report`; reuse it for any new
 NXstress save action.
+
+---
+
+## Sub-run order is enforced but not needed; sub-run numbers are not positions (2026-10-20)
+
+Found while assembling the phase-2 NXstress PR. Recorded here as a pointer only:
+the full survey, the reproductions and the xfail tests are in
+[DD-2](../plans/PR_review/deferred-defects.md#dd-2--the-sub-run-ordering-requirement-is-arbitrary-and-should-be-dropped),
+so there is one copy to keep true.
+
+`SubRuns.set` requires strictly increasing values, but the only code that uses
+the order is `SubRuns.get_indices`, which binary-searches (`np.searchsorted`).
+That lookup is wrong without raising on an unsorted axis (which `SubRuns.append`
+can produce), and on a sorted one whenever a query value inside the range is
+missing: `SubRuns([1, 2, 4]).get_indices([1, 3, 4])` → `[0, 2, 2]`. Separately,
+about ten sites treat a sub-run number as an array position (`sub_run - 1`), so
+they break on any workspace whose sub-runs do not run 1..N, sorted or not.
+
+**Why this matters going forward:** don't rely on `get_indices` for a
+multi-value query unless every value is known to be present. Never index an
+array by a sub-run number; look up the position. And don't sort scan points to
+satisfy `SubRuns`: in NXstress the on-disk row order is the inputs' order, and
+sorting it breaks the round trip. That is why `NXstress` refuses an
+out-of-order merged write rather than sorting it.

@@ -135,4 +135,13 @@ dirs = ["prompts"]
 [code]
 # Roots a cited repo path may resolve into. A citation resolving outside these is
 # REPORTED as OUT-OF-SCOPE, never silently skipped.
-roots = ["pyrs/", "scripts/", "tests/", "docs/", "plans/", "pyproject.toml", "pixi.lock", "CLAUDE.md"]
+roots = [
+  "pyrs/",
+  "scripts/",
+  "tests/",
+  "docs/",
+  "plans/",
+  "pyproject.toml",
+  "pixi.lock",
+  "CLAUDE.md",
+]

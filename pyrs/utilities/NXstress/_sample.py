@@ -16,6 +16,7 @@ from pyrs.utilities.convertdatatypes import to_text
 
 from ._definitions import (
     allowed_identifier,
+    appendable_dtype,
     FIELD_DTYPE,
     GROUP_NAME,
     growable,
@@ -526,8 +527,26 @@ class _Sample:
             sd: The target entry's existing `NXsample` group.
 
         Raises:
-            RuntimeError: If the optional-field or retained-log sets differ.
+            RuntimeError: If the sample name or chemical formula differs from the
+                entry's, or if the optional-field or retained-log sets differ.
         """
+        # `name` and `chemical_formula` describe the whole entry and are never
+        # rewritten by an append, so an incoming batch that disagrees would be
+        # recorded under the first write's sample -- the disagreement `_scalar`
+        # refuses for a single write.
+        for key, field_name in (
+            (HidraConstants.SAMPLE_NAME, "name"),
+            (HidraConstants.CHEMICAL_FORMULA, "chemical_formula"),
+        ):
+            incoming = cls._scalar(logss, key, "unknown")
+            on_disk = to_text(sd[field_name].nxdata) if field_name in sd else "unknown"
+            if incoming != on_disk:
+                raise RuntimeError(
+                    f"NXstress: cannot append -- the incoming workspaces' sample {field_name} "
+                    f"'{incoming}' differs from the target entry's '{on_disk}'.\n"
+                    "  An NXentry describes one sample; write a new entry for a different one."
+                )
+
         for key, field_name, _ in cls.OPTIONAL_SCAN_POINT_FIELDS:
             present_on_disk = field_name in sd
             present_in_input = cls._present_in_all(logss, key)
@@ -565,6 +584,19 @@ class _Sample:
                 f"  Incoming:  {sorted(incoming)}\n"
                 "  Every scan point in an entry must carry the same set of logs; appending a "
                 "different set would leave the existing rows with no value for a new log."
+            )
+
+        mismatched = []
+        for name, key in cls._retained_log_columns(logss).items():
+            incoming_dtype = cls._writable(np.concatenate([np.asarray(logs[key]) for logs in logss])).dtype
+            on_disk_dtype = sd["logs"][name].dtype
+            if not appendable_dtype(incoming_dtype, on_disk_dtype):
+                mismatched.append(f"    {key}: on disk {on_disk_dtype}, incoming {incoming_dtype}")
+        if mismatched:
+            raise RuntimeError(
+                "NXstress: cannot append -- incoming sample log(s) cannot be stored in the target "
+                "entry's columns:\n" + "\n".join(mismatched) + "\n"
+                "  A log keeps the type the entry was first written with."
             )
 
     @classmethod

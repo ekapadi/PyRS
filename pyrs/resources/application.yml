@@ -26,9 +26,10 @@ nxstress:
   # must be constant across the workspace's scan points.
   #
   # A name that matches a `HidraWorkspace` property must match a *restorable* one
-  # -- a `pyrs.utilities.restorable_property.restorable_property`, which names the
-  # backing attribute an I/O reader may write. A plain read-only property is
-  # refused when the configuration is read, because its value would be written to
+  # -- a getter marked `@restores("_<attribute>")` (see
+  # `pyrs.utilities.restorable_property`), which names the backing attribute an
+  # I/O reader may write. A plain read-only property is refused when the
+  # configuration is read, because its value would be written to
   # the file and then silently lost on the way back: the reconstructed workspace
   # would answer with whatever its constructor defaulted to, and nothing would
   # raise. A name matching no property at all falls through to the sample log and

@@ -34,7 +34,7 @@ from pyrs.utilities.NXstress.NXstress import NXstress
 def configure(config_override, yaml_text: str) -> None:
     """Apply an `nxstress` config override that production modules can actually see.
 
-    Goes through `config_override` rather than `config_override`: the latter swaps
+    Goes through `config_override` rather than `default_config`: the latter swaps
     the `Config` singleton, leaving every module that bound it the documented way
     reading the previous instance. See that fixture's docstring.
     """
@@ -516,6 +516,13 @@ class TestEntryTargeting:
         with pytest.raises(ValueError, match=r"1-based"):
             NXstress(written, "a", entry_number=0)
 
+    @pytest.mark.parametrize("entry_number", [0, -1])
+    def test_read_entry_number_below_one_raises(self, written, entry_number):
+        """`group_naming_scheme` names entry 1 `entry`, so these used to read entry 1."""
+        with NXstress(written, "r") as nx:
+            with pytest.raises(ValueError, match=r"1-based"):
+                nx.read(entry_number)
+
 
 class TestClassification:
     """Case A proceeds, Case B is unsupported, and a duplicate is a violated invariant."""
@@ -878,6 +885,179 @@ class TestPreconditions:
             monkeypatch.undo()
             with pytest.raises(RuntimeError, match=r"no longer usable"):
                 nx.write([ws], [peaks])
+
+
+class TestPreconditionsAddedAfterReview:
+    """Refusals added after the 04c review, each previously a failure part-way through
+    the mutation phase or a silent loss. Like every precondition, each leaves the
+    entry byte-for-byte unchanged."""
+
+    def test_raw_counts_on_some_incoming_workspaces_raises(
+        self, discriminated, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Used to fail inside `_InputData.init_group`, after the entry times had grown;
+        the damaged entry then read back without error."""
+        # Arrange
+        path = tmp_path / "counts.nxs"
+        first, first_peaks = workspace(
+            minimal_HidraWorkspace, minimal_PeakCollection, direction="11", sub_runs=(1, 2, 3), with_raw_counts=True
+        )
+        with NXstress(path, "w") as nx:
+            nx.write([first], [first_peaks])
+        loaded, loaded_peaks = workspace(
+            minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6), with_raw_counts=True
+        )
+        empty, empty_peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="33", sub_runs=(7, 8))
+        before = digest(path)
+
+        # Act / Assert
+        with NXstress(path, "a") as nx:
+            with pytest.raises(RuntimeError, match=r"some incoming workspaces and not others"):
+                nx.write([loaded, empty], [loaded_peaks, empty_peaks])
+        assert digest(path) == before
+
+    @pytest.mark.parametrize("log, field", [("SampleName", "name"), ("chemical formula", "chemical_formula")])
+    def test_different_sample_description_raises(
+        self, written, minimal_HidraWorkspace, minimal_PeakCollection, log, field
+    ):
+        """The entry's sample name and formula are never rewritten by an append, so the
+        appended rows would have been recorded under the first write's sample."""
+        # Arrange
+        ws, peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6))
+        ws.set_sample_log(log, np.array([4, 5, 6]), np.array(["aluminium"] * 3))
+        before = digest(written)
+
+        # Act / Assert
+        with NXstress(written, "a") as nx:
+            with pytest.raises(RuntimeError, match=rf"sample {field} 'aluminium' differs"):
+                nx.write([ws], [peaks])
+        assert digest(written) == before
+
+    def test_mask_with_different_contents_raises(self, written, minimal_HidraWorkspace, minimal_PeakCollection):
+        """Masks are compared by contents, not only by name: the entry's masks are
+        written once, so an appended workspace's different array was silently
+        replaced by the entry's on read."""
+        # Arrange
+        ws, peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6))
+        ws.set_detector_mask(np.zeros(16, dtype=np.int64), True)
+        before = digest(written)
+
+        # Act / Assert
+        with NXstress(written, "a") as nx:
+            with pytest.raises(RuntimeError, match=r"masks \['_DEFAULT_'\] have different contents"):
+                nx.write([ws], [peaks])
+        assert digest(written) == before
+
+    def test_sample_log_of_another_type_raises(self, written, minimal_HidraWorkspace, minimal_PeakCollection):
+        """Used to raise `TypeError` inside h5py during the mutation phase."""
+        # Arrange
+        ws, peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6))
+        ws.set_sample_log("mrot", np.array([4, 5, 6]), np.array(["a", "b", "c"]))
+        before = digest(written)
+
+        # Act / Assert
+        with NXstress(written, "a") as nx:
+            with pytest.raises(RuntimeError, match=r"cannot be stored in the target entry's columns"):
+                nx.write([ws], [peaks])
+        assert digest(written) == before
+
+    def test_discriminator_of_a_narrower_type_raises(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """A float appended to an integer discriminator column would be truncated silently."""
+        # Arrange -- a sample-log discriminator, so its type is the log's own
+        configure(config_override, "nxstress:\n  discriminator_fields: ['group']\n")
+        path = tmp_path / "group.nxs"
+        first = minimal_HidraWorkspace(with_instrument=True, with_masks=True, sub_runs=np.array([1, 2, 3]))
+        first.set_sample_log("group", np.array([1, 2, 3]), np.array([1, 1, 1]))
+        with NXstress(path, "w") as nx:
+            nx.write([first], [[minimal_PeakCollection(N_subrun=3, sub_runs=np.array([1, 2, 3]))]])
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True, sub_runs=np.array([4, 5, 6]))
+        ws.set_sample_log("group", np.array([4, 5, 6]), np.array([2.5, 2.5, 2.5]))
+        before = digest(path)
+
+        # Act / Assert
+        with NXstress(path, "a") as nx:
+            with pytest.raises(RuntimeError, match=r"discriminator field 'group' is stored as int"):
+                nx.write([ws], [[minimal_PeakCollection(N_subrun=3, sub_runs=np.array([4, 5, 6]))]])
+        assert digest(path) == before
+
+    def test_a_group_refusal_invalidates_the_instance(self, written, minimal_HidraWorkspace, minimal_PeakCollection):
+        """A per-group disagreement is a violated invariant like any other, so a
+        later write on the same instance is refused, as `write` documents."""
+        # Arrange
+        from pyrs.core.instrument_geometry import DENEXDetectorGeometry
+
+        ws, peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6))
+        ws.set_instrument_geometry(
+            DENEXDetectorGeometry(
+                num_rows=4, num_columns=4, pixel_size_x=0.002, pixel_size_y=0.002, arm_length=3.0, calibrated=True
+            )
+        )
+        good, good_peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="33", sub_runs=(7, 8))
+
+        # Act / Assert
+        with NXstress(written, "a") as nx:
+            with pytest.raises(RuntimeError, match=r"instrument geometry"):
+                nx.write([ws], [peaks])
+            with pytest.raises(RuntimeError, match=r"no longer usable"):
+                nx.write([good], [good_peaks])
+
+
+class TestReadBackScanPointOrder:
+    """An append may not leave a workspace's scan points out of order on read.
+
+    Rows sharing a discriminator value are read back as one workspace, in
+    on-disk order, and `SubRuns` refuses anything not strictly increasing. See
+    DD-2 in `plans/PR_review/deferred-defects.md`. Unsupported rather than
+    violated, like Case B: the entry is unchanged and the instance stays usable.
+    """
+
+    @pytest.fixture
+    def higher(self, discriminated, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path):
+        """An entry holding scan points [4, 5, 6] for direction 11."""
+        path = tmp_path / "higher.nxs"
+        ws, peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="11", sub_runs=(4, 5, 6))
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [peaks])
+        return path
+
+    def test_lower_points_under_a_shared_discriminator_raise(
+        self, higher, minimal_HidraWorkspace, minimal_PeakCollection
+    ):
+        """Used to append without error, leaving an entry that `read` refused."""
+        # Arrange -- a new peak tag, so Case A, but the same direction
+        ws, peaks = workspace(
+            minimal_HidraWorkspace, minimal_PeakCollection, direction="11", sub_runs=(1, 2, 3), peak_tag="Ni200"
+        )
+        before = digest(higher)
+
+        # Act / Assert
+        with NXstress(higher, "a") as nx:
+            with pytest.raises(NotImplementedError, match=r"\[4, 5, 6, 1, 2, 3\]"):
+                nx.write([ws], [peaks])
+        assert digest(higher) == before
+
+    def test_the_refusal_leaves_the_instance_usable(self, higher, minimal_HidraWorkspace, minimal_PeakCollection):
+        """Lower points under a new discriminator value are read back on their own."""
+        # Arrange
+        refused, refused_peaks = workspace(
+            minimal_HidraWorkspace, minimal_PeakCollection, direction="11", sub_runs=(1, 2, 3), peak_tag="Ni200"
+        )
+        accepted, accepted_peaks = workspace(
+            minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(1, 2, 3)
+        )
+
+        # Act
+        with NXstress(higher, "a") as nx:
+            with pytest.raises(NotImplementedError):
+                nx.write([refused], [refused_peaks])
+            nx.write([accepted], [accepted_peaks])
+        with NXstress(higher, "r") as nx:
+            read_wss, _ = nx.read()
+
+        # Assert
+        assert [ws.get_sub_runs().raw_copy().tolist() for ws in read_wss] == [[4, 5, 6], [1, 2, 3]]
 
 
 class TestWriterEmitsResizableDatasets:

@@ -2,7 +2,7 @@ import numpy as np
 from numpy.testing import assert_array_equal, assert_array_almost_equal
 import pytest
 from pyrs.dataobjects.constants import HidraConstants, DEFAULT_POINT_RESOLUTION
-from pyrs.dataobjects.sample_logs import DirectionExtents, PointList, aggregate_point_lists, SampleLogs
+from pyrs.dataobjects.sample_logs import DirectionExtents, PointList, SubRuns, aggregate_point_lists, SampleLogs
 
 
 @pytest.fixture(scope="module")
@@ -547,6 +547,46 @@ class TestStringLogsAreTextInMemory:
         # Assert
         assert logs["numbers"].dtype.kind == "f"
         assert logs["counts"].dtype.kind == "i"
+
+
+class TestSubRunOrdering:
+    """`SubRuns` requires strictly increasing values; only uniqueness is needed.
+
+    The xfail tests are the defects recorded under DD-2 in
+    `plans/PR_review/deferred-defects.md`, which recommends dropping the
+    ordering requirement. Each is strict, so it fails loudly once fixed.
+    """
+
+    def test_repeated_values_raise(self):
+        """Uniqueness is the real invariant, and must survive dropping the ordering."""
+        with pytest.raises(RuntimeError):
+            SubRuns([1, 2, 2])
+
+    @pytest.mark.xfail(reason="DD-2: the ordering requirement is arbitrary", raises=RuntimeError, strict=True)
+    def test_unique_unsorted_values_are_accepted(self):
+        assert SubRuns([3, 1, 2]).raw_copy().tolist() == [3, 1, 2]
+
+    @pytest.mark.xfail(
+        reason="DD-2: `get_indices` checks only a query's first and last values, then binary-searches",
+        raises=pytest.fail.Exception,
+        strict=True,
+    )
+    def test_get_indices_missing_interior_value_raises(self):
+        """Used to map the missing 3 to the position of 4, returning [0, 2, 2]."""
+        with pytest.raises(IndexError):
+            SubRuns([1, 2, 4]).get_indices([1, 3, 4])
+
+    @pytest.mark.xfail(
+        reason="DD-2: `get_indices` binary-searches, which needs a sorted axis", raises=AssertionError, strict=True
+    )
+    def test_get_indices_on_an_unsorted_axis(self):
+        """`append` skips the ordering check, so an unsorted axis is reachable today."""
+        # Arrange
+        subruns = SubRuns([4, 5, 6])
+        subruns.append(np.array([1, 2, 3]))
+
+        # Act / Assert -- used to return [6, 4]: past the end, and the position of 1
+        assert subruns.get_indices([5, 2]).tolist() == [1, 4]
 
 
 if __name__ == "__main__":

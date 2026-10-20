@@ -731,8 +731,8 @@ is no real example of these entries. Flagged rather than guessed at.
 ### D24 — `_scalar` compared normalised values and returned the raw one
 
 ```python
-distinct = {to_text(v) for v in values}   # comparison normalised
-return values[0]                          # un-normalised value written
+distinct = {to_text(v) for v in values}  # comparison normalised
+return values[0]  # un-normalised value written
 ```
 
 Harmless once logs are `str` in memory, but it is the pattern the centralisation
@@ -1563,7 +1563,8 @@ silently track it. Same reasoning as `expected_block_count` in batch 14.
 
 ```python
 monkeypatch.setattr(
-    _instrument_module, "Config",
+    _instrument_module,
+    "Config",
     {"nxstress.instrument_name": "HB2A", "nxstress.instrument_short_name": "PG3"},
 )
 ```

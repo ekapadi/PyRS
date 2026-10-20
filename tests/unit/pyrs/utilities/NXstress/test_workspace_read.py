@@ -230,11 +230,11 @@ class TestWorkspaceRoundtrip:
         ws = minimal_HidraWorkspace(with_instrument=True, with_masks=False)
         nxstress_file = tmp_path / "no_masks.nxs"
         with NXstress(nxstress_file, mode="w") as nxs:
-            nxs.write(ws, [])
+            nxs.write([ws], [[]])
 
         # Act
         with NXstress(nxstress_file, mode="r") as nxs:
-            ws_readback, _ = nxs.read()
+            (ws_readback,), _ = nxs.read()
 
         # Assert
         nrows, ncols = ws.get_instrument_setup().detector_size

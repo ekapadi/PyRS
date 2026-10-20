@@ -350,6 +350,21 @@ class TestWriteTimeInvariants:
             with pytest.raises(ValueError, match="cover disjoint scan points"):
                 nx.write(workspaces, peakss)
 
+    def test_masks_of_the_same_name_with_different_contents_raise(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Masks are written once, from the first input: a second input's different
+        array under the same name was silently replaced by the first's on read."""
+        # Arrange
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
+        workspaces[1].set_detector_mask(np.zeros(16, dtype=np.int64), True)
+
+        # Act / Assert
+        with NXstress(tmp_path / "masks.nxs", "w") as nx:
+            with pytest.raises(RuntimeError, match=r"same name with different contents"):
+                nx.write(workspaces, peakss)
+
 
 class TestConfigDrift:
     def test_reordering_the_fields_between_write_and_read_is_harmless(
@@ -411,3 +426,106 @@ class TestScanPointFamilySplit:
         # The reduced data must follow the same split, not just the scan points.
         for direction, ws_original in zip(("11", "22"), workspaces):
             np.testing.assert_allclose(by_direction[direction]._diff_data_set[None], ws_original._diff_data_set[None])
+
+
+class TestReadBackScanPointOrder:
+    """A workspace read back must hold strictly increasing scan points.
+
+    That requirement belongs to `SubRuns`, not to the file format, and DD-2 in
+    `plans/PR_review/deferred-defects.md` recommends dropping it. Until then a
+    write that could not be read back is refused, rather than re-sorted: the
+    on-disk rows are in the inputs' order, and sorting them would break the
+    round trip.
+    """
+
+    @pytest.mark.parametrize(
+        "sub_runs_a, sub_runs_b", [((4, 5, 6), (1, 2, 3)), ((1, 3, 5), (2, 4, 6))], ids=["decreasing", "interleaved"]
+    )
+    def test_merged_out_of_order_raises(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path, sub_runs_a, sub_runs_b
+    ):
+        """Used to write an entry that `read` then refused: a merged entry reads back whole."""
+        # Arrange
+        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
+        workspaces, peakss = two_workspaces(
+            minimal_HidraWorkspace,
+            minimal_PeakCollection,
+            sub_runs_a=sub_runs_a,
+            sub_runs_b=sub_runs_b,
+            peak_tags=("Fe110", "Ni200"),
+        )
+
+        # Act / Assert
+        with NXstress(tmp_path / "merged.nxs", "w") as nx:
+            with pytest.raises(NotImplementedError, match=r"strictly increasing"):
+                nx.write(workspaces, peakss)
+            assert nx.entry_numbers() == ()
+
+    def test_a_shared_discriminator_value_out_of_order_raises(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """One discriminator value means one workspace on read, exactly as a merge does."""
+        # Arrange
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(
+            minimal_HidraWorkspace,
+            minimal_PeakCollection,
+            sub_runs_a=(4, 5, 6),
+            sub_runs_b=(1, 2, 3),
+            directions=("11", "11"),
+            peak_tags=("Fe110", "Ni200"),
+        )
+
+        # Act / Assert
+        with NXstress(tmp_path / "shared.nxs", "w") as nx:
+            with pytest.raises(NotImplementedError, match=r"\[4, 5, 6, 1, 2, 3\]"):
+                nx.write(workspaces, peakss)
+
+    def test_distinct_discriminators_in_decreasing_order_round_trip(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """Each workspace is read back from its own rows, which are increasing."""
+        # Arrange
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(
+            minimal_HidraWorkspace, minimal_PeakCollection, sub_runs_a=(4, 5, 6), sub_runs_b=(1, 2, 3)
+        )
+        path = tmp_path / "decreasing.nxs"
+
+        # Act
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+        with NXstress(path, "r") as nx:
+            read_wss, _ = nx.read()
+
+        # Assert
+        assert [ws.get_sub_runs().raw_copy().tolist() for ws in read_wss] == [[4, 5, 6], [1, 2, 3]]
+
+    @pytest.mark.xfail(
+        reason="DD-2: `SubRuns` requires sorted scan points, so a merged decreasing entry cannot be held",
+        raises=NotImplementedError,
+        strict=True,
+    )
+    def test_merged_decreasing_order_round_trips(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """The target once the ordering requirement is dropped: the inputs' order is kept."""
+        # Arrange
+        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
+        workspaces, peakss = two_workspaces(
+            minimal_HidraWorkspace,
+            minimal_PeakCollection,
+            sub_runs_a=(4, 5, 6),
+            sub_runs_b=(1, 2, 3),
+            peak_tags=("Fe110", "Ni200"),
+        )
+        path = tmp_path / "merged.nxs"
+
+        # Act
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+        with NXstress(path, "r") as nx:
+            (read_ws,), _ = nx.read()
+
+        # Assert
+        assert read_ws.get_sub_runs().raw_copy().tolist() == [4, 5, 6, 1, 2, 3]
