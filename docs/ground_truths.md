@@ -825,3 +825,35 @@ directory above the repo root. A test that merely sets `env=<something>_test.yml
 will fail for a reason that has nothing to do with what it is testing. Either
 avoid `"test"` in the `env` value, or raise the off-by-one with the
 `neutrons_standard` maintainers.
+
+## An uncaught exception in a Qt slot aborts PyRS; an NXstress write truncates its target on open (2026-10)
+
+Found while hooking NXstress saving into the PeakFitting and TextureFitting
+viewers. PyRS runs on PyQt6 (`qtpy.API_NAME == "PyQt6"`), which calls
+`qFatal()` for any Python exception that escapes a slot, and PyRS installs no
+`sys.excepthook` that would change that. Observed, offscreen:
+
+```python
+def slot():
+    raise RuntimeError("boom")
+
+
+app = QApplication([])
+a = QAction("x")
+a.triggered.connect(slot)
+QTimer.singleShot(0, a.trigger)
+app.exec()
+# -> traceback, then "dumped core", exit status 134 (SIGABRT)
+```
+
+Separately, `NXstress(path, "w")` truncates `path` on open, before anything is
+validated: a write that then fails (e.g. a peak tag that does not parse as
+`<phase> <hkl>`) leaves an ~800-byte file, and an existing file at that path is
+already gone.
+
+**Why this matters going forward:** a GUI slot that can raise must catch and
+report, not merely let the error propagate — "it prints a traceback" is not
+what happens; the whole application exits. And an NXstress save must write to a
+temporary file and rename it on success, never write in place. Both are done by
+`pyrs.interface.gui_helper.write_nxstress_or_report`; reuse it for any new
+NXstress save action.

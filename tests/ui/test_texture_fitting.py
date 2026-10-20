@@ -10,6 +10,7 @@ import os
 import json
 import pytest
 
+from pyrs.interface import gui_helper
 from pyrs.interface.texture_fitting import texture_fitting_viewer
 from pyrs.peaks.peak_fit_engine import FitResult
 from pyrs.utilities.config import Config
@@ -221,21 +222,27 @@ def test_init_menu_actions_nxstress_enabled_legacy_disabled_matches_config(textu
     assert window.saveAsAction.isEnabled() is False
 
 
-def test_nxstress_action_follows_workspace_geometry(texture_fitting_window: tuple, minimal_HidraWorkspace) -> None:
+def test_nxstress_action_follows_workspace_geometry(
+    texture_fitting_window: tuple, minimal_HidraWorkspace, monkeypatch
+) -> None:
     """*Save as NXstress...* is grayed out for a workspace without instrument
     geometry and enabled for one with it."""
     window, _qtbot = texture_fitting_window
 
-    # Act / Assert: no geometry
-    window._model.ws = minimal_HidraWorkspace(with_instrument=False)
-    window.update_nxstress_action()
-    assert window.saveAsNXstressAction.isVisible()
-    assert not window.saveAsNXstressAction.isEnabled()
+    try:
+        # Act / Assert: no geometry
+        monkeypatch.setattr(window._model, "ws", minimal_HidraWorkspace(with_instrument=False))
+        window.update_nxstress_action()
+        assert window.saveAsNXstressAction.isVisible()
+        assert not window.saveAsNXstressAction.isEnabled()
 
-    # Act / Assert: geometry
-    window._model.ws = minimal_HidraWorkspace(with_instrument=True)
-    window.update_nxstress_action()
-    assert window.saveAsNXstressAction.isEnabled() == Config["nxstress.enable"]
+        # Act / Assert: geometry
+        monkeypatch.setattr(window._model, "ws", minimal_HidraWorkspace(with_instrument=True))
+        window.update_nxstress_action()
+        assert window.saveAsNXstressAction.isEnabled() == Config["nxstress.enable"]
+    finally:
+        monkeypatch.undo()
+        window.update_nxstress_action()
 
 
 @pytest.fixture
@@ -243,31 +250,36 @@ def nxstress_ready_window(
     texture_fitting_window, minimal_HidraWorkspace, minimal_PeakCollection, monkeypatch, tmp_path
 ):
     """The shared window holding a workspace with geometry, with the save dialog
-    and message box replaced. Call the returned `set_peak_tag` before saving."""
+    and message boxes replaced. Call the returned `set_peak_tag` before saving.
+    Every change to the window is made through `monkeypatch` and undone on exit."""
     window, _qtbot = texture_fitting_window
     ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
-    window._model.ws = ws
+    fit_table = window.fit_summary.fit_table_operator
+    monkeypatch.setattr(window._model, "ws", ws)
+    monkeypatch.setattr(fit_table, "fit_result", None)
     window.update_nxstress_action()
 
     out_path = tmp_path / "saved.nxs"
     messages = []
+
+    def record(parent, message, *args, **kwargs):
+        messages.append(message)
+
     monkeypatch.setattr(
         texture_fitting_viewer.QFileDialog,
         "getSaveFileName",
         staticmethod(lambda *args, **kwargs: (str(out_path), "")),
     )
-    monkeypatch.setattr(
-        texture_fitting_viewer, "pop_message", lambda parent, message, *args, **kwargs: messages.append(message)
-    )
+    monkeypatch.setattr(texture_fitting_viewer, "pop_message", record)
+    monkeypatch.setattr(gui_helper, "pop_message", record)
 
     def set_peak_tag(peak_tag: str) -> None:
         peak = minimal_PeakCollection(N_subrun=len(ws.get_sub_runs()), peak_tag=peak_tag)
-        window.fit_summary.fit_table_operator.fit_result = FitResult(
-            peakcollections=[peak], fitted=None, difference=None
-        )
+        fit_table.fit_result = FitResult(peakcollections=[peak], fitted=None, difference=None)
 
     yield window, out_path, messages, set_peak_tag
-    window.fit_summary.fit_table_operator.fit_result = None
+    monkeypatch.undo()
+    window.update_nxstress_action()
 
 
 def test_save_as_nxstress_writes_file(nxstress_ready_window) -> None:
@@ -290,7 +302,7 @@ def test_save_as_nxstress_failure_reports_and_cleans_up(nxstress_ready_window) -
     it (an uncaught slot exception aborts the app) and remove the partial file."""
     # Arrange
     window, out_path, messages, set_peak_tag = nxstress_ready_window
-    set_peak_tag("peak_1")
+    set_peak_tag("peak0")
 
     # Act
     window.save_as_nxstress()

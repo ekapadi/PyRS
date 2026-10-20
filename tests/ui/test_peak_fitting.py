@@ -6,8 +6,8 @@ import functools
 import pytest
 import os
 
+from pyrs.interface import gui_helper
 from pyrs.interface.peak_fitting import peak_fitting_viewer
-from pyrs.interface.peak_fitting.peak_fitting_viewer import peak_tags_from_labels
 from pyrs.peaks.peak_fit_engine import FitResult
 from pyrs.utilities.config import Config
 
@@ -261,25 +261,6 @@ def test_init_widgets_nxstress_and_legacy_action_enablement_matches_config(fit_p
     window.hide()
 
 
-@pytest.mark.parametrize(
-    "labels, n_peaks, expected",
-    [
-        (["Peak0", "Peak1"], 2, ["peak0", "peak1"]),
-        (["Fe 211", "Peak1"], 2, ["Fe 211", "peak1"]),
-        (["  Fe 211 ", ""], 2, ["Fe 211", "peak1"]),
-        ([None], 2, ["peak0", "peak1"]),
-    ],
-)
-def test_peak_tags_from_labels(labels: list, n_peaks: int, expected: list) -> None:
-    """Edited labels become tags; blank or auto-generated `Peak<N>` labels keep
-    the historical `peak<N>` tag."""
-    # Act
-    tags = peak_tags_from_labels(labels, n_peaks)
-
-    # Assert
-    assert tags == expected
-
-
 def test_nxstress_action_follows_workspace_geometry(fit_peaks_window: tuple) -> None:
     """*Save as NXstress...* is grayed out after loading a file without instrument
     geometry, and enabled after loading one with it."""
@@ -300,24 +281,31 @@ def test_nxstress_action_follows_workspace_geometry(fit_peaks_window: tuple) -> 
 @pytest.fixture
 def nxstress_ready_window(fit_peaks_window, minimal_HidraWorkspace, minimal_PeakCollection, monkeypatch, tmp_path):
     """The shared window holding a workspace with geometry, with the save dialog
-    and message box replaced. Call the returned `set_peak_tag` before saving."""
+    and message boxes replaced. Call the returned `set_peak_tag` before saving.
+    Every change to the window is made through `monkeypatch` and undone on exit."""
     window, _qtbot = fit_peaks_window
     ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
-    window._model.hidra_workspace = ws
+    monkeypatch.setattr(window._model, "hidra_workspace", ws)
+    monkeypatch.setattr(window._model, "fit_result", None)
     window._update_nxstress_action()
 
     out_path = tmp_path / "saved.nxs"
     messages = []
+
+    def record(parent, message, *args, **kwargs):
+        messages.append(message)
+
     monkeypatch.setattr(peak_fitting_viewer, "browse_file", lambda *args, **kwargs: str(out_path))
-    monkeypatch.setattr(
-        peak_fitting_viewer, "pop_message", lambda parent, message, *args, **kwargs: messages.append(message)
-    )
+    monkeypatch.setattr(peak_fitting_viewer, "pop_message", record)
+    monkeypatch.setattr(gui_helper, "pop_message", record)
 
     def set_peak_tag(peak_tag: str) -> None:
         peak = minimal_PeakCollection(N_subrun=len(ws.get_sub_runs()), peak_tag=peak_tag)
         window._model.fit_result = FitResult(peakcollections=[peak], fitted=None, difference=None)
 
-    return window, out_path, messages, set_peak_tag
+    yield window, out_path, messages, set_peak_tag
+    monkeypatch.undo()
+    window._update_nxstress_action()
 
 
 def test_save_as_nxstress_writes_file(nxstress_ready_window) -> None:

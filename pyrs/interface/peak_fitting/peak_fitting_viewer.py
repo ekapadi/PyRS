@@ -13,8 +13,6 @@ view-side collaborators, instantiated with this window as their ``parent``.
 """
 
 import os
-import re
-from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
@@ -25,11 +23,19 @@ from qtpy.QtWidgets import QApplication, QMainWindow, QMenu, QTableWidgetItem, Q
 
 import pyrs.icons
 import pyrs.interface.gui_helper
-from pyrs.interface.gui_helper import browse_dir, browse_file, impose_extension, parse_integers, pop_message
+from pyrs.interface.gui_helper import (
+    browse_dir,
+    browse_file,
+    nxstress_save_available,
+    parse_integers,
+    pop_message,
+    write_nxstress_or_report,
+)
 from pyrs.interface.peak_fitting.fit_table import FitTable
 from pyrs.interface.peak_fitting.gui_utilities import GuiUtilities
 from pyrs.interface.peak_fitting.peak_fitting_crtl import PeakFittingCrtl
 from pyrs.interface.peak_fitting.peak_fitting_model import PeakFittingModel
+from pyrs.interface.peak_fitting.peak_tags import peak_tags_from_labels
 from pyrs.interface.ui import qt_util
 from pyrs.interface.ui.diffdataviews import GeneralDiffDataView, PeakFitSetupView
 from pyrs.interface.ui.rstables import FitResultTable
@@ -48,32 +54,6 @@ HORIZONTAL_SPLITTER_SHORT = f"""QSplitter::handle {{image: url('{ICON_DIR}/horiz
 
 D0 = "d₀"
 ANGSTROMS = "Å"
-
-# The label `mplfitplottingwidget` gives each newly drawn peak range.
-_DEFAULT_PEAK_LABEL = re.compile(r"Peak\d+")
-
-
-def peak_tags_from_labels(labels: List[str], n_peaks: int) -> List[str]:
-    """Peak tags for a fit: each peak's table label, or ``peak<N>`` if the label
-    is blank or still the auto-generated ``Peak<N>`` default.
-
-    Keeping ``peak<N>`` for untouched labels preserves the tags of files fitted
-    before labels were used -- the strain/stress viewer matches peaks across
-    files by tag. An edited label (e.g. ``Fe 211``) is what NXstress needs: it
-    parses each tag into a phase name and Miller indices.
-
-    Args:
-        labels: Label-column values, one per peak range (may be shorter).
-        n_peaks: Number of peak ranges being fitted.
-
-    Returns:
-        One tag per peak range.
-    """
-    tags = []
-    for index in range(n_peaks):
-        label = str(labels[index]).strip() if index < len(labels) and labels[index] is not None else ""
-        tags.append(label if label and not _DEFAULT_PEAK_LABEL.fullmatch(label) else f"peak{index}")
-    return tags
 
 
 class PeakFittingViewer(QMainWindow):
@@ -259,13 +239,7 @@ class PeakFittingViewer(QMainWindow):
         if not out_file_name:
             return  # user clicked cancel
 
-        out_file_name = impose_extension(out_file_name, Config["nxstress.extension"])
-        try:
-            self._model.save_fit_result(out_file_name)
-        except Exception as save_err:  # noqa: BLE001 -- an uncaught slot exception aborts the app under PyQt6
-            # NXstress writes incrementally, so a failure leaves a truncated file behind.
-            Path(out_file_name).unlink(missing_ok=True)
-            pop_message(self, "Failed to save NXstress file", str(save_err), "error")
+        write_nxstress_or_report(self, out_file_name, self._model.save_fit_result)
 
     def load_run_number(self):
         runs = parse_integers(self.ui.lineEdit_expNumber.text())
@@ -386,9 +360,13 @@ class PeakFittingViewer(QMainWindow):
         try:
             peak_range_list = [tuple(_range) for _range in self._ui_graphicsView_fitSetup.list_peak_ranges]
             peak_center_list = [np.mean([left, right]) for (left, right) in peak_range_list]
-            peak_tag_list = peak_tags_from_labels(
-                self._ui_graphicsView_fitSetup.list_fit_peak_labels, len(peak_center_list)
-            )
+            try:
+                peak_tag_list = peak_tags_from_labels(
+                    self._ui_graphicsView_fitSetup.list_fit_peak_labels, len(peak_center_list)
+                )
+            except ValueError as label_err:
+                pop_message(self, "Invalid peak labels", str(label_err), "error")
+                return
             peak_function_name = str(self.ui.comboBox_peakType.currentText())
             peak_background_name = str(self.ui.comboBox_backgroundType.currentText())
 
@@ -726,9 +704,7 @@ class PeakFittingViewer(QMainWindow):
         Disabled, not hidden: the action stays in the menu, grayed out, so the
         save dialog never opens for a workspace that cannot be written.
         """
-        ws = self._model.hidra_workspace
-        has_geometry = ws is not None and ws.get_instrument_setup() is not None
-        self.ui.actionSaveAsNXstress.setEnabled(bool(Config["nxstress.enable"]) and has_geometry)
+        self.ui.actionSaveAsNXstress.setEnabled(nxstress_save_available(self._model.hidra_workspace))
 
     def _init_widgets(self) -> None:
         """Initialize some widgets."""

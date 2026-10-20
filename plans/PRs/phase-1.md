@@ -6,7 +6,7 @@
 
 - Added `PyRsCore.register_hidra_workspace()` to register an in-memory `HidraWorkspace` as a session data source.
 
-- `PeakFittingViewer` takes peak tags from the peak-range table's *Label* column; previously every tag was `peak<N>`, which NXstress cannot parse. Blank or auto-generated `Peak<N>` labels still give `peak<N>`.
+- `PeakFittingViewer` takes peak tags from the peak-range table's *Label* column; previously every tag was `peak<N>`, which NXstress cannot parse. Blank or auto-generated `Peak<N>` labels still give `peak<N>`, and duplicate tags are reported as an error before fitting (`pyrs/interface/peak_fitting/peak_tags.py`).
 
 - `PeakFittingModel.load_hidra_project` accepts a single `.h5` path as well as a list; a bare string previously loaded `"/"`.
 
@@ -30,7 +30,7 @@
 
 - NXstress output is offered only when `Config["nxstress.enable"]` is set **and** the loaded workspace has instrument geometry: otherwise *Save as NXstress…* is grayed out, and CombineRuns skips its NXstress prompt. PeakFitting and TextureFitting previously checked only the config flag, so a workspace without geometry failed inside the writer. Legacy `.h5` actions follow `Config["legacy_io.enable"]`.
 
-- *Save as NXstress…* now reports a failed save (e.g. a peak tag that is not `<phase> <hkl>`) and removes the partial file. Previously PeakFitting silently ignored the error, and in TextureFitting the uncaught exception aborted the application; both left a truncated `.nxs` behind.
+- *Save as NXstress…* writes to a temporary file that replaces the target only on success, and reports a failed save (e.g. a peak tag that is not `<phase> <hkl>`) in an error message. Previously PeakFitting silently ignored the error, and in TextureFitting the uncaught exception aborted the application; both left a truncated `.nxs` behind, destroying any existing file of that name. Shared helpers `gui_helper.write_nxstress_or_report()` and `gui_helper.nxstress_save_available()` serve both viewers.
 
 - TextureFitting's *Save as NXstress…* reads its fit result from `self.fit_summary`; it referenced the undefined `self._parent`, so every save raised `AttributeError`.
 
@@ -42,7 +42,7 @@
 
 - `PeakFittingCrtl.plot_diff_and_fitted_data` tolerates an NXstress load with no fitted spectrum; an `.nxs` load also registers its workspace with `PyRsCore`.
 
-- Tests: model-level `.nxs` round-trip and `.h5` routing tests for all three viewers (integration), plus GUI tests for the new save/export actions, their geometry gating and error handling, and the `fitted=None` guard.
+- Tests: model-level `.nxs` round-trip and `.h5` routing tests for all three viewers (integration), GUI tests for the new save/export actions, their geometry gating and error handling, and the `fitted=None` guard, and unit tests for the peak-tag rules and the NXstress save helpers.
 
 ## How to test
 

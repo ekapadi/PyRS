@@ -10,7 +10,7 @@ from qtpy.QtGui import QColor  # type:ignore
 from qtpy.QtCore import Qt  # type: ignore
 
 from pyrs.interface.ui.diffdataviews import PeakFitSetupView, GeneralDiffDataView
-from pyrs.interface.gui_helper import impose_extension, pop_message
+from pyrs.interface.gui_helper import impose_extension, nxstress_save_available, pop_message, write_nxstress_or_report
 from pyrs.interface.texture_fitting.texture_fitting_crtl import TextureFittingCrtl
 from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingModel
 from pyrs.utilities import get_input_project_file  # type: ignore
@@ -23,7 +23,6 @@ from typing import Optional
 # import traceback
 import os
 import copy
-from pathlib import Path
 
 COLOR_FAILED_FITTING = QColor(247, 173, 13)  # orange
 SUCCESS = "success"
@@ -1091,6 +1090,8 @@ class TextureFittingViewer(QMainWindow):
     def update_save_peak_range_widget(self):
         self.fit_setup.export_peak_info.setEnabled(True)
 
+    # TODO: `save` and `saveas` read `self._parent`, which this window never defines
+    # (fixed in `save_as_nxstress`); harmless only while both actions stay disabled.
     def save(self):
         if self._project_file is not None:
             self.controller.save(self._project_file, self._parent.fit_summary.fit_table_operator.fit_result)
@@ -1108,9 +1109,7 @@ class TextureFittingViewer(QMainWindow):
         Disabled, not hidden: the action stays in the menu, grayed out, so the
         save dialog never opens for a workspace that cannot be written.
         """
-        ws = self._model.ws
-        has_geometry = ws is not None and ws.get_instrument_setup() is not None
-        self.saveAsNXstressAction.setEnabled(bool(Config["nxstress.enable"]) and has_geometry)
+        self.saveAsNXstressAction.setEnabled(nxstress_save_available(self._model.ws))
 
     def save_as_nxstress(self) -> None:
         # Backstop only: the action is disabled whenever this would fail for want
@@ -1126,13 +1125,7 @@ class TextureFittingViewer(QMainWindow):
         if not filename:
             return  # user clicked cancel
 
-        filename = impose_extension(filename, Config["nxstress.extension"])
-        try:
-            self.controller.save(filename, fit_result)
-        except Exception as save_err:  # noqa: BLE001 -- an uncaught slot exception aborts the app under PyQt6
-            # NXstress writes incrementally, so a failure leaves a truncated file behind.
-            Path(filename).unlink(missing_ok=True)
-            pop_message(self, "Failed to save NXstress file", str(save_err), "error")
+        write_nxstress_or_report(self, filename, lambda path: self.controller.save(path, fit_result))
 
     def load(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Load Stress state", "", "JSON (*.json);;All Files (*)")
