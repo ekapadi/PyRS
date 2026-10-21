@@ -14,8 +14,11 @@ script and a test build identical workspaces.
 import contextlib
 import copy
 import hashlib
+import os
 import sys
-from collections.abc import Iterator
+import tempfile
+import traceback
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +38,41 @@ from tests.util.peak_collection_helpers import _SEED, make_peak_collection  # no
 from tests.util.workspace_helpers import make_minimal_HidraWorkspace  # noqa: E402
 
 TEST_DATA = REPO / "tests" / "data"
+
+
+def run(main: Callable[[], None]) -> None:
+    """Run a script's `main`, then exit at once with its status.
+
+    `os._exit` skips interpreter teardown, where Mantid's framework shutdown can
+    hang after the script has finished.
+    """
+    code = 0
+    try:
+        main()
+        print("\nAll checks passed.")
+    except SystemExit as stop:
+        print(stop, file=sys.stderr)
+        code = 1
+    except BaseException:
+        traceback.print_exc()
+        code = 1
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
+
+
+def output_dir() -> Path:
+    """Where a script leaves files for the reviewer: the first argument, or a fixed temp directory.
+
+    Fixed rather than fresh, so the GUI steps in `plans/PRs/phase-2.md` can name it.
+    """
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.gettempdir()) / "pyrs_nxstress_demo"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def section(title: str) -> None:
+    print(f"\n== {title}")
 
 
 def check(label: str, condition: bool) -> None:
@@ -93,20 +131,26 @@ def synthetic_peaks(ws: HidraWorkspace, tag: str = "Fe 110") -> PeakCollection:
 
 
 @contextlib.contextmanager
-def nxstress_config(**keys) -> Iterator[None]:
-    """Override `nxstress.*` config keys for the duration of a `with` block.
+def config_override(overrides: dict) -> Iterator[None]:
+    """Deep-merge `overrides` into the configuration for the duration of a `with` block.
 
     Merged into the live `Config` singleton and validated, then restored, exactly
     as the `config_override` test fixture does: every module that bound `Config`
     sees the change. Production reads overrides from a YAML file named by the
-    `env` environment variable instead.
+    `env` environment variable instead. A value that fails validation raises on
+    entry, with the configuration already restored.
     """
     config = config_module.Config
     saved = copy.deepcopy(config._config)
     try:
-        merge_dicts(config._config, {"nxstress": keys})
+        merge_dicts(config._config, copy.deepcopy(overrides))
         config_module.validate_config()
         yield
     finally:
         config._config.clear()
         config._config.update(saved)
+
+
+def nxstress_config(**keys) -> contextlib.AbstractContextManager[None]:
+    """`config_override` for `nxstress.*` keys only: `nxstress_config(discriminator_fields=["direction"])`."""
+    return config_override({"nxstress": keys})

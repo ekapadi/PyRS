@@ -180,28 +180,6 @@ def _validate_round_trippable(name: str) -> None:
     )
 
 
-def merge_workspaces() -> bool:
-    """Whether a multi-workspace write may merge indistinguishably.
-
-    Only consulted when no discriminator field is configured. `False` -- the
-    default -- rejects such a write outright rather than producing a file whose
-    workspace boundaries cannot be recovered.
-    """
-    try:
-        value = Config["nxstress.merge_workspaces"]
-    except Exception:  # noqa: BLE001 - a missing or broken key is the safe default
-        _logger.warning(
-            "NXstress._discriminator: config key 'nxstress.merge_workspaces' could not be read;\n"
-            "  proceeding as if it were false."
-        )
-        return False
-    if not isinstance(value, bool):
-        raise ValueError(
-            f"Config['nxstress.merge_workspaces'] must be a bool, got {value!r} ({type(value).__name__})."
-        )
-    return value
-
-
 def column_name(name: str) -> str:
     """On-disk column name for a discriminator field.
 
@@ -210,6 +188,12 @@ def column_name(name: str) -> str:
     trips exactly.
     """
     return allowed_identifier(name)
+
+
+_ONE_VALUE_PER_WORKSPACE = (
+    "  A discriminator needs one value per workspace. Write a workspace merged across several "
+    "values with 'nxstress.discriminator_fields: []', or split it."
+)
 
 
 def resolve(ws: HidraWorkspace, name: str) -> Any:
@@ -236,19 +220,31 @@ def resolve(ws: HidraWorkspace, name: str) -> Any:
             it first becomes visible and the workspace is the only place it
             *can* be detected: whether a field resolves depends on the data, so
             `field_names` cannot check it when the configuration is read.
-        AssertionError: If the sample log is not constant across the
-            workspace's scan points -- raised by `get_sample_log_value`, which
-            already performs that check, so no constancy test is repeated here.
+            Also if the value is not constant across the workspace's scan
+            points -- as in a workspace merged from several directions -- or the
+            property raises `ValueError`: a discriminator needs exactly one
+            value per workspace.
     """
     attribute = getattr(type(ws), name, None) if name.isidentifier() else None
     if isinstance(attribute, property):
-        return _as_text(getattr(ws, name))
+        try:
+            return _as_text(getattr(ws, name))
+        except ValueError as error:
+            raise ValueError(
+                f"NXstress: discriminator field {name!r} has no single value for workspace "
+                f"'{ws.name}'.\n  {error}\n{_ONE_VALUE_PER_WORKSPACE}"
+            ) from error
 
-    # Membership rather than catching `get_sample_log_value`'s `ValueError`: the
-    # constancy failure it raises for a varying log is an `AssertionError` that
-    # must keep propagating, and catching by exception type to re-describe one
-    # of two failures means depending on which is which.
     if name in ws.sample_log_names:
+        # Checked here rather than left to `get_sample_log_value`, whose
+        # `AssertionError` for a varying log says nothing about why.
+        distinct = sorted({_as_text(value) for value in ws.get_sample_log_values(name)}, key=str)
+        if len(distinct) > 1:
+            raise ValueError(
+                f"NXstress: discriminator field {name!r} varies across the scan points of workspace "
+                f"'{ws.name}' ({distinct}), so it cannot tell that workspace apart from others.\n"
+                f"{_ONE_VALUE_PER_WORKSPACE}"
+            )
         return _as_text(ws.get_sample_log_value(name))
 
     tried = "a sample log" if attribute is None and not name.isidentifier() else "a property, then a sample log"
@@ -352,7 +348,7 @@ def key(ws: HidraWorkspace, names: tuple[str, ...]) -> DiscriminatorKey:
 
     Returns:
         `(name, value)` pairs sorted by name. Empty when `names` is empty,
-        which is the single-workspace and merged cases.
+        which is the single-workspace case.
     """
     return tuple(sorted((name, resolve(ws, name)) for name in names))
 
@@ -403,9 +399,9 @@ def names_for_read(peaks) -> tuple[str, ...]:
     is consulted only to refuse a read that would split it wrongly:
 
     - When the entry records its fields (`FIELDS_ATTRIBUTE`):
-      - an empty record means it holds no workspace boundary -- a single
-        workspace, or a write `nxstress.merge_workspaces` permitted -- and it
-        is read as one workspace whatever is configured;
+      - an empty record means it holds no workspace boundary -- it was
+        written from a single workspace with no field configured -- and it is
+        read as one workspace whatever is configured;
       - otherwise the record must equal the configured set, or the read is
         refused. Reading with fewer fields can silently merge workspaces (see
         `_Peaks._validateDiscriminatorNames`), so the refusal names the fields
@@ -421,12 +417,11 @@ def names_for_read(peaks) -> tuple[str, ...]:
     reflection field from another producer, and cannot be told apart from an
     unconfigured discriminator.
 
-    Note `merge_workspaces` does not make NXstress *merge* anything -- it is
-    purely permissive, lifting the refusal in `_validateMultiWorkspace` so the
-    rows may be concatenated with no boundary recorded. Merging that produces a
-    genuinely merged `HidraWorkspace` happens in PyRS before NXstress is called
-    at all (`HidraWorkspace.append_hidra_project`, used by
-    `CombineRunsModel.combine_project_files`, which then passes a length-1 list).
+    NXstress never merges workspaces: an entry it writes from N > 1
+    workspaces always records the boundary between them. Merging happens in
+    PyRS before NXstress is called (`HidraWorkspace.append_hidra_project`, used
+    by `CombineRunsModel.combine_project_files`, which then passes a length-1
+    list). See Decisions Log row 45 in `plans/NXstress-prod/README.md`.
 
     Args:
         peaks: The `peaks` (NXreflections) group being read.

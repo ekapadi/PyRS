@@ -90,3 +90,23 @@ class TestSubRunNumbersAreNotPositions:
         ws = make_minimal_HidraWorkspace(sub_runs=np.array([1, 2, 3]))
         with pytest.raises(RuntimeError):
             ws.set_sample_log("x", np.array([7, 8, 9]), np.array([30.0, 20.0, 10.0]))
+
+
+class TestDirection:
+    def test_a_constant_log_is_the_direction(self):
+        ws = make_minimal_HidraWorkspace(sub_runs=np.array([1, 2, 3]))
+        ws.set_sample_log("direction", np.array([1, 2, 3]), np.array(["22"] * 3))
+
+        assert ws.direction == "22"
+
+    def test_a_varying_log_raises(self):
+        """A workspace merged from several directions has no single one.
+
+        Used to be `get_sample_log_value`'s bare `AssertionError`, "Single log ...
+        is a np array with multiple items".
+        """
+        ws = make_minimal_HidraWorkspace(sub_runs=np.array([1, 2, 3]))
+        ws.set_sample_log("direction", np.array([1, 2, 3]), np.array(["11", "11", "22"]))
+
+        with pytest.raises(ValueError, match=r"no single direction.*\['11', '22'\]"):
+            ws.direction

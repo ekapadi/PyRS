@@ -182,9 +182,9 @@ class TestCombineRunsViewerRoundtrip:
 
         `NXstress.write` now takes N workspaces, but per the resolved Q3
         CombineRuns keeps its in-PyRS pre-merge -- `append_hidra_project`
-        already discards per-run boundaries exactly as
-        `nxstress.merge_workspaces` would, and the unaffected `.h5` export path
-        needs the single merged workspace regardless. So the export still
+        discards per-run boundaries, which NXstress does not do (Decisions Log
+        row 45), and the unaffected `.h5` export path needs the single merged
+        workspace regardless. So the export still
         passes one workspace and no peak collections, now spelled
         `write([ws], [[]])`, and the entry it produces holds exactly one
         workspace no matter how many runs went in.

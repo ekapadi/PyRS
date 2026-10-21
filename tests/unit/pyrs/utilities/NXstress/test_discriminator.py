@@ -86,7 +86,6 @@ class TestReservedColumns:
 class TestFieldNames:
     def test_default_is_empty(self, config_override):
         assert _discriminator.field_names() == ()
-        assert _discriminator.merge_workspaces() is False
 
     def test_configured_names_are_returned_in_order(self, config_override):
         configure(config_override, "nxstress:\n  discriminator_fields: ['b_field', 'a_field']\n")
@@ -115,11 +114,6 @@ class TestFieldNames:
         with pytest.raises(ValueError, match="more than once"):
             _discriminator.field_names()
 
-    def test_merge_workspaces_override(self, config_override):
-        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
-
-        assert _discriminator.merge_workspaces() is True
-
 
 class TestResolve:
     def test_property_is_preferred_over_a_log(self):
@@ -138,11 +132,17 @@ class TestResolve:
 
         assert _discriminator.resolve(ws, "direction") == "22"
 
-    def test_log_varying_across_scan_points_raises(self):
-        ws = workspace_with_logs(direction=np.array(["11", "22", "33"]))
+    @pytest.mark.parametrize("name", ["direction", "sample_dir"], ids=["property", "log"])
+    def test_value_varying_across_scan_points_raises(self, name):
+        """As in a workspace merged in PyRS from several directions.
 
-        with pytest.raises(AssertionError, match="multiple items"):
-            _discriminator.resolve(ws, "direction")
+        Used to be `get_sample_log_value`'s bare `AssertionError`, "Single log ...
+        is a np array with multiple items", which said nothing about why.
+        """
+        ws = workspace_with_logs(**{name: np.array(["11", "22", "33"])})
+
+        with pytest.raises(ValueError, match=r"discriminator_fields: \[\]', or split it"):
+            _discriminator.resolve(ws, name)
 
     def test_name_in_neither_place_raises(self):
         ws = workspace_with_logs(direction=np.array(["11"] * 3))
@@ -197,14 +197,18 @@ class TestUnresolvableFieldIsReportedAgainstTheConfiguration:
         # Assert
         assert "not a property" in message
 
-    def test_a_constancy_failure_still_raises_assertion_error(self):
+    def test_a_constancy_failure_is_not_described_as_a_typo(self):
         """The other failure `resolve` can meet must not be re-described as a typo."""
         # Arrange -- a log that varies across scan points
-        ws = workspace_with_logs(direction=np.array(["11", "22", "33"]))
+        ws = workspace_with_logs(sample_dir=np.array(["11", "22", "33"]))
 
-        # Act / Assert
-        with pytest.raises(AssertionError):
-            _discriminator.resolve(ws, "direction")
+        # Act
+        with pytest.raises(ValueError) as caught:
+            _discriminator.resolve(ws, "sample_dir")
+
+        # Assert
+        assert "varies across the scan points" in str(caught.value)
+        assert "typo" not in str(caught.value)
 
 
 class TestApply:

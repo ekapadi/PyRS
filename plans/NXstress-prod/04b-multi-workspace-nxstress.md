@@ -1751,3 +1751,50 @@ These are the exceptions Decisions item 41 names.
 none here). A sweep of all 72 citations in this document leaves three landing on
 structural lines, all three the `Was` column of Follow-up 11's own correction
 table — historical by design. No code changed; tiers not re-run.
+
+## Follow-up 13 — 2026-10-21 (phase-2 PR: `merge_workspaces` removed)
+
+**F13.1** — **F4.3 is half right: NXstress performed no merge on write, but did on
+read.** F4.3 says "NXstress performs no merge" and that `merge_workspaces` only lifts
+`_validateMultiWorkspace`'s refusal. That is true of `write`. But an entry written
+that way records no workspace boundary, so `read` can return only one workspace,
+built from every row. NXstress therefore *produced* a merged `HidraWorkspace`, and a
+by-hand demo (`tests/scripts/NXstress/multi_workspace.py`) met it: its `direction`
+log varied, and `ws.direction` raised `get_sample_log_value`'s bare
+`AssertionError`, "Single log direction (= ['11' '11' '11' '22' '22' '22']) is a np
+array with multiple items".
+- Verdict: the key contradicted this document's own round-trip requirement
+  (README Decisions Log row 6). It was also narrower than PyRS's merge: F2.11
+  showed that it refuses two workspaces measuring the same peak, and README row 44
+  showed that a merged write in decreasing scan-point order could not be read.
+- Action: the key is removed, README Decisions Log row 45. The Scope bullet
+  "unless `merge_workspaces: true`" and F2.11's `merge_workspaces` usage note are
+  superseded by that row.
+
+**F13.2** — **What a merged workspace from PyRS does on write.** Measured before the
+fix, with a workspace over sub-runs 1–6 whose `direction` log is `11,11,11,22,22,22`:
+
+```
+[] -> written; read back [1, 2, 3, 4, 5, 6] ['11', '11', '11', '22', '22', '22']
+['direction'] -> AssertionError Single log direction (= ['11' '11' '11' '22' '22' '22']) is a np array with multiple items(shape = (6,))
+```
+
+- Verdict: the behaviour is right and the error is wrong. A discriminator needs one
+  value per workspace, and this workspace has none. `resolve`'s docstring
+  documented the `AssertionError` as expected.
+- Action: `_discriminator.resolve` and `HidraWorkspace.direction` now raise
+  `ValueError` and name the cause. After the fix:
+
+```
+ws.direction: ValueError Workspace 'test_workspace' has no single direction: its `direction` log varies across sub-
+[] -> written; read back [1, 2, 3, 4, 5, 6] ['11', '11', '11', '22', '22', '22']
+['direction'] -> ValueError NXstress: discriminator field 'direction' has no single value for workspace 'test_workspace'.
+```
+
+### Verification
+
+Unit 612 passed, 15 xfailed; integration 115 passed, 28 skipped, 2 xfailed; GUI 31
+passed, 2 xfailed; pre-commit clean. With the pre-fix `workspaces.py` and
+`_discriminator.py` restored, the five new `ValueError` tests fail and the rest
+pass. `tests/scripts/NXstress/multi_workspace.py` shows the merged-in-PyRS case end
+to end.

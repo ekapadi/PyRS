@@ -853,8 +853,7 @@ class NXstress:
         tuple
             `(list[HidraWorkspace], list[list[PeakCollection]])`, parallel and
             in the same order -- the same shape `write` accepts. An entry
-            written from one workspace, or written with
-            `nxstress.merge_workspaces`, yields one of each.
+            that records no workspace boundary yields one of each.
 
         Raises
         ------
@@ -928,8 +927,8 @@ class NXstress:
             groups.setdefault(item.discriminators, []).append(item.collection)
 
         if not discriminator_names or len(groups) <= 1:
-            # One workspace: a pre-04b file, a single-workspace write, or a
-            # `merge_workspaces` write, all of which read back whole -- no rows
+            # One workspace: a pre-04b file, a single-workspace write, or a file
+            # from the since-removed `merge_workspaces`, all of which read back whole -- no rows
             # need selecting. Its discriminators are still carried through, so a
             # single-workspace save round-trips its value like any other.
             discriminators, collections = next(iter(groups.items())) if groups else ((), [])
@@ -1088,14 +1087,15 @@ class NXstress:
         that would be written correctly and then could not be read back.
         """
         # 1. Without a discriminator, the boundary between inputs is not recorded
-        #    anywhere -- so merging them must be an explicit choice.
-        if not _discriminator.field_names() and not _discriminator.merge_workspaces():
+        #    anywhere. NXstress does not merge workspaces: that is PyRS's job,
+        #    done before the write (Decisions Log row 45).
+        if not _discriminator.field_names():
             raise ValueError(
                 f"NXstress.write was given {len(wss)} workspaces, but "
                 "'nxstress.discriminator_fields' names no field, so they could not be told apart "
                 "when the file is read.\n"
-                "  Configure a discriminator field, or set 'nxstress.merge_workspaces: true' to "
-                "merge them indistinguishably on purpose."
+                "  Configure a discriminator field, or merge the workspaces into one in PyRS "
+                "before writing, as CombineRuns does."
             )
 
         # 2. A workspace contributing no `PeakCollection` has no discriminator
@@ -1143,12 +1143,12 @@ class NXstress:
         `read` gives each workspace the rows whose scan points it claims, in the
         order they are on disk, and builds a `SubRuns` from them -- which refuses
         anything not strictly increasing. Interleaved inputs are therefore fine
-        when a discriminator separates them, but a merged entry (or one holding a
-        single discriminator value) is read back whole, and its concatenated axis
+        when a discriminator separates them, but workspaces sharing one
+        discriminator value are read back as one, and their concatenated axis
         must increase.
 
         Refused rather than sorted: the on-disk row order is the inputs' order,
-        and re-sorting the merged rows would break the round trip -- there would
+        and re-sorting the rows would break the round trip -- there would
         then be no way to re-assign them to the individual workspaces on read.
         The requirement itself is arbitrary, and its removal is recommended in
         DD-2 of `plans/PR_review/deferred-defects.md`.
@@ -1158,7 +1158,7 @@ class NXstress:
             points_by_key: Each discriminator key's scan points, mirroring how
                 `_workspaceSelections` groups the entry on read.
             discriminator_names: The entry's discriminator fields; empty for a
-                merged or single-workspace entry.
+                single-workspace entry.
             operation: "write" or "append", for the message.
 
         Raises:
@@ -1253,8 +1253,6 @@ class NXstress:
         and lets a single-workspace save round-trip its discriminator value
         the same way a multi-workspace one does.
         """
-        if _discriminator.merge_workspaces() and len(wss) > 1 and not _discriminator.field_names():
-            return ()
         return _discriminator.field_names()
 
     @classmethod

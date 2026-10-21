@@ -27,7 +27,11 @@ Found and fixed while assembling this PR. Each behaviour fix has a regression te
 
 - NXstress append: a refusal from the instrument, input-data, sample or fit group now invalidates the `NXstress` instance, as `write` documents for every violated invariant.
 
-- NXstress write and append: an entry that would read back a workspace with scan points out of increasing order — a merged write such as `[4, 5, 6]` + `[1, 2, 3]`, or workspaces sharing one discriminator value — is refused with `NotImplementedError`. It used to be written and then could not be read. The rows are not re-sorted, since that would break the round trip. The ordering requirement itself is arbitrary, and DD-2 in [`deferred-defects.md`](../PR_review/deferred-defects.md) recommends dropping it.
+- NXstress write and append: workspaces that share one discriminator value, and would read back as one workspace with scan points out of increasing order (such as `[4, 5, 6]` + `[1, 2, 3]`), are refused with `NotImplementedError`. It used to be written and then could not be read. The rows are not re-sorted, since that would break the round trip. The ordering requirement itself is arbitrary, and DD-2 in [`deferred-defects.md`](../PR_review/deferred-defects.md) recommends dropping it.
+
+- NXstress no longer merges workspaces: the `nxstress.merge_workspaces` configuration key is removed (Decisions Log row 45 in [`plans/NXstress-prod/README.md`](../NXstress-prod/README.md)). With it set, several workspaces were written with no boundary and read back as one workspace built from all their rows, so the round trip was not symmetric. It also refused two workspaces measuring the same peak, and left a decreasing-order write unreadable. Writing more than one workspace with no discriminator field configured is now always refused. The message says to merge in PyRS first, as CombineRuns does. No production code set the key.
+
+- A workspace merged in PyRS, whose `direction` log varies across sub-runs, failed with a bare `AssertionError` ("Single log direction ... is a np array with multiple items") when written under a `direction` discriminator, and when `ws.direction` was read. Both now raise `ValueError` naming the cause. Written with no discriminator, the workspace round-trips as one, with its log intact.
 
 - NXstress read: a file whose `peaks` group carries a reflection field PyRS does not know (for example, from another NXstress producer) is now readable. Every unknown column used to be taken for a discriminator, so the read was refused as "written under different configuration". The rules that replace this are in [Discriminator columns on read and append](#discriminator-columns-on-read-and-append) below.
 
@@ -49,7 +53,7 @@ When several workspaces share one NXstress entry, each `peaks` row carries one *
 
 **Configuration is the authority.** The fields in `nxstress.discriminator_fields` are the discriminators; nothing is inferred from the file's columns. To read a file written with other fields, configure those fields.
 
-**The file records its fields.** Every write sets a `discriminator_fields` attribute on the `peaks` group, listing the fields it was written with. An empty list means the entry holds no workspace boundary: a single workspace, a write with no peak collections, or a write that `nxstress.merge_workspaces` permitted.
+**The file records its fields.** Every write sets a `discriminator_fields` attribute on the `peaks` group, listing the fields it was written with. An empty list means the entry holds no workspace boundary: it was written from a single workspace with no discriminator field configured, or with no peak collections. (A file written with the since-removed `nxstress.merge_workspaces` has one too.)
 
 **Reading an entry that has the record:**
 

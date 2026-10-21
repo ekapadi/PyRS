@@ -38,11 +38,10 @@ nxstress:
   # A name needs no particular spelling: one that is not a Python identifier -- a
   # PV log name such as `BL7:CS:Sample:Dir` -- is encoded reversibly for the
   # on-disk column and recovered exactly on read.
+  #
+  # Empty, a write of more than one workspace is refused. NXstress does not merge
+  # workspaces; merge them in PyRS first, as CombineRuns does.
   discriminator_fields: []
-  # Only consulted when `discriminator_fields` is empty. False rejects a
-  # multi-workspace write outright; true merges the workspaces indistinguishably,
-  # and `read()` then returns the single merged workspace rather than N.
-  merge_workspaces: false
 
 legacy_io:
   # Whether legacy HidraProject (.h5) output is written.

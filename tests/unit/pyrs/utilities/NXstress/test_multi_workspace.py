@@ -254,45 +254,62 @@ class TestEmptyConfigPolicy:
             with pytest.raises(ValueError, match="names no field"):
                 nx.write(workspaces, peakss)
 
-    def test_merge_workspaces_merges_into_one(
+    def test_the_refusal_points_to_merging_in_pyrs(
         self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
     ):
-        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
-        workspaces, peakss = two_workspaces(
-            minimal_HidraWorkspace, minimal_PeakCollection, peak_tags=("Fe110", "Ni200")
-        )
+        """NXstress does not merge workspaces; `nxstress.merge_workspaces` was removed (Decisions Log row 45)."""
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
 
-        path = tmp_path / "merged.nxs"
-        with NXstress(path, "w") as nx:
-            nx.write(workspaces, peakss)
-        with NXstress(path, "r") as nx:
-            read_wss, read_peakss = nx.read()
-
-        assert len(read_wss) == 1
-        np.testing.assert_array_equal(read_wss[0].get_sub_runs().raw_copy(), [1, 2, 3, 4, 5, 6])
-        assert len(read_peakss[0]) == 2
-
-    def test_merging_inputs_that_share_a_compound_key_raises(
-        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
-    ):
-        """Merging discards the only thing that could have told the two apart.
-
-        With no discriminator, two collections that share
-        `(phase, h, k, l, mask)` become two blocks of the *same* index key --
-        which the reader rejects as interleaved. Caught at write time by the
-        existing duplicate check rather than written and found unreadable
-        later. See this spec's Follow-up 2, F2.11: `merge_workspaces` merges
-        the scan-point family, not the peak index.
-        """
-        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
-        workspaces, peakss = two_workspaces(
-            minimal_HidraWorkspace, minimal_PeakCollection, peak_tags=("Fe110", "Fe110")
-        )
-
-        path = tmp_path / "merge-collision.nxs"
-        with NXstress(path, "w") as nx:
-            with pytest.raises(ValueError, match="Duplicate PeakCollection detected"):
+        with NXstress(tmp_path / "no-field.nxs", "w") as nx:
+            with pytest.raises(ValueError, match="merge the workspaces into one in PyRS"):
                 nx.write(workspaces, peakss)
+
+
+class TestAWorkspaceMergedInPyRS:
+    """One workspace whose `direction` log varies, as CombineRuns can produce.
+
+    It is one workspace, so it is written as one: with no discriminator field it
+    round-trips with its log intact. Under a `direction` discriminator it has no
+    single value, and is refused with a `ValueError` saying so -- it used to fail
+    with `get_sample_log_value`'s bare `AssertionError`.
+    """
+
+    @staticmethod
+    def merged(minimal_HidraWorkspace) -> HidraWorkspace:
+        sub_runs = np.arange(1, 7)
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True, sub_runs=sub_runs)
+        ws.set_sample_log("direction", sub_runs, np.array(["11"] * 3 + ["22"] * 3))
+        return ws
+
+    def test_it_round_trips_with_no_discriminator(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        # Arrange
+        ws = self.merged(minimal_HidraWorkspace)
+        path = tmp_path / "merged.nxs"
+
+        # Act
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [[minimal_PeakCollection(N_subrun=6)]])
+        with NXstress(path, "r") as nx:
+            (read_ws,), _ = nx.read()
+
+        # Assert
+        assert read_ws.get_sub_runs().raw_copy().tolist() == [1, 2, 3, 4, 5, 6]
+        assert read_ws.get_sample_log_values("direction").tolist() == ["11"] * 3 + ["22"] * 3
+
+    def test_a_direction_discriminator_is_refused(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        # Arrange
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
+        ws = self.merged(minimal_HidraWorkspace)
+
+        # Act / Assert
+        with NXstress(tmp_path / "merged.nxs", "w") as nx:
+            with pytest.raises(ValueError, match=r"'direction' has no single value"):
+                nx.write([ws], [[minimal_PeakCollection(N_subrun=6)]])
+            assert nx.entry_numbers() == ()
 
 
 class TestWriteTimeInvariants:
@@ -441,45 +458,27 @@ class TestReadBackScanPointOrder:
     @pytest.mark.parametrize(
         "sub_runs_a, sub_runs_b", [((4, 5, 6), (1, 2, 3)), ((1, 3, 5), (2, 4, 6))], ids=["decreasing", "interleaved"]
     )
-    def test_merged_out_of_order_raises(
+    def test_a_shared_discriminator_value_out_of_order_raises(
         self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path, sub_runs_a, sub_runs_b
     ):
-        """Used to write an entry that `read` then refused: a merged entry reads back whole."""
-        # Arrange
-        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
-        workspaces, peakss = two_workspaces(
-            minimal_HidraWorkspace,
-            minimal_PeakCollection,
-            sub_runs_a=sub_runs_a,
-            sub_runs_b=sub_runs_b,
-            peak_tags=("Fe110", "Ni200"),
-        )
-
-        # Act / Assert
-        with NXstress(tmp_path / "merged.nxs", "w") as nx:
-            with pytest.raises(NotImplementedError, match=r"strictly increasing"):
-                nx.write(workspaces, peakss)
-            assert nx.entry_numbers() == ()
-
-    def test_a_shared_discriminator_value_out_of_order_raises(
-        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
-    ):
-        """One discriminator value means one workspace on read, exactly as a merge does."""
+        """Used to write an entry that `read` then refused: one discriminator value reads back as one workspace."""
         # Arrange
         configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
         workspaces, peakss = two_workspaces(
             minimal_HidraWorkspace,
             minimal_PeakCollection,
-            sub_runs_a=(4, 5, 6),
-            sub_runs_b=(1, 2, 3),
+            sub_runs_a=sub_runs_a,
+            sub_runs_b=sub_runs_b,
             directions=("11", "11"),
             peak_tags=("Fe110", "Ni200"),
         )
+        expected = str(list(sub_runs_a + sub_runs_b)).replace("[", r"\[").replace("]", r"\]")
 
         # Act / Assert
         with NXstress(tmp_path / "shared.nxs", "w") as nx:
-            with pytest.raises(NotImplementedError, match=r"\[4, 5, 6, 1, 2, 3\]"):
+            with pytest.raises(NotImplementedError, match=expected):
                 nx.write(workspaces, peakss)
+            assert nx.entry_numbers() == ()
 
     def test_distinct_discriminators_in_decreasing_order_round_trip(
         self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
@@ -502,24 +501,25 @@ class TestReadBackScanPointOrder:
         assert [ws.get_sub_runs().raw_copy().tolist() for ws in read_wss] == [[4, 5, 6], [1, 2, 3]]
 
     @pytest.mark.xfail(
-        reason="DD-2: `SubRuns` requires sorted scan points, so a merged decreasing entry cannot be held",
+        reason="DD-2: `SubRuns` requires sorted scan points, so a decreasing workspace cannot be held",
         raises=NotImplementedError,
         strict=True,
     )
-    def test_merged_decreasing_order_round_trips(
+    def test_shared_value_in_decreasing_order_round_trips(
         self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
     ):
         """The target once the ordering requirement is dropped: the inputs' order is kept."""
         # Arrange
-        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
         workspaces, peakss = two_workspaces(
             minimal_HidraWorkspace,
             minimal_PeakCollection,
             sub_runs_a=(4, 5, 6),
             sub_runs_b=(1, 2, 3),
+            directions=("11", "11"),
             peak_tags=("Fe110", "Ni200"),
         )
-        path = tmp_path / "merged.nxs"
+        path = tmp_path / "shared.nxs"
 
         # Act
         with NXstress(path, "w") as nx:

@@ -1131,4 +1131,22 @@ multi-value query unless every value is known to be present. Never index an
 array by a sub-run number; look up the position. And don't sort scan points to
 satisfy `SubRuns`: in NXstress the on-disk row order is the inputs' order, and
 sorting it breaks the round trip. That is why `NXstress` refuses an
-out-of-order merged write rather than sorting it.
+out-of-order write rather than sorting it.
+
+---
+
+## `validate_config` ignores keys the schema does not declare (2026-10-21)
+
+Found while removing `nxstress.merge_workspaces` (Decisions Log row 45 in
+[`plans/NXstress-prod/README.md`](../plans/NXstress-prod/README.md)).
+`validate_config` builds `ConfigSchema` from `VALIDATED_KEYS`, which is derived
+from the schema itself, so it reads only the keys the schema declares. Any other
+key in `application.yml` or in an `env` override file is never looked at. After the
+removal, an override of `{"extension": ".nxs", "merge_workspaces": "yes"}` reported
+`nxstress.extension` alone. Before it, the same override reported both keys.
+
+**Why this matters going forward:** removing a key from `ConfigSchema` does not
+make an override file that still sets it fail. The key is silently ignored, and so
+is a misspelled key. If a removed key's old value would change behaviour, make the
+new behaviour loud. That is how `merge_workspaces` was removed: a multi-workspace
+write with no discriminator is refused, and the message says what to do instead.

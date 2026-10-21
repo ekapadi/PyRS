@@ -105,11 +105,22 @@ class HidraWorkspace:
             ValueError: If neither `_direction` nor a `direction` sample log is
                 present -- a workspace with no direction has none, and saying so
                 is better than returning `None` into a discriminator column.
-            AssertionError: If the fallback log is not constant across sub-runs,
-                raised by `get_sample_log_value`.
+                Also if the fallback log is not constant across sub-runs, as in a
+                workspace merged from several directions: it has no single
+                direction either.
         """
         if self._direction is not None:
             return self._direction
+        if "direction" in self.sample_log_names:
+            # Checked here rather than left to `get_sample_log_value`, whose
+            # `AssertionError` for a varying log says nothing about why.
+            distinct = sorted({to_text(value) for value in self.get_sample_log_values("direction")})
+            if len(distinct) > 1:
+                raise ValueError(
+                    f"Workspace '{self._name}' has no single direction: its `direction` log varies "
+                    f"across sub-runs ({distinct}), as in a workspace merged from several directions.\n"
+                    "  Read the per-sub-run values with `get_sample_log_values('direction')`."
+                )
         # `SampleLogs` normalises string logs to text on store, so this is already
         # `str`. Routed through the shared conversion anyway: a value can reach a
         # workspace without passing through that boundary, and the cost of assuming

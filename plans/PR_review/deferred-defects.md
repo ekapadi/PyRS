@@ -164,16 +164,18 @@ a sub-run number as an array position
 > neither depends on order. The increasing order is enforced in exactly one
 > place, protects exactly one lookup that can be rewritten without it, and is
 > otherwise never used. Meanwhile it makes a correct NXstress round trip
-> impossible for a merged entry whose inputs are not already in increasing
-> order, and it hides a separate class of real bugs (§4) behind the
+> impossible for workspaces that share a discriminator value and are not
+> already in increasing order, and it hides a separate class of real bugs (§4) behind the
 > appearance of a sorted, contiguous axis.
 
 ### What happens
 
-A merged NXstress write (`nxstress.merge_workspaces`), or an entry whose
-workspaces share one discriminator value, is read back as **one** workspace with
-the rows in on-disk order, which is the inputs' order. Writing `[4, 5, 6]` then
-`[1, 2, 3]` produced a file that `read` refused, from `SubRuns.set`:
+An entry whose workspaces share one discriminator value is read back as **one**
+workspace with the rows in on-disk order, which is the inputs' order. So was a
+merged write (`nxstress.merge_workspaces`), until that key was removed (Decisions
+Log row 45 in `plans/NXstress-prod/README.md`). Writing `[4, 5, 6]` then
+`[1, 2, 3]` produced a file that `read` refused, from `SubRuns.set`. This was
+measured with the merged write:
 
 ```console
 D7 write merged [4,5,6]+[1,2,3] -> [4, 5, 6, 1, 2, 3]
@@ -197,7 +199,7 @@ The rows are deliberately **not** re-sorted. The on-disk order is the inputs'
 order, and sorting it would break the round trip: there would then be no way to
 re-assign the rows to the individual workspaces on read. The refusal is the
 interim. Removing it is the first step once this entry is fixed, and the strict
-xfail `test_multi_workspace.py::TestReadBackScanPointOrder::test_merged_decreasing_order_round_trips`
+xfail `test_multi_workspace.py::TestReadBackScanPointOrder::test_shared_value_in_decreasing_order_round_trips`
 will say so.
 
 ### The analysis: what actually depends on the order
@@ -307,7 +309,7 @@ to pass with 1..N sub-runs.
 - `tests/unit/pyrs/interface/texture_fitting/test_texture_fitting_crtl.py`
 - `tests/unit/pyrs/interface/detector_calibration/test_detector_calibration_model.py` and `test_detector_calibration_crtl.py`
 - `tests/ui/test_peak_fitting_crtl.py::TestSubRunNumbersAreNotPositions`
-- `tests/unit/pyrs/utilities/NXstress/test_multi_workspace.py::TestReadBackScanPointOrder::test_merged_decreasing_order_round_trips`
+- `tests/unit/pyrs/utilities/NXstress/test_multi_workspace.py::TestReadBackScanPointOrder::test_shared_value_in_decreasing_order_round_trips`
 
 ### Why it is deferred
 

@@ -83,7 +83,7 @@ class IndexedPeaks(NamedTuple):
     Attributes:
         discriminators: Name-keyed discriminator values for the input
             workspace this collection came from. Empty for a
-            single-workspace or merged write.
+            single-workspace write with no field configured.
         collection: The peak collection itself.
         logs: Sample logs of that same input workspace, used to look up
             the sample position for this collection's scan points. `None`
@@ -469,7 +469,7 @@ class _Peaks:
         discriminator_names : tuple[str, ...]
             Discriminator fields this entry was written with, already
             cross-checked against the file by `_discriminator.names_for_read`.
-            Empty for a single-workspace or merged entry.
+            Empty for an entry that records no workspace boundary.
 
         Returns
         -------
@@ -595,10 +595,9 @@ class _Peaks:
             discriminator_names: Names the caller says the entry was written with.
                 Empty is legitimate, and means the entry records no workspace
                 boundary: a pre-04b file, a single-workspace file written before
-                any field was configured, or several workspaces that
-                `nxstress.merge_workspaces` permitted to be concatenated
-                indistinguishably. (That setting is permissive only -- NXstress
-                performs no merge of its own; see `_discriminator.names_for_read`.)
+                any field was configured, or one written with the since-removed
+                `nxstress.merge_workspaces`, which concatenated several
+                workspaces indistinguishably (Decisions Log row 45).
 
         Raises:
             RuntimeError: If the two disagree.

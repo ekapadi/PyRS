@@ -96,24 +96,14 @@ class TestTheRecord:
     def test_a_write_records_its_discriminator_fields(self, two_directions):
         assert recorded(two_directions) == ["direction"]
 
-    def test_a_merged_write_records_no_boundary(
-        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
-    ):
+    def test_a_write_with_no_field_records_no_boundary(self, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path):
         # Arrange
-        configure(config_override, "nxstress:\n  merge_workspaces: true\n")
-        workspaces = [
-            minimal_HidraWorkspace(with_instrument=True, with_masks=True, sub_runs=np.array(points))
-            for points in ([1, 2, 3], [4, 5, 6])
-        ]
-        peakss = [
-            [minimal_PeakCollection(N_subrun=3, peak_tag=tag, sub_runs=np.array(points))]
-            for tag, points in (("Fe 110", [1, 2, 3]), ("Fe 211", [4, 5, 6]))
-        ]
-        path = tmp_path / "merged.nxs"
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+        path = tmp_path / "single.nxs"
 
         # Act
         with NXstress(path, "w") as nx:
-            nx.write(workspaces, peakss)
+            nx.write([ws], [[minimal_PeakCollection(N_subrun=3)]])
 
         # Assert
         assert recorded(path) == []

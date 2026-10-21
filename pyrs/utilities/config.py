@@ -77,7 +77,6 @@ class _NXstress(_Section):
     instrument_name: NonBlankText
     instrument_short_name: NonBlankText
     discriminator_fields: DiscriminatorFields
-    merge_workspaces: bool
 
 
 class _LegacyIO(_Section):

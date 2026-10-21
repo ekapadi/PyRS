@@ -287,7 +287,6 @@ shared `Config` singleton from `neutrons_standard`
     extension: ".nxs"
     use_production_names: false
     discriminator_fields: []
-    merge_workspaces: false
   legacy_io:
     enable: true
     extension: ".h5"
@@ -310,10 +309,9 @@ shared `Config` singleton from `neutrons_standard`
   - `nxstress.discriminator_fields: list[str]` (default `[]`) — names of the
     fields that discriminate one input `HidraWorkspace` from another when
     `NXstress.write` is given more than one (spec 04b).
-  - `nxstress.merge_workspaces: bool` (default `false`) — when `true`,
-    permits writing more than one workspace with `discriminator_fields`
-    empty by silently merging them into one indistinguishable combined index
-    instead of raising (spec 04b).
+  - ~~`nxstress.merge_workspaces: bool`~~ — **removed** (Decisions Log row
+    45): more than one workspace with `discriminator_fields` empty is always
+    refused; merging is done in PyRS before NXstress is called.
   - Reserved namespace for future flags (`nxstress.write_raw_counts`,
     `nxstress.strict_schema_validation`, etc.).
 - Packaging: no change needed — `pyproject.toml`'s existing
@@ -386,8 +384,8 @@ workaround cleanly. Scheduled: Phase 1.
   unique scan points and/or other index fields) is assumed, not newly
   validated by this decision — 04b does add an explicit write-time check for
   it, and raises if asked to combine more than one workspace with no
-  discriminator fields configured, unless `nxstress.merge_workspaces` opts
-  into silently merging instead. Discriminator values are the most slowly
+  discriminator fields configured (the `nxstress.merge_workspaces` opt-out
+  this once allowed is removed, Decisions Log row 45). Discriminator values are the most slowly
   varying coordinate of the combined index (`sort_key` prepends them) — not
   because the schema requires global sorting (it doesn't; the reader only
   requires each compound key's run to be contiguous, `_peaks.py:246-338`),
@@ -540,7 +538,7 @@ These two specs sit between Phase 2 (internal cleanup, which touches the same
 **[04b — Multi-workspace NXstress I/O](04b-multi-workspace-nxstress.md):**
 - **Depends on:** spec 01 (Config infrastructure), in addition to 04 — new
   config keys `nxstress.discriminator_fields` and `nxstress.merge_workspaces`
-  (§2.3) land in `pyrs/resources/application.yml`, delivered by spec 01.
+  (§2.3; `merge_workspaces` since removed, Decisions Log row 45) land in `pyrs/resources/application.yml`, delivered by spec 01.
 - **Required PyRS changes:** none. Discriminator-value resolution (property
   on `HidraWorkspace` if one exists, else `SampleLogs` fallback) lives
   entirely in NXstress's own code — no new `HidraWorkspace` method.
@@ -558,8 +556,8 @@ These two specs sit between Phase 2 (internal cleanup, which touches the same
   `peakCollectionsFromNexus`; merge logic across workspaces in
   `_InputData`/`_Sample`/`_Instrument`/`_Fit` `init_group` (plain
   concatenation in workspace order); raise if asked to
-  combine more than one workspace with no discriminator fields configured,
-  unless `nxstress.merge_workspaces` is `true`; update specs 02/03 call
+  combine more than one workspace with no discriminator fields configured
+  (no `merge_workspaces` opt-out: Decisions Log row 45); update specs 02/03 call
   sites to the new (length-1-list-compatible) signature.
 - Retires the direction-aware-container item this document previously
   scheduled under Phase 3 — see the Decisions Log update below.
@@ -809,6 +807,7 @@ hookup is planned unless a downstream requirement emerges.
 | 42 | `HidraWorkspace.direction` is read-only and *restorable*, not settable — **supersedes row 9's "settable `@property` (get/set)"** | **Decided — this repairs a shipped contradiction, not a preference.** Row 9 specified a get/set property so a reader could put `direction` back. What landed instead is a **read-only** property whose getter carries `@restores("_direction")`; a reader restores it with `pyrs.utilities.restorable_property.restore(ws, "direction", value)`. Measured: `direction.fset is None`, assignment raises `AttributeError`, and mypy reports *"Property 'direction' defined in 'HidraWorkspace' is read-only"*. The reason is that a setter exists only for the deserializer's benefit, and putting one on the public API invites the casual assignment the class does not intend to allow — while the restorable mark gives the reader a way in without widening the API. | Spec: [05](05-strain-stress-viewer.md), which row 9 also points at — so a session starting 05 would otherwise read a decision the code refutes. Row 9's **other** half stands and is still 05's work: `nxstress.discriminator_fields` flips from `[]` to `["direction"]`, which is only safe because `direction` is marked restorable — `_discriminator.field_names()` refuses a read-only property that is not. Mechanism and evidence in `plans/PR_review/04b-comments.md`'s `RE-REVIEW RECOMMENDED` section; the mark is on the getter rather than a `property` subclass because mypy does not recognise a subclass as a property. |
 | 43 | Discriminator columns are named by configuration, recorded in the file, and never inferred from it — **refines row 29** | **Decided — this repairs a shipped defect (review D8).** Row 29 cross-checked configuration against *every* non-reserved `peaks` column, so a reflection field from another NXstress producer was taken for a discriminator and the file could not be read at all. Configuration stays the authority, but the file now says what it means: `write` records its fields in the `peaks` group's `discriminator_fields` attribute (an empty list records no workspace boundary). On read, an entry with a record must agree with configuration, and an empty record reads as one workspace; an entry without one is split by the configured fields if every one has a column, read whole if none does, and refused if only some do. Any other column is ignored on read and **refused on append**, which could not grow it. Cost, accepted: for an entry without the record, a configuration that omits a discriminator is not detected, and in one shape silently merges two workspaces (measured: one 6-row collection where two 3-row ones were written). Every entry PyRS writes carries the record, so this affects only foreign and pre-attribute files. | Rules in full: `plans/PRs/phase-2.md`, "Discriminator columns on read and append". Implemented in `_discriminator.names_for_read`/`recorded_names`, `_Peaks._validateDiscriminatorNames`, `NXstress._rejectUnconfiguredColumns`; covered by `test_recorded_discriminators.py`. |
 | 44 | A write or append whose read-back workspace would hold out-of-order scan points is refused, not re-sorted | **Decided — this repairs a shipped defect (review D7).** A merged write, or workspaces sharing one discriminator value, are read back as one workspace in on-disk order, and `SubRuns` refuses a non-increasing axis, so such an entry was written and then could not be read. Re-sorting on write was rejected: the on-disk order is the inputs' order, and sorting it breaks the round trip. The refusal (`NotImplementedError`, nothing written, instance usable) is an interim: the ordering requirement itself is arbitrary, and dropping it is recommended. | DD-2 in [`deferred-defects.md`](../PR_review/deferred-defects.md). Implemented as `NXstress._refuseUnreadableScanPointOrder`; covered by `TestReadBackScanPointOrder` in `test_multi_workspace.py` and `test_append.py`. |
+| 45 | NXstress never merges workspaces: `nxstress.merge_workspaces` is removed — **supersedes row 6's `merge_workspaces` clause, narrows row 44** | **Decided.** With the key set, N workspaces were written with no boundary recorded, and `read` could only return one workspace built from all their rows. So NXstress *did* build a merged `HidraWorkspace`, on read, and 04b's Follow-up 4 F4.3 ("NXstress performs no merge") was true of the write only. That broke write/read symmetry (row 6), and its merge was weaker than PyRS's own: two workspaces measuring the same peak were refused (04b F2.11), so the ordinary multi-direction case could not use it, and a merged write in decreasing scan-point order was unreadable (row 44). No production caller set it: CombineRuns merges in PyRS and passes a length-1 list (row 10). Now, more than one workspace with no discriminator field configured is always refused, and the message says to merge in PyRS first. A workspace merged in PyRS, whose `direction` log varies, is written as one workspace with no discriminator configured. Under a `direction` discriminator it is refused with `ValueError`, since it has no single value; it used to fail with a bare `AssertionError` from `get_sample_log_value`, as did `HidraWorkspace.direction`. Row 44's refusal now covers only workspaces sharing a discriminator value. Files written with the key still read, as one workspace. A leftover key in an override file is ignored, because `validate_config` checks only the keys `ConfigSchema` declares. | Evidence: 04b's Follow-up 13. Removed from `config.py`, `application.yml`, `_discriminator.py` and `NXstress._validateMultiWorkspace`. The `ValueError`s are in `_discriminator.resolve` and `HidraWorkspace.direction`. Covered by `TestEmptyConfigPolicy` and `TestAWorkspaceMergedInPyRS` (`test_multi_workspace.py`), `TestResolve` (`test_discriminator.py`) and `TestDirection` (`test_workspaces.py`). |
 
 ---
 
