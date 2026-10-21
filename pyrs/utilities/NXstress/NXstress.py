@@ -483,6 +483,7 @@ class NXstress:
             raise self._reject(f"NXstress: cannot append -- {error}") from error
 
         self._rejectUnmetCaseAPreconditions(peakss, discriminator_names)
+        self._rejectUnconfiguredColumns(entry, discriminator_names)
         self._rejectDiscriminatorTypeMismatch(entry, indexed, discriminator_names)
         self._rejectUngrowableOrDisagreeingGroups(entry, wss)
         self._classifyCompoundKeys(entry, indexed, discriminator_names)
@@ -528,6 +529,26 @@ class NXstress:
                 "an appended workspace could not be told apart from the one(s) already there.\n"
                 "  Configure 'nxstress.discriminator_fields' and write the entry afresh; this pass "
                 "does not add a column to an entry that lacks one."
+            )
+
+    def _rejectUnconfiguredColumns(self, entry, discriminator_names: tuple) -> None:
+        """Every `peaks` column must be one the append knows how to grow.
+
+        A read ignores a column it does not recognise; an append cannot. It grows
+        the reserved columns and the configured discriminators, so any other
+        column -- another producer's reflection field, or a discriminator the
+        configuration does not name -- would be left short, and the group would
+        no longer be row-aligned.
+        """
+        configured = {_discriminator.column_name(name) for name in discriminator_names}
+        unknown = sorted(_discriminator.columns_on_disk(entry[GROUP_NAME.PEAKS]) - configured)
+        if unknown:
+            raise self._reject(
+                f"NXstress: cannot append -- this entry's `peaks` group has column(s) {unknown}, "
+                f"which are neither PyRS's own nor among the discriminator fields "
+                f"{list(discriminator_names)}.\n"
+                "  An append grows only the columns it knows, so these would be left short. "
+                "Write a new entry instead."
             )
 
     def _rejectDiscriminatorTypeMismatch(self, entry, indexed: list, discriminator_names: tuple) -> None:

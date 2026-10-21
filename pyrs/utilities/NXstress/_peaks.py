@@ -8,6 +8,8 @@ This class provides I/O for the `peaks` `NXreflections` subgroup:
 """
 
 import logging
+
+import h5py
 import numpy as np
 from nexusformat.nexus import NXreflections, NXfield
 import re
@@ -178,6 +180,13 @@ class _Peaks:
             column = _discriminator.column_name(name)
             peaks[column] = NXfield(np.empty((0,), dtype=dtype), maxshape=(None,), chunks=CHUNK_SHAPE(1), units="")
             peaks[column].attrs["local_name"] = name
+        # Which fields discriminate, recorded rather than left to be inferred from
+        # the columns: a reader cannot otherwise tell an unconfigured discriminator
+        # from another producer's reflection field. Empty when there are no
+        # discriminator columns, so "no workspace boundary" is recorded too.
+        peaks.attrs[_discriminator.FIELDS_ATTRIBUTE] = np.array(
+            sorted(discriminator_dtypes or {}), dtype=h5py.string_dtype()
+        )
 
         peaks["scan_point"] = NXfield(np.empty((0,), dtype=np.int32), maxshape=(None,), chunks=CHUNK_SHAPE(1))
 
@@ -570,10 +579,16 @@ class _Peaks:
         surfaces as "Interleaved blocks detected", which is at least loud but names
         the wrong cause.
 
-        So the group is treated as authoritative and the argument is checked against
-        it. This is a different check from `_discriminator.names_for_read`, which
-        compares *configuration* against the file; this compares what the caller
-        passed.
+        So the argument is checked against the group: every name must have its
+        column, and when the entry records the fields it was written with
+        (`_discriminator.FIELDS_ATTRIBUTE`), the names must be exactly those. Any
+        other column is not a discriminator and is ignored -- it may be a
+        reflection field from another NXstress producer. When the entry records
+        nothing, a dropped discriminator cannot be detected here; that is the
+        price of configuration being the authority for such files (see
+        `plans/PRs/phase-2.md`). This is a different check from
+        `_discriminator.names_for_read`, which compares *configuration* against
+        the file; this compares what the caller passed.
 
         Args:
             peaks: The `peaks` (NXreflections) group being read.
@@ -588,14 +603,20 @@ class _Peaks:
         Raises:
             RuntimeError: If the two disagree.
         """
-        on_disk = _discriminator.columns_on_disk(peaks)
-        expected = {_discriminator.column_name(name) for name in discriminator_names}
-        if on_disk != expected:
+        missing = sorted(name for name in discriminator_names if _discriminator.column_name(name) not in peaks)
+        if missing:
             raise RuntimeError(
-                f"NXstress._peaks: the discriminator names given do not match this entry's "
-                f"columns.\n"
-                f"  On disk:  {sorted(on_disk)}\n"
-                f"  Given:    {sorted(expected)} (from {list(discriminator_names)})\n"
+                f"NXstress._peaks: this entry has no column for discriminator field(s) {missing} "
+                f"(given {list(discriminator_names)}).\n"
+                "  Pass the names `_discriminator.names_for_read` returns for this group."
+            )
+        recorded = _discriminator.recorded_names(peaks)
+        if recorded is not None and set(recorded) != set(discriminator_names):
+            raise RuntimeError(
+                f"NXstress._peaks: the discriminator names given do not match the fields this "
+                f"entry records.\n"
+                f"  Recorded: {list(recorded)}\n"
+                f"  Given:    {sorted(discriminator_names)}\n"
                 "  Splitting with the wrong set does not fail loudly -- it silently merges or "
                 "interleaves workspaces. Pass the names `_discriminator.names_for_read` returns "
                 "for this group."

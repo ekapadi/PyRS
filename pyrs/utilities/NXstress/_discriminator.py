@@ -81,6 +81,13 @@ RESERVED_PEAK_COLUMNS = frozenset(
 DiscriminatorKey = tuple[tuple[str, Any], ...]
 
 
+# Attribute on the `peaks` group naming the discriminator fields the entry was
+# written with -- the field names, not their encoded column names. An empty list
+# records that the entry holds no workspace boundary. See `names_for_read` for
+# how it is used, and `plans/PRs/phase-2.md` for the rules in full.
+FIELDS_ATTRIBUTE = "discriminator_fields"
+
+
 def field_names() -> tuple[str, ...]:
     """Configured discriminator field names, validated.
 
@@ -362,28 +369,57 @@ def sort_values(disc_key: DiscriminatorKey) -> tuple:
 
 
 def columns_on_disk(peaks) -> set[str]:
-    """Discriminator column names present on a `peaks` (NXreflections) group.
+    """Columns on a `peaks` (NXreflections) group that PyRS does not reserve.
 
-    The partition is exact rather than heuristic: `field_names` refuses any
-    configured name that encodes onto a reserved column, so every column that
-    is not reserved is a discriminator and nothing else can be.
+    For a PyRS-written entry these are its discriminator columns. They are not
+    *assumed* to be: another NXstress producer may add reflection fields PyRS
+    does not know, so which columns discriminate is decided by configuration
+    (cross-checked against `FIELDS_ATTRIBUTE` when the entry records it), and any
+    other column is ignored on read and refused on append.
     """
     return {str(name) for name in peaks} - RESERVED_PEAK_COLUMNS
+
+
+def recorded_names(peaks) -> tuple[str, ...] | None:
+    """The discriminator fields an entry records it was written with.
+
+    Returns:
+        The names in `FIELDS_ATTRIBUTE`, sorted; an empty tuple when the entry
+        records no workspace boundary; `None` when the attribute is absent -- a
+        file from another producer, or one PyRS wrote before the attribute.
+    """
+    if FIELDS_ATTRIBUTE not in peaks.attrs:
+        return None
+    value = peaks.attrs[FIELDS_ATTRIBUTE]
+    value = getattr(value, "nxvalue", value)
+    # nexusformat reads a one-element string array back as a bare string.
+    return tuple(sorted(to_text(name) for name in np.atleast_1d(np.asarray(value, dtype=object))))
 
 
 def names_for_read(peaks) -> tuple[str, ...]:
     """Discriminator field names to read a `peaks` group with, cross-checked.
 
-    Configuration is the authority on which fields discriminate -- but a file
-    written under different configuration must not be read as though it were
-    written under this one. The two are compared, and a disagreement raises.
+    **Configuration is the authority** on which fields discriminate. The entry
+    is consulted only to refuse a read that would split it wrongly:
 
-    The one tolerated disagreement is a file carrying *no* discriminator
-    columns, which means only that **the entry records no workspace boundary**.
-    Three things produce that: a pre-04b file, a single-workspace file written
-    before any field was configured, and a write of several workspaces that
-    `nxstress.merge_workspaces` permitted to be concatenated indistinguishably.
-    All three are legitimately read back as one workspace.
+    - When the entry records its fields (`FIELDS_ATTRIBUTE`):
+      - an empty record means it holds no workspace boundary -- a single
+        workspace, or a write `nxstress.merge_workspaces` permitted -- and it
+        is read as one workspace whatever is configured;
+      - otherwise the record must equal the configured set, or the read is
+        refused. Reading with fewer fields can silently merge workspaces (see
+        `_Peaks._validateDiscriminatorNames`), so the refusal names the fields
+        to configure.
+    - When it does not (a file from another producer, or a PyRS file written
+      before the attribute):
+      - if none of the configured fields has a column, it is read as one
+        workspace;
+      - if every one does, they are used;
+      - if only some do, the read is refused.
+
+    In every case, any other column the entry carries is ignored: it may be a
+    reflection field from another producer, and cannot be told apart from an
+    unconfigured discriminator.
 
     Note `merge_workspaces` does not make NXstress *merge* anything -- it is
     purely permissive, lifting the refusal in `_validateMultiWorkspace` so the
@@ -396,33 +432,62 @@ def names_for_read(peaks) -> tuple[str, ...]:
         peaks: The `peaks` (NXreflections) group being read.
 
     Returns:
-        The configured field names when the file carries their columns, or an
-        empty tuple when the file carries none.
+        The configured field names, or an empty tuple when the entry is read as
+        one workspace.
 
     Raises:
-        RuntimeError: If the file's discriminator columns are neither absent
-            nor exactly the configured set.
+        RuntimeError: If the entry records fields other than the configured
+            ones, if it records fields whose columns are missing, or if only some
+            configured fields have a column.
     """
     configured = field_names()
-    on_disk = columns_on_disk(peaks)
+    recorded = recorded_names(peaks)
+    present = {name for name in configured if column_name(name) in peaks}
 
-    if not on_disk:
+    ignored = columns_on_disk(peaks) - {column_name(name) for name in (recorded or configured)}
+    if ignored:
+        _logger.info(
+            f"NXstress._discriminator: ignoring column(s) {sorted(ignored)} on this entry's `peaks` group;\n"
+            f"  they are not among the discriminator fields {list(configured)}."
+        )
+
+    if recorded is not None:
+        if not recorded:
+            if configured:
+                _logger.info(
+                    f"NXstress._discriminator: this entry records no workspace boundary, while "
+                    f"'nxstress.discriminator_fields' names {list(configured)};\n"
+                    f"  reading it as a single workspace."
+                )
+            return ()
+        if set(recorded) != set(configured):
+            raise RuntimeError(
+                f"NXstress: this entry was written with discriminator fields {list(recorded)}, "
+                f"but 'nxstress.discriminator_fields' is {list(configured)}.\n"
+                f"  Set 'nxstress.discriminator_fields' to {list(recorded)} to read it: splitting "
+                f"it by any other set can silently merge or mis-split its workspaces."
+            )
+        missing = [name for name in recorded if column_name(name) not in peaks]
+        if missing:
+            raise RuntimeError(
+                f"NXstress: this entry records discriminator fields {list(recorded)}, but has no "
+                f"column for {missing}; the file is damaged."
+            )
+        return configured
+
+    if not present:
         if configured:
             _logger.info(
-                f"NXstress._discriminator: this entry carries no discriminator columns, "
-                f"while 'nxstress.discriminator_fields' names {list(configured)};\n"
+                f"NXstress._discriminator: this entry carries no column for any of "
+                f"'nxstress.discriminator_fields' = {list(configured)};\n"
                 f"  reading it as a single workspace."
             )
         return ()
-
-    expected = {column_name(name) for name in configured}
-    if on_disk != expected:
+    if len(present) != len(configured):
         raise RuntimeError(
-            f"NXstress: this entry's discriminator columns do not match the configured fields.\n"
-            f"  On disk:    {sorted(on_disk)}\n"
-            f"  Configured: {sorted(expected)} (from 'nxstress.discriminator_fields' "
-            f"= {list(configured)})\n"
-            f"  The file was written under different configuration. Set "
-            f"'nxstress.discriminator_fields' to match it, or read a file written under this one."
+            f"NXstress: this entry has columns for discriminator fields {sorted(present)} but not "
+            f"for {sorted(set(configured) - present)}, all of which 'nxstress.discriminator_fields' "
+            f"names.\n"
+            "  Configure the fields the file was written with, or none to read it as one workspace."
         )
     return configured

@@ -164,7 +164,7 @@ class TestBackCompat:
 
         configure(config_override, "nxstress:\n  discriminator_fields: ['run_number']\n")
         with NXstress(path, "r") as nx:
-            with pytest.raises(RuntimeError, match="do not match the configured fields"):
+            with pytest.raises(RuntimeError, match=r"written with discriminator fields \['direction'\]"):
                 nx.read()
 
     def test_an_entry_with_no_peak_collections_carries_no_discriminator_column(

@@ -29,6 +29,8 @@ Found and fixed while assembling this PR. Each behaviour fix has a regression te
 
 - NXstress write and append: an entry that would read back a workspace with scan points out of increasing order — a merged write such as `[4, 5, 6]` + `[1, 2, 3]`, or workspaces sharing one discriminator value — is refused with `NotImplementedError`. It used to be written and then could not be read. The rows are not re-sorted, since that would break the round trip. The ordering requirement itself is arbitrary, and DD-2 in [`deferred-defects.md`](../PR_review/deferred-defects.md) recommends dropping it.
 
+- NXstress read: a file whose `peaks` group carries a reflection field PyRS does not know (for example, from another NXstress producer) is now readable. Every unknown column used to be taken for a discriminator, so the read was refused as "written under different configuration". The rules that replace this are in [Discriminator columns on read and append](#discriminator-columns-on-read-and-append) below.
+
 - Comments and docstrings: `application.yml` names the real decorator for restorable discriminator fields (`@restores`, in `pyrs.utilities.restorable_property`), and three stale test and fixture-script comments are corrected.
 
 **Test-suite defects fixed:**
@@ -40,3 +42,36 @@ Found and fixed while assembling this PR. Each behaviour fix has a regression te
 **Defects recorded, not fixed:**
 
 - DD-2 in [`deferred-defects.md`](../PR_review/deferred-defects.md): the sub-run ordering requirement, and about ten sites that use a sub-run number as an array position. These break on any workspace whose sub-runs do not run 1..N. Each has a strict `xfail` test.
+
+## Discriminator columns on read and append
+
+When several workspaces share one NXstress entry, each `peaks` row carries one **discriminator column** per field in `nxstress.discriminator_fields` (e.g. `direction`), and `read` uses those columns to split the entry back into workspaces. Which columns are discriminators is decided as follows (Decisions Log row 43 in [`plans/NXstress-prod/README.md`](../NXstress-prod/README.md)).
+
+**Configuration is the authority.** The fields in `nxstress.discriminator_fields` are the discriminators; nothing is inferred from the file's columns. To read a file written with other fields, configure those fields.
+
+**The file records its fields.** Every write sets a `discriminator_fields` attribute on the `peaks` group, listing the fields it was written with. An empty list means the entry holds no workspace boundary: a single workspace, a write with no peak collections, or a write that `nxstress.merge_workspaces` permitted.
+
+**Reading an entry that has the record:**
+
+| Record | Result |
+|---|---|
+| empty | Read as one workspace, whatever is configured. |
+| same fields as configured | Split by those fields. |
+| different fields | Refused; the message names the fields to configure. |
+| a recorded field has no column | Refused as damaged. |
+
+**Reading an entry without the record** (a file from another producer, or one written before the attribute existed):
+
+| Configured fields with a column | Result |
+|---|---|
+| none | Read as one workspace. |
+| all | Split by those fields. |
+| some, not all | Refused. |
+
+**Any other column is ignored on read**, with a log message. It may be another producer's reflection field, and cannot be told apart from an unconfigured discriminator.
+
+**An append refuses** an entry that has any column which is neither PyRS's own nor a configured discriminator, before anything is written. An append grows only the columns it knows, so such a column would be left short. The append's other rules are unchanged: the target must already record a workspace boundary, and its fields must match configuration.
+
+**What this costs.** For an entry *without* the record, a configuration that omits a discriminator is not detected. Usually the read is then refused anyway (repeated or out-of-order peak blocks), but when each workspace has one peak and their scan points increase across workspaces, two workspaces silently read back as one. Every file PyRS writes carries the record, so this affects only files from other producers and files written before this change.
+
+Covered by `tests/unit/pyrs/utilities/NXstress/test_recorded_discriminators.py`, one test per rule above, the silent-merge case included.

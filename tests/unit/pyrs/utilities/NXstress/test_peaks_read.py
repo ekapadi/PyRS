@@ -725,7 +725,7 @@ class TestDiscriminatorNamesAreCheckedAgainstTheGroup:
         peaks = self._two_block_group(logs, with_column=False)
 
         # Act / Assert
-        with pytest.raises(RuntimeError, match=r"discriminator names given do not match"):
+        with pytest.raises(RuntimeError, match=r"has no column for discriminator field"):
             _Peaks.peakCollectionRanges(peaks, ("direction",))
 
     def test_the_correct_names_split_into_two_ranges(self, minimal_HidraWorkspace):
