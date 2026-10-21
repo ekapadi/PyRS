@@ -1135,18 +1135,27 @@ out-of-order write rather than sorting it.
 
 ---
 
-## `validate_config` ignores keys the schema does not declare (2026-10-21)
+## `neutrons_standard` adds sections of its own to the configuration document (2026-10-21)
 
-Found while removing `nxstress.merge_workspaces` (Decisions Log row 45 in
-[`plans/NXstress-prod/README.md`](../plans/NXstress-prod/README.md)).
-`validate_config` builds `ConfigSchema` from `VALIDATED_KEYS`, which is derived
-from the schema itself, so it reads only the keys the schema declares. Any other
-key in `application.yml` or in an `env` override file is never looked at. After the
-removal, an override of `{"extension": ".nxs", "merge_workspaces": "yes"}` reported
-`nxstress.extension` alone. Before it, the same override reported both keys.
+Found while making `validate_config` refuse unknown keys (Decisions Log row 46 in
+[`plans/NXstress-prod/README.md`](../plans/NXstress-prod/README.md)). The merged
+document in `Config._config` holds more than `application.yml` and the override
+file: neutrons_standard 0.1.0 adds `environment` (the loaded override's name, in
+`_Config.refresh`), `module.root` and `version.default` (in `_Config.reload`), and,
+when `~/.pyrs/pyrs-user.yml` is in use, `application.version` (written by
+`_Config.swapToUserYml`). The shipped default loads as:
 
-**Why this matters going forward:** removing a key from `ConfigSchema` does not
-make an override file that still sets it fail. The key is silently ignored, and so
-is a misspelled key. If a removed key's old value would change behaviour, make the
-new behaviour loud. That is how `merge_workspaces` was removed: a multi-workspace
-write with no discriminator is refused, and the message says what to do instead.
+```
+nxstress, legacy_io, environment: application, module: {root: .../pyrs}, version: {default: -1}
+```
+
+It also has no public way to list the keys a configuration holds, only
+`Config[...]` and `Config.exists(...)` for a key already known.
+
+**Why this matters going forward:** a check of the whole document must allow these
+sections, and `NEUTRONS_STANDARD_SECTIONS` in `pyrs/utilities/config.py` lists them.
+A neutrons_standard upgrade that adds another would stop PyRS starting;
+`test_config.py::TestUnknownKeysAreRefused::test_a_load_adds_no_unlisted_section`
+fails first and names it. Before row 46, `validate_config` read only the keys
+`ConfigSchema` declares, so an unknown key, misspelled or left over from a removed
+setting, was silently ignored.

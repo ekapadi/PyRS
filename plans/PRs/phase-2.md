@@ -33,6 +33,8 @@ Found and fixed while assembling this PR. Each behaviour fix has a regression te
 
 - A workspace merged in PyRS, whose `direction` log varies across sub-runs, failed with a bare `AssertionError` ("Single log direction ... is a np array with multiple items") when written under a `direction` discriminator, and when `ws.direction` was read. Both now raise `ValueError` naming the cause. Written with no discriminator, the workspace round-trips as one, with its log intact.
 
+- Configuration: a key that PyRS does not define, in `application.yml` or an `env` override file, now stops PyRS at start-up with a message naming the key. It used to be ignored, so a misspelled key, one in the wrong section, or the removed `merge_workspaces` changed nothing and the setting kept its default (Decisions Log row 46). The sections `neutrons_standard` adds itself are exempt.
+
 - NXstress read: a file whose `peaks` group carries a reflection field PyRS does not know (for example, from another NXstress producer) is now readable. Every unknown column used to be taken for a discriminator, so the read was refused as "written under different configuration". The rules that replace this are in [Discriminator columns on read and append](#discriminator-columns-on-read-and-append) below.
 
 - Comments and docstrings: `application.yml` names the real decorator for restorable discriminator fields (`@restores`, in `pyrs.utilities.restorable_property`), and three stale test and fixture-script comments are corrected.

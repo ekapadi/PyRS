@@ -18,7 +18,9 @@ of the shipped default. See `neutrons_standard.config._Config.refresh` for the m
 mechanics.
 
 `neutrons_standard.Config` provides no schema validation of its own (`_Config.validate`
-is a no-op) -- `validate_config` below is PyRS's own rule.
+is a no-op) -- `validate_config` below is PyRS's own rule. It refuses unknown keys as
+well as malformed values: a misspelled or misplaced key would otherwise be ignored, and
+the setting it was meant to change would silently keep its default.
 """
 
 from typing import Annotated, Any, Iterator
@@ -67,7 +69,11 @@ class _Section(BaseModel):
     # enough to accept exactly the malformed values this schema exists to reject:
     # `enable: "false"` validates as `False`, and `use_production_names: "yes"`
     # as `True`. Measured on pydantic 2.13.5.
-    model_config = ConfigDict(strict=True)
+    #
+    # `extra="forbid"` refuses a key the schema does not declare. Without it a
+    # misspelled `discriminator_field:`, or a key left over from a removed
+    # setting, is dropped without a word and the real key keeps its default.
+    model_config = ConfigDict(strict=True, extra="forbid")
 
 
 class _NXstress(_Section):
@@ -105,6 +111,15 @@ class ConfigSchema(_Section):
     legacy_io: _LegacyIO
 
 
+#: Top-level sections `neutrons_standard` adds to the configuration itself, which
+#: `ConfigSchema` does not describe and `validate_config` leaves unchecked:
+#: `environment` (the name of the loaded override), `module.root` and
+#: `version.default` (added by `_Config.reload`), and `application.version`
+#: (written into `~/.pyrs/pyrs-user.yml` by `_Config.swapToUserYml`). Read from
+#: neutrons_standard 0.1.0; `test_config.py` fails if a load adds any other.
+NEUTRONS_STANDARD_SECTIONS: frozenset[str] = frozenset({"environment", "module", "version", "application"})
+
+
 def _dotted_keys(model: type[BaseModel], prefix: str = "") -> Iterator[str]:
     """Every leaf key of `model`, dotted, in declaration order."""
     for name, field in model.model_fields.items():
@@ -122,26 +137,33 @@ def _dotted_keys(model: type[BaseModel], prefix: str = "") -> Iterator[str]:
 VALIDATED_KEYS: tuple[str, ...] = tuple(_dotted_keys(ConfigSchema))
 
 
-def _as_nested(keys: tuple[str, ...]) -> dict:
-    """The configured values for `keys`, shaped like the YAML document.
+def _pyrs_sections() -> dict[str, Any]:
+    """The merged configuration document, without `NEUTRONS_STANDARD_SECTIONS`.
 
-    Read one key at a time through `Config[...]` rather than from the merged
-    document: the document lives in `Config._config`, which is module-private and
-    reserved for test fixtures (see this module's docstring).
+    Read from `Config._config`, which is private to `neutrons_standard`: it offers
+    no public way to list the keys a configuration holds, and refusing unknown
+    keys needs that list. This module is the one place PyRS touches
+    `neutrons_standard` (see the module docstring), so the private access is
+    confined here.
     """
-    document: dict[str, Any] = {}
-    for key in keys:
-        section, _, leaf = key.rpartition(".")
-        document.setdefault(section, {})[leaf] = Config[key]
-    return document
+    return {name: value for name, value in Config._config.items() if name not in NEUTRONS_STANDARD_SECTIONS}
+
+
+def _describe(error: dict) -> str:
+    if error["type"] == "extra_forbidden":
+        return "not a PyRS configuration key; is it misspelled, or in the wrong section?"
+    return error["msg"]
 
 
 def validate_config() -> None:
-    """Raise unless `application.yml` matches `ConfigSchema`.
+    """Raise unless the configuration matches `ConfigSchema`.
+
+    Checks the merged document: the shipped `application.yml` with any override
+    file on top. Sections in `NEUTRONS_STANDARD_SECTIONS` are not checked.
 
     Raises:
-        RuntimeError: If any key is missing or holds the wrong type or shape.
-            The message names each offending key and what was wrong with it.
+        RuntimeError: If any key is missing, unknown, or holds the wrong type or
+            shape. The message names each offending key and what was wrong with it.
         ValueError: If both `nxstress.enable` and `legacy_io.enable` are false --
             PyRS must be able to write at least one output format. Kept outside
             the schema because it is a rule *between* sections, and because a
@@ -149,10 +171,10 @@ def validate_config() -> None:
             to find out which rule failed.
     """
     try:
-        ConfigSchema(**_as_nested(VALIDATED_KEYS))
+        ConfigSchema.model_validate(_pyrs_sections())
     except ValidationError as error:
         problems = "\n".join(
-            "  {}: {}".format(".".join(str(part) for part in item["loc"]), item["msg"]) for item in error.errors()
+            "  {}: {}".format(".".join(str(part) for part in item["loc"]), _describe(item)) for item in error.errors()
         )
         raise RuntimeError(f"Invalid PyRS configuration:\n{problems}") from error
 

@@ -425,3 +425,101 @@ class TestValidateConfigRejectsMalformedValues:
         from pyrs.utilities.config import validate_config
 
         validate_config()
+
+
+class TestUnknownKeysAreRefused:
+    """A key `ConfigSchema` does not declare is refused, not ignored.
+
+    Ignoring one is a silent failure: a misspelled `discriminator_field:`, a key
+    put in the wrong section, or one left over from a removed setting such as
+    `nxstress.merge_workspaces` (Decisions Log row 45 in
+    `plans/NXstress-prod/README.md`) changes nothing, and the setting it was
+    meant to change keeps its default with no sign that anything is wrong.
+
+    These use `default_config.loadEnv`: the override file is the subject.
+    """
+
+    @staticmethod
+    def _load(default_config: "_Config", tmp_path: Path, text: str) -> None:
+        override_file = tmp_path / "override.yml"
+        override_file.write_text(text)
+        default_config.loadEnv(str(override_file))
+
+    def test_a_misspelled_key_raises(self, default_config: "_Config", tmp_path: Path) -> None:
+        # Arrange
+        import pyrs.utilities.config as config_module
+
+        self._load(default_config, tmp_path, "nxstress:\n  discriminator_field: [direction]\n")
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"nxstress\.discriminator_field: not a PyRS configuration key"):
+            config_module.validate_config()
+
+    def test_a_key_in_the_wrong_section_raises(self, default_config: "_Config", tmp_path: Path) -> None:
+        # Arrange
+        import pyrs.utilities.config as config_module
+
+        self._load(default_config, tmp_path, "discriminator_fields: [direction]\n")
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"\n  discriminator_fields: not a PyRS configuration key"):
+            config_module.validate_config()
+
+    def test_a_removed_key_raises(self, default_config: "_Config", tmp_path: Path) -> None:
+        # Arrange
+        import pyrs.utilities.config as config_module
+
+        self._load(default_config, tmp_path, "nxstress:\n  merge_workspaces: true\n")
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"nxstress\.merge_workspaces: not a PyRS configuration key"):
+            config_module.validate_config()
+
+    def test_every_unknown_key_is_named_at_once(self, default_config: "_Config", tmp_path: Path) -> None:
+        # Arrange
+        import pyrs.utilities.config as config_module
+
+        self._load(default_config, tmp_path, "nxstress:\n  extention: h5\nlegacy-io:\n  enable: false\n")
+
+        # Act
+        with pytest.raises(RuntimeError) as caught:
+            config_module.validate_config()
+
+        # Assert
+        message = str(caught.value)
+        assert "nxstress.extention" in message
+        assert "legacy-io" in message
+
+    def test_neutrons_standard_sections_are_not_checked(self, default_config: "_Config", tmp_path: Path) -> None:
+        """What a `~/.pyrs/pyrs-user.yml` written by `swapToUserYml` holds, besides PyRS's own keys."""
+        # Arrange
+        import pyrs.utilities.config as config_module
+
+        self._load(default_config, tmp_path, "environment: pyrs-user\napplication:\n  version: 1.2.3\n")
+
+        # Act / Assert
+        config_module.validate_config()  # must not raise
+
+    def test_a_load_adds_no_unlisted_section(self, default_config: "_Config") -> None:
+        """Pins `NEUTRONS_STANDARD_SECTIONS` against what neutrons_standard really adds.
+
+        If an upgrade adds a section of its own, PyRS would refuse to start. This
+        names the section instead of leaving that to be read off a failed import.
+        """
+        # Arrange
+        from pyrs.utilities.config import NEUTRONS_STANDARD_SECTIONS, ConfigSchema
+
+        # Act
+        added = set(default_config._config) - set(ConfigSchema.model_fields)
+
+        # Assert
+        assert added, "neutrons_standard added no section of its own: the probe is not looking at the document"
+        assert added <= NEUTRONS_STANDARD_SECTIONS, (
+            f"neutrons_standard adds section(s) {sorted(added - NEUTRONS_STANDARD_SECTIONS)} that "
+            "`NEUTRONS_STANDARD_SECTIONS` in `pyrs/utilities/config.py` does not list."
+        )
+
+    def test_the_fixture_refuses_an_unknown_key(self, config_override) -> None:
+        """`config_override` reaches the same check, so a test cannot configure a typo."""
+        with pytest.raises(RuntimeError, match=r"nxstress\.instrument: not a PyRS configuration key"):
+            config_override({"nxstress": {"instrument": "HB2B"}})

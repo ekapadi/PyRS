@@ -7,12 +7,16 @@ Shows that:
    for a boolean, a bare string for the discriminator list, a repeated
    discriminator;
 2. several bad values are reported together, one line per key;
-3. disabling both output formats is refused with `ValueError`;
-4. a discriminator naming a read-only `HidraWorkspace` property is refused when
+3. a key PyRS does not define is refused, whether misspelled, in the wrong
+   section, or left over from a removed setting, while the sections
+   `neutrons_standard` adds itself are accepted;
+4. disabling both output formats is refused with `ValueError`;
+5. a discriminator naming a read-only `HidraWorkspace` property is refused when
    NXstress reads the configuration, since its value could not be restored;
-5. in production, an override file named by the `env` environment variable is
-   validated when PyRS starts, so a bad file stops it with the same message;
-6. `nxstress.instrument_name` is what is written to the file.
+6. in production, an override file named by the `env` environment variable is
+   validated when PyRS starts, so a bad file, including one with a misspelled
+   key, stops it with the same message;
+7. `nxstress.instrument_name` is what is written to the file.
 
 Run from the repository root:
 
@@ -49,6 +53,13 @@ def refusal(exception: type[BaseException], overrides: dict) -> str | None:
     return None
 
 
+UNKNOWN_KEYS = [
+    ("nxstress.discriminator_field", {"nxstress": {"discriminator_field": ["direction"]}}),
+    ("discriminator_fields", {"discriminator_fields": ["direction"]}),
+    ("nxstress.merge_workspaces", {"nxstress": {"merge_workspaces": True}}),
+]
+
+
 def write_one(path) -> None:
     ws = synthetic_workspace([1, 2, 3])
     with NXstress(path, "w") as nx:
@@ -70,6 +81,16 @@ def main() -> None:
     print("  " + (message or "").replace("\n", "\n  "))
     check("both keys are named", "nxstress.extension" in message and "nxstress.use_production_names" in message)
 
+    section("a key PyRS does not define is refused")
+    for key, overrides in UNKNOWN_KEYS:
+        message = refusal(RuntimeError, overrides)
+        detail = next((line.strip() for line in (message or "").splitlines() if line.strip().startswith(key)), None)
+        print(f"  {overrides} -> {detail}")
+        check(f"refused, naming {key}", detail is not None)
+    message = refusal(RuntimeError, {"environment": "pyrs-user", "application": {"version": "1.2.3"}})
+    print(f"  neutrons_standard's own sections -> {'accepted' if message is None else message}")
+    check("neutrons_standard's own sections are accepted", message is None)
+
     section("at least one output format must stay enabled")
     message = refusal(ValueError, {"nxstress": {"enable": False}, "legacy_io": {"enable": False}})
     print(f"  both disabled -> ValueError: {message}")
@@ -87,7 +108,7 @@ def main() -> None:
 
     section("in production: a bad override file stops PyRS at start-up")
     bad = out / "bad_override.yml"
-    bad.write_text("nxstress:\n  extension: .nxs\n  enable: 'false'\n")
+    bad.write_text("nxstress:\n  extension: .nxs\n  enable: 'false'\n  discriminator_field: [direction]\n")
     result = subprocess.run(
         [sys.executable, "-c", "import pyrs.utilities.config"],
         cwd=REPO,
@@ -101,8 +122,8 @@ def main() -> None:
     print(f"  env={bad.name}: exit status {result.returncode}")
     print("  " + "\n  ".join(report))
     check("PyRS does not start", result.returncode != 0)
-    check("both keys are named", any("nxstress.extension" in line for line in report)
-          and any("nxstress.enable" in line for line in report))
+    check("every key is named", all(any(key in line for line in report)
+          for key in ("nxstress.extension", "nxstress.enable", "nxstress.discriminator_field")))
 
     section("the instrument name comes from configuration")
     path = out / "instrument_name.nxs"

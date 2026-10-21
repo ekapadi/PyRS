@@ -2,7 +2,8 @@
 #
 # Override an individual value by setting the `env` OS environment variable to the
 # name (or path) of a `.yml` file whose contents will be deep-merged on top of this
-# file -- see `pyrs/utilities/config.py` for how PyRS loads this.
+# file -- see `pyrs/utilities/config.py` for how PyRS loads this. A key this file
+# does not define is refused when PyRS starts, so check spelling and section.
 
 nxstress:
   # Whether NXstress-format (.nxs) output is written.
