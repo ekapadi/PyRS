@@ -10,15 +10,13 @@
 
 - Added `pyrs/utilities/restorable_property.py`. `@restores("_attr")` marks a read-only property whose value a file reader may put back, through `restore()`. The property stays read-only to everything else, including mypy.
 
-- Added the restorable `HidraWorkspace.direction` (`'11'`, `'22'` or `'33'`). It is the value the workspace was given or restored with, and falls back to the `direction` sample log. `hidra_project_file` is restorable too.
+- Added the restorable `HidraWorkspace.direction` (`'11'`, `'22'` or `'33'`). It is the value the workspace was given or restored with, and falls back to the `direction` sample log. A workspace whose `direction` log varies across sub-runs, such as one merged in PyRS, has no single direction, and `direction` raises `ValueError` saying so. `hidra_project_file` is restorable too.
 
 - `HidraWorkspace.set_reduced_diffraction_data` refuses data whose shape disagrees with the 2θ matrix or the sub-runs. `set_sample_log` no longer sorts the sub-run axis, which silently paired each value with the wrong sub-run when they arrived out of order.
 
 - Configuration is validated when PyRS starts, against a pydantic schema (`ConfigSchema` in `pyrs/utilities/config.py`). A malformed value or an unknown key stops start-up with a message naming each one. Extensions are configured without their dot (`nxs`, `h5`), and `gui_helper.impose_extension` adds it. New keys: `nxstress.instrument_name`, `nxstress.instrument_short_name` and `nxstress.discriminator_fields`.
 
 - Strain/stress viewer: each loaded workspace is given the direction it was selected as, and a project file whose `direction` log records a different one is refused with an error naming both.
-
-- PeakFitting and TextureFitting: a failed load shows an error and leaves the viewer as it was. PeakFitting carried on with the previous workspace, and TextureFitting did not catch the error at all.
 
 - `.pre-commit-config.yaml` excludes the vendored `docs/developer/source/design/nexus/NXstress.nxdl.xml`, which must stay byte-identical to upstream.
 
@@ -32,17 +30,21 @@
 
 - `NXstress.write` takes a list of workspaces and one list of peak collections per workspace, and `read` returns the same shape: `write([ws], [peaks])`, `(wss, peakss) = read()`. It replaces `write(ws, peaks)` / `(ws, peaks) = read()`; the viewers and CombineRuns are updated.
 
-- A file can hold several `NXentry` groups, numbered from 1. `write` and `read` take an `entry_number`, and `entry_numbers()` lists the entries a file holds. With no number, a write grows the last entry; a number one past the last creates a new entry; any other unused number, or one below 1, is refused.
+- A file can hold several `NXentry` groups, numbered from 1. `write` and `read` take an `entry_number`, and `entry_numbers()` lists the entries a file holds. With no number, a write grows the last entry; a number one past the last creates a new entry; any other unused number is refused, and so is a number below 1, by both `write` and `read`.
 
 - Several workspaces can share one entry, told apart by the fields in `nxstress.discriminator_fields` (such as `direction`). Each field becomes a `peaks` column, and `read` splits the entry back into the workspaces written. A field is taken from a `HidraWorkspace` property if there is one, which must be restorable, and otherwise from a sample log. Field names that are not valid NeXus names are encoded reversibly. The rules for which columns count are in [Discriminator columns on read and append](#discriminator-columns-on-read-and-append) below.
 
-- With no discriminator field configured, writing more than one workspace is refused: merge them in PyRS first, as CombineRuns does. Workspaces sharing an entry must agree on instrument geometry, masks and sample description, and must not share a scan point.
+- NXstress never merges workspaces ([Decisions Log row 45](https://github.com/ekapadi/PyRS/blob/EWM17018_NXstress_hookup_phase_2/plans/NXstress-prod/README.md#4-decisions-log)). With no discriminator field configured, writing more than one workspace is refused: merge them in PyRS first, as CombineRuns does. A workspace with more than one value of a configured field, such as a merged workspace under a `direction` discriminator, is refused with `ValueError`; written with no discriminator, it round-trips as one workspace.
 
-- Mode `"a"` appends to an entry: a workspace with a discriminator value the entry does not hold yet is added after the existing rows. More scan points for a value already there are refused with `NotImplementedError`. Every check runs before anything is written, so a refused append leaves the file byte-for-byte unchanged, and the `NXstress` instance can no longer be used.
+- Workspaces sharing an entry must agree on instrument geometry, on their detector masks (compared by contents, not only by name), and on sample name and chemical formula, and must not share a scan point. Raw detector counts must be present on all of them or none.
+
+- Workspaces that share one discriminator value, and would read back as one workspace with scan points out of increasing order (such as `[4, 5, 6]` + `[1, 2, 3]`), are refused with `NotImplementedError` rather than re-sorted, since re-sorting would break the round trip. The ordering requirement itself is arbitrary, and DD-2 in [`deferred-defects.md`](https://github.com/ekapadi/PyRS/blob/EWM17018_NXstress_hookup_phase_2/plans/PR_review/deferred-defects.md) recommends dropping it.
+
+- Mode `"a"` appends to an entry: a workspace with a discriminator value the entry does not hold yet is added after the existing rows. More scan points for a value already there are refused with `NotImplementedError`. An append must satisfy the same agreement rules as a write, and is also refused for a sample log or discriminator value whose type the entry's existing column cannot hold, or for an entry with a `peaks` column that is neither PyRS's own nor a configured discriminator. Every check runs before anything is written, so a refused append leaves the file byte-for-byte unchanged, and the `NXstress` instance can no longer be used.
 
 - Every per-scan-point and per-peak dataset is written resizable, which is what makes an append possible. A file written before phase 2 is refused for append, with a message naming its fixed-size datasets.
 
-- `pyrs.interface.nxstress_load.read_single_workspace`: PeakFitting and TextureFitting refuse a file holding more than one entry, or more than one workspace in its entry, with an error naming what it holds. They used to show the first workspace and silently drop the rest, which a save would then lose.
+- `pyrs.interface.nxstress_load.read_single_workspace`: PeakFitting and TextureFitting refuse a file holding more than one entry, or more than one workspace in its entry, with an error naming what it holds. Showing only the first workspace would silently drop the rest, and a save would then lose them.
 
 - `peaks/sx`, `sy` and `sz` hold each scan point's `vx`/`vy`/`vz` sample coordinates, with a `local_name` attribute naming the log. They were always NaN.
 
@@ -64,45 +66,21 @@ Found and fixed while assembling this PR. Each behaviour fix has a regression te
 
 - TextureFitting: choosing a sample-log plot axis (`vx`, `phi`, …) before fitting, or loading a file while a fit-parameter axis is selected, aborted the application with a `TypeError`. Before a fit, sample-log axes are now plotted from the workspace, and an axis with nothing to show clears the plot.
 
-- PeakFitting: loading a non-HDF5 `.h5`, a malformed `.nxs`, or a multi-file selection that includes a `.nxs` now shows an error. These raised exceptions the load handler did not catch, which aborted the application.
+- PeakFitting: loading a non-HDF5 `.h5`, a malformed `.nxs`, or a multi-file selection that includes a `.nxs` now shows an error. These raised exceptions the load handler did not catch, which aborted the application. After a failed load the viewer also stops, where it carried on against the previously loaded workspace.
 
 - Strain/stress viewer: after a refused load, the file field is left empty. It showed the refused file's name as if it had loaded, because `Controller.filesSelected` checked for `None` and a refused load leaves an empty list.
 
-- Strain/stress viewer: a project file opened to read its `direction` log is now closed explicitly. It was left to `HidraProjectFile.__del__`, so it stayed open for as long as anything else referenced it.
+- Strain/stress viewer: the project file each direction is loaded from is now closed explicitly. It was left to `HidraProjectFile.__del__`, so it stayed open for as long as anything else referenced it.
 
-- NXstress `read`: an `entry_number` of 0 or less is refused with `ValueError`; it silently read entry 1.
-
-- NXstress append: a batch with raw detector counts on some workspaces and not others is refused before anything is written. It used to pass the pre-flight checks and fail part-way through, leaving a damaged entry that read back without error.
-
-- NXstress append: a workspace whose sample name or chemical formula differs from the entry's is refused. The entry's sample description is written once, so the appended rows were recorded under the first write's sample.
-
-- NXstress write and append: detector masks are compared by contents, not only by name. A workspace's mask with a different array under the same name was silently replaced by the first workspace's.
-
-- NXstress append: a sample log or discriminator value whose type the entry's existing column cannot hold is refused up front. A text log appended to a numeric column used to raise inside h5py part-way through, and a float discriminator appended to an integer column was silently truncated.
-
-- NXstress append: a refusal from the instrument, input-data, sample or fit group now invalidates the `NXstress` instance, as `write` documents for every violated invariant.
-
-- NXstress write and append: workspaces that share one discriminator value, and would read back as one workspace with scan points out of increasing order (such as `[4, 5, 6]` + `[1, 2, 3]`), are refused with `NotImplementedError`. It used to be written and then could not be read. The rows are not re-sorted, since that would break the round trip. The ordering requirement itself is arbitrary, and DD-2 in [`deferred-defects.md`](../PR_review/deferred-defects.md) recommends dropping it.
-
-- NXstress no longer merges workspaces: the `nxstress.merge_workspaces` configuration key is removed (Decisions Log row 45 in [`plans/NXstress-prod/README.md`](../NXstress-prod/README.md)). With it set, several workspaces were written with no boundary and read back as one workspace built from all their rows, so the round trip was not symmetric. It also refused two workspaces measuring the same peak, and left a decreasing-order write unreadable. Writing more than one workspace with no discriminator field configured is now always refused. The message says to merge in PyRS first, as CombineRuns does. No production code set the key.
-
-- A workspace merged in PyRS, whose `direction` log varies across sub-runs, failed with a bare `AssertionError` ("Single log direction ... is a np array with multiple items") when written under a `direction` discriminator, and when `ws.direction` was read. Both now raise `ValueError` naming the cause. Written with no discriminator, the workspace round-trips as one, with its log intact.
-
-- Configuration: a key that PyRS does not define, in `application.yml` or an `env` override file, now stops PyRS at start-up with a message naming the key. It used to be ignored, so a misspelled key, one in the wrong section, or the removed `merge_workspaces` changed nothing and the setting kept its default (Decisions Log row 46). The sections `neutrons_standard` adds itself are exempt.
-
-- NXstress read: a file whose `peaks` group carries a reflection field PyRS does not know (for example, from another NXstress producer) is now readable. Every unknown column used to be taken for a discriminator, so the read was refused as "written under different configuration". The rules that replace this are in [Discriminator columns on read and append](#discriminator-columns-on-read-and-append) below.
-
-- Comments and docstrings: `application.yml` names the real decorator for restorable discriminator fields (`@restores`, in `pyrs.utilities.restorable_property`), and three stale test and fixture-script comments are corrected.
+- Configuration: a key that PyRS does not define, in `application.yml` or an `env` override file, now stops PyRS at start-up with a message naming the key. It used to be ignored, so a misspelled key, or one in the wrong section, changed nothing and the setting kept its default ([Decisions Log row 46](https://github.com/ekapadi/PyRS/blob/EWM17018_NXstress_hookup_phase_2/plans/NXstress-prod/README.md#4-decisions-log)). The sections `neutrons_standard` adds itself are exempt.
 
 **Test-suite defects fixed:**
 
 - Every GUI test module now builds its window per test, on pytest-qt's `qtbot`, instead of sharing one session-scoped window, and the shared `my_qtbot` fixture is gone. Shared windows made tests order-dependent: two TextureFitting tests failed only when run after one that left plot axes selected. The segfault cited as the reason for sharing cannot be reproduced (see `tests/ui/conftest.py`).
 
-- `test_workspace_read.py` is updated to phase 2's list-based `write`/`read` API.
-
 **Defects recorded, not fixed:**
 
-- DD-2 in [`deferred-defects.md`](../PR_review/deferred-defects.md): the sub-run ordering requirement, and about ten sites that use a sub-run number as an array position. These break on any workspace whose sub-runs do not run 1..N. Each has a strict `xfail` test.
+- DD-2 in [`deferred-defects.md`](https://github.com/ekapadi/PyRS/blob/EWM17018_NXstress_hookup_phase_2/plans/PR_review/deferred-defects.md): the sub-run ordering requirement, and about ten sites that use a sub-run number as an array position. These break on any workspace whose sub-runs do not run 1..N. Each has a strict `xfail` test.
 
 - DD-3: the strain/stress viewer raises `IndexError` when a project file with no peak collections is loaded as e22 or e33. Predates phase 2.
 
@@ -110,11 +88,11 @@ Found and fixed while assembling this PR. Each behaviour fix has a regression te
 
 ## Discriminator columns on read and append
 
-When several workspaces share one NXstress entry, each `peaks` row carries one **discriminator column** per field in `nxstress.discriminator_fields` (e.g. `direction`), and `read` uses those columns to split the entry back into workspaces. Which columns are discriminators is decided as follows (Decisions Log row 43 in [`plans/NXstress-prod/README.md`](../NXstress-prod/README.md)).
+When several workspaces share one NXstress entry, each `peaks` row carries one **discriminator column** per field in `nxstress.discriminator_fields` (e.g. `direction`), and `read` uses those columns to split the entry back into workspaces. Which columns are discriminators is decided as follows ([Decisions Log row 43](https://github.com/ekapadi/PyRS/blob/EWM17018_NXstress_hookup_phase_2/plans/NXstress-prod/README.md#4-decisions-log)).
 
 **Configuration is the authority.** The fields in `nxstress.discriminator_fields` are the discriminators; nothing is inferred from the file's columns. To read a file written with other fields, configure those fields.
 
-**The file records its fields.** Every write sets a `discriminator_fields` attribute on the `peaks` group, listing the fields it was written with. An empty list means the entry holds no workspace boundary: it was written from a single workspace with no discriminator field configured, or with no peak collections. (A file written with the since-removed `nxstress.merge_workspaces` has one too.)
+**The file records its fields.** Every write sets a `discriminator_fields` attribute on the `peaks` group, listing the fields it was written with. An empty list means the entry holds no workspace boundary: it was written from a single workspace with no discriminator field configured, or with no peak collections.
 
 **Reading an entry that has the record:**
 
@@ -125,7 +103,7 @@ When several workspaces share one NXstress entry, each `peaks` row carries one *
 | different fields | Refused; the message names the fields to configure. |
 | a recorded field has no column | Refused as damaged. |
 
-**Reading an entry without the record** (a file from another producer, or one written before the attribute existed):
+**Reading an entry without the record** (a file from another producer, or one written by phase 1):
 
 | Configured fields with a column | Result |
 |---|---|
@@ -137,7 +115,7 @@ When several workspaces share one NXstress entry, each `peaks` row carries one *
 
 **An append refuses** an entry that has any column which is neither PyRS's own nor a configured discriminator, before anything is written. An append grows only the columns it knows, so such a column would be left short. The append's other rules are unchanged: the target must already record a workspace boundary, and its fields must match configuration.
 
-**What this costs.** For an entry *without* the record, a configuration that omits a discriminator is not detected. Usually the read is then refused anyway (repeated or out-of-order peak blocks), but when each workspace has one peak and their scan points increase across workspaces, two workspaces silently read back as one. Every file PyRS writes carries the record, so this affects only files from other producers and files written before this change.
+**What this costs.** For an entry *without* the record, a configuration that omits a discriminator is not detected. Usually the read is then refused anyway (repeated or out-of-order peak blocks), but when each workspace has one peak and their scan points increase across workspaces, two workspaces silently read back as one. Every file PyRS writes carries the record, so this affects only files from other producers and files written by phase 1.
 
 Covered by `tests/unit/pyrs/utilities/NXstress/test_recorded_discriminators.py`, one test per rule above, the silent-merge case included.
 
