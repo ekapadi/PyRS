@@ -144,3 +144,45 @@ class TestProjectFileIsClosed:
         # Assert
         assert len(opened) == 1
         assert opened[0]._project_h5 is None, "the project file was left open"
+
+
+class TestControllerReportsARefusedLoad:
+    """`Controller.filesSelected` answers whether the selection loaded.
+
+    The viewer's file field shows the selected names only when it returns True.
+    A refused load leaves the model holding an empty list, not None, so a check
+    for None reported every refusal as a success and the field showed a file
+    that had not loaded.
+    """
+
+    def test_a_refused_load_is_not_reported_as_loaded(
+        self, model_and_failures, minimal_HidraWorkspace: Callable[..., HidraWorkspace], tmp_path: Path
+    ) -> None:
+        # Arrange
+        from pyrs.interface.strainstressviewer.controller import Controller
+
+        model, failures = model_and_failures
+        path = _project_with_direction(tmp_path, minimal_HidraWorkspace, "22")
+
+        # Act
+        loaded = Controller(model).filesSelected("e11", [str(path)])
+
+        # Assert
+        assert failures, "the load was expected to be refused"
+        assert loaded is False
+
+    def test_an_accepted_load_is_reported_as_loaded(
+        self, model_and_failures, minimal_HidraWorkspace: Callable[..., HidraWorkspace], tmp_path: Path
+    ) -> None:
+        # Arrange
+        from pyrs.interface.strainstressviewer.controller import Controller
+
+        model, failures = model_and_failures
+        path = _project_with_direction(tmp_path, minimal_HidraWorkspace, "11")
+
+        # Act
+        loaded = Controller(model).filesSelected("e11", [str(path)])
+
+        # Assert
+        assert not failures
+        assert loaded is True

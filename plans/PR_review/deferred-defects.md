@@ -336,3 +336,80 @@ contains it with the refusal above instead.
 See also [docs/ground_truths.md](../../docs/ground_truths.md), "Two data-model
 limits that bite any multi-record NeXus write", which first recorded that
 `SubRuns` cannot hold a non-monotonic array.
+
+---
+
+## DD-3 — Strain/stress viewer: a direction with no fitted peaks crashes on load
+
+**Found during:** phase-2 PR: checking the strain/stress GUI steps in `plans/PRs/phase-2.md`
+**Owner:** `pyrs/interface/strainstressviewer/model.py`, which phase 2 does not otherwise change here
+**Status:** open, not patched here
+
+### What happens
+
+Loading a project file with no peak collections as **e22** or **e33** raises
+`IndexError`. `Model.check_peak_for_direction`
+([model.py:136](../../pyrs/interface/strainstressviewer/model.py#L136)) answers
+"does every file carry the selected peak?" by looping over the files' peak
+dictionaries, so with none it returns True. The `e22`/`e33` setters
+([model.py:61](../../pyrs/interface/strainstressviewer/model.py#L61),
+[model.py:75](../../pyrs/interface/strainstressviewer/model.py#L75)) then call
+`create_strain` ([model.py:125](../../pyrs/interface/strainstressviewer/model.py#L125)),
+which builds an empty strain list and indexes its first element. The `selectedPeak`
+setter takes the same path for every loaded direction. **e11** is not affected,
+because its setter does not build a strain.
+
+Measured on `tests/data/HB2B_1320.h5` with its `peaks/peak0` group deleted,
+through `Controller.filesSelected("e22", [path])`:
+
+```
+e22 -> IndexError: list index out of range
+  File "/home/ux0/workspaces/PyRS/pyrs/interface/strainstressviewer/model.py", line 134, in create_strain
+    setattr(self, f"_e{direction}_strain", sum(strain_list[1:], strain_list[0]))
+                                                                ~~~~~~~~~~~^^^
+IndexError: list index out of range
+```
+
+In the viewer the exception leaves the **Browse** button's slot uncaught.
+
+### Why it is deferred
+
+It predates phase 2, and phase 2 does not change what it depends on. Input to the
+strain/stress viewer is a fitted project file in practice, so a file with no peak
+collections is unusual. It was found while exercising the phase-2 direction check,
+not caused by it.
+
+### If picked up
+
+1. In `check_peak_for_direction`, return False when the direction has no peak
+   dictionaries (or none holding `selectedPeak`), so no strain is built.
+2. Decide whether such a file should be refused with a `failureMsg`, since a
+   direction with no peaks cannot contribute a strain.
+3. Regression test beside `tests/integration/test_strainstress_direction.py`,
+   loading a no-peaks file as e22.
+
+---
+
+## DD-4 — Strain/stress viewer: `Controller.fileSelected` is dead, and broken
+
+**Found during:** phase-2 PR: fixing `Controller.filesSelected`'s success check
+**Owner:** `pyrs/interface/strainstressviewer/controller.py`
+**Status:** open, not patched here
+
+### What happens
+
+`Controller.fileSelected(name, filename)`
+([controller.py:5](../../pyrs/interface/strainstressviewer/controller.py#L5))
+calls `self._model.set_workspace(...)`, which `Model` does not define
+(`hasattr(Model(), "set_workspace")` is False), so any call raises
+`AttributeError`. Nothing calls it: a `grep` over `pyrs/` and `tests/` finds only
+its definition. The plural `filesSelected` is the one the viewer uses. The
+method dates from af206107 (2020-06-25).
+
+### Why it is deferred
+
+Dead code has no symptom, and removing it is unrelated to phase 2.
+
+### If picked up
+
+Delete `fileSelected`.
