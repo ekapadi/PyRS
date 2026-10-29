@@ -6,8 +6,8 @@ Shows that:
    one entry read back as two, each with its own direction;
 2. with no discriminator field, a multi-workspace write is refused: NXstress
    does not merge workspaces. A workspace merged in PyRS (as CombineRuns does)
-   is written as one workspace, and refused under a discriminator it has no
-   single value for;
+   is written as one workspace -- under a discriminator it has no single value
+   for too, recording no boundary, since one workspace has none to record;
 3. a Case A append (a new direction) works; a Case B append (more scan points
    for a direction the entry already holds) is refused;
 4. a read whose configuration disagrees with the fields the entry records is
@@ -18,7 +18,7 @@ Shows that:
 
 Run from the repository root:
 
-    pixi run python tests/scripts/NXstress/multi_workspace.py [output-dir]
+    pixi run python tests/scripts/cis_tests/NXstress/multi_workspace.py [output-dir]
 """
 
 from _fixtures import check, nxstress_config, output_dir, run, section, sha256, synthetic_peaks, synthetic_workspace
@@ -69,7 +69,7 @@ def main() -> None:
 
     section("no discriminator field")
     refused = out / "refused.nxs"
-    with NXstress(refused, "w") as nx:
+    with nxstress_config(discriminator_fields=[]), NXstress(refused, "w") as nx:
         message = raises(ValueError, lambda: nx.write(*two_directions()))
     print(f"  two workspaces -> ValueError: {message}")
     check("a multi-workspace write is refused", message is not None)
@@ -78,9 +78,10 @@ def main() -> None:
     merged_ws = synthetic_workspace([1, 2, 3, 4, 5, 6])
     merged_ws.set_sample_log("direction", np.arange(1, 7), np.array(["11"] * 3 + ["22"] * 3))
     merged = out / "merged.nxs"
-    with NXstress(merged, "w") as nx:
-        nx.write([merged_ws], [[synthetic_peaks(merged_ws)]])
-    (back,) = read_back(merged)
+    with nxstress_config(discriminator_fields=[]):
+        with NXstress(merged, "w") as nx:
+            nx.write([merged_ws], [[synthetic_peaks(merged_ws)]])
+        (back,) = read_back(merged)
     points = back.get_sub_runs().raw_copy().tolist()
     directions = back.get_sample_log_values("direction").tolist()
     print(f"  no discriminator -> read back sub-runs {points}, direction log {directions}")
@@ -91,10 +92,12 @@ def main() -> None:
     check("it has no single direction", message is not None)
 
     with nxstress_config(discriminator_fields=["direction"]):
-        with NXstress(out / "merged_refused.nxs", "w") as nx:
-            message = raises(ValueError, lambda: nx.write([merged_ws], [[synthetic_peaks(merged_ws)]]))
-    print(f"  discriminator_fields: [direction] -> ValueError: {message}")
-    check("it is refused under a discriminator it has no single value for", message is not None)
+        merged_direction = out / "merged_under_direction.nxs"
+        with NXstress(merged_direction, "w") as nx:
+            nx.write([merged_ws], [[synthetic_peaks(merged_ws)]])
+        workspaces = read_back(merged_direction)
+    print(f"  discriminator_fields: [direction] -> read back as {len(workspaces)} workspace(s)")
+    check("under a discriminator it has no single value for, it is still one workspace", len(workspaces) == 1)
 
     with nxstress_config(discriminator_fields=["direction"]):
         section("Case A append: a new direction")
