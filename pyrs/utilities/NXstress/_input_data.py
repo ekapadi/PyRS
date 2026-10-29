@@ -91,7 +91,7 @@ class _InputData:
             data: The target entry's existing `input_data` group.
 
         Returns:
-            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+            Path -> `NXfield`, for `_append.validate_appendable_shapes`.
         """
         return row_aligned_fields(data, GROUP_NAME.INPUT_DATA)
 

@@ -743,7 +743,7 @@ class TestDiscriminatorNamesAreCheckedAgainstTheGroup:
 
         # Assert
         assert [(start, end) for _, _, start, end in ranges] == [(0, 3), (3, 6)]
-        assert [dict(disc)["direction"] for disc, _, _, _ in ranges] == ["11", "22"]
+        assert [dict(key.discriminators)["direction"] for key, _, _, _ in ranges] == ["11", "22"]
 
     def test_a_column_less_group_still_reads_with_no_names(self, minimal_HidraWorkspace):
         """Empty is legitimate: it means the entry records no workspace boundary."""
