@@ -1,5 +1,6 @@
 """
-The strain/stress viewer's saved state (`Model.to_json` / `Model.from_json`) over project files.
+The strain/stress viewer's model over project files: its saved state (`Model.to_json` /
+`Model.from_json`), and loading a direction from a file it cannot use.
 
 A restore that cannot complete -- a file that fails to load, a peak one direction
 lacks, a file with no fitted peaks -- is reported and leaves stress uncalculated,
@@ -116,3 +117,17 @@ def test_a_file_with_no_peaks_is_never_mispaired(model_and_failures, test_data_d
     assert model.e11_peaks[0] == {}
     assert model.stress is None
     assert model.validate_selection("11") == "Peak peak0 is not in e11"
+
+
+def test_a_file_with_no_peaks_loads_as_e22(test_data_dir):
+    """A file without fitted peaks is reported as lacking the peak, never an `IndexError` from its strain."""
+    # Arrange
+    model = Model()
+    model.e11 = os.path.join(test_data_dir, "HB2B_1320.h5")
+
+    # Act
+    model.e22 = os.path.join(test_data_dir, "HB2B_1423.h5")
+
+    # Assert
+    assert len(model.e22) == 1
+    assert model.validate_selection("22") == "Peak None is not in e22"
