@@ -616,7 +616,7 @@ class TestNXstress:
         )
         required_subgroups: list[tuple[str, type[object]]] = []
 
-        peaks = _Peaks.init_group(_Peaks.indexed([peak0], sampleLogs), sampleLogs)
+        peaks = _Peaks.init_group(_Peaks.indexed([peak0], sampleLogs), sampleLogs, run_boundary=True)
         assert isinstance(peaks, NXreflections)
         for key in required_fields:
             assert key in peaks
