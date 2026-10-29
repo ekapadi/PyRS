@@ -24,14 +24,12 @@ real instrument parameters rather than invented ones. Everything else -- sample
 logs, reduced diffraction data and fit results -- is copied verbatim, and the
 original file is left in place.
 
-The first fixture, ``HB2B_1327_with_instrument.h5``, was built for spec 04's
-``## Verification``, which asks for a ``.nxs`` written "from a real HB2B dataset"
-with ``peaks/sx,sy,sz`` confirmed non-NaN. Every file with finite ``vx``/``vy``/
-``vz`` lacked geometry, and every file with geometry had non-finite coordinates
-(spec 04's Follow-up 7 F7.10); 1327 was chosen for its coordinates. A test whose
-subject were synthesised would be circular, which is why the base file was chosen
-for its coordinates rather than for its geometry. The others were added so that
-real data reach the other NXstress workflows:
+The first fixture, ``HB2B_1327_with_instrument.h5``, exists so that a ``.nxs``
+can be written from a real HB2B dataset with ``peaks/sx,sy,sz`` non-NaN. Every
+file with finite ``vx``/``vy``/``vz`` lacked geometry, and every file with
+geometry had non-finite coordinates; 1327 was chosen for its coordinates. The
+others let the NXstress round trips of the strain/stress viewer and of
+TextureFitting run on real data:
 
 * ``HB2B_1328``, ``HB2B_1331`` and ``HB2B_1332`` -- with 1327, the runs the
   strain/stress tests have always used together;

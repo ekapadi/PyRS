@@ -221,7 +221,7 @@ class PeakCollectionLite:
 
     @property
     def runnumber(self) -> int:
-        """The configured "no run number" value (`nxstress.default_run_number`): never set"""
+        """The configured "no run number" value (`nxstress.default_run_number`): never set."""
         return default_run_number()
 
     @property

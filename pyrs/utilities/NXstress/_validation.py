@@ -53,7 +53,6 @@ def validate_inputs(wss: list[HidraWorkspace], peakss: list[list[PeakCollection]
         raise ValueError("NXstress.write requires at least one `HidraWorkspace`.")
 
     for n, ws in enumerate(wss):
-        # VERIFY that all required logs are present.
         logs = ws.sample_log_names
         for k in REQUIRED_LOGS:
             if k not in logs:
@@ -64,10 +63,8 @@ def validate_inputs(wss: list[HidraWorkspace], peakss: list[list[PeakCollection]
     elif not Config["nxstress.allow_partial_peak_coverage"]:
         validate_peak_coverage(wss, peakss)
 
-    # VERIFY that no duplicate PeakCollections exist
     _Peaks.validateNoDuplicatePeaks(indexed)
 
-    # VERIFY that any <scan point> or <mask> referenced by any `PeakCollection` is included in the workspace.
     for ws, peaks in zip(wss, peakss):
         _Fit.validateWorkspaceAndPeaksData(ws, peaks)
 
@@ -83,7 +80,7 @@ def validate_multi_workspace(wss: list[HidraWorkspace], peakss: list[list[PeakCo
     """
     # 1. Without a discriminator, the boundary between inputs is not recorded
     #    anywhere. NXstress does not merge workspaces: that is PyRS's job,
-    #    done before the write (Decisions Log row 45).
+    #    done before the write.
     if not _discriminator.field_names():
         raise ValueError(
             f"NXstress.write was given {len(wss)} workspaces, but "

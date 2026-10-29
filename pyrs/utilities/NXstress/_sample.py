@@ -496,7 +496,8 @@ class _Sample:
             # An entry written before this group existed. Appending to it would
             # leave a chain shorter than the axes it describes, which is worse
             # than the absence -- `validateAppend` refuses such an entry in the
-            # pre-flight pass, so this is a backstop, not a path.
+            # pre-flight pass, as does `_append.reject_run_index_mismatch`, since
+            # such an entry also predates the run index. This is a backstop, not a path.
             raise RuntimeError(
                 "NXstress._sample: the target entry has no `transformations` group, so its "
                 "sample frame is undefined and cannot be extended.\n"
@@ -513,7 +514,7 @@ class _Sample:
 
         Declared by the module that writes the group, rather than discovered by
         array length from outside it -- see `_definitions.row_aligned_fields` for
-        why the length sweep this replaced could reject a legal append.
+        why array length cannot decide which datasets grow.
 
         Args:
             sd: The target entry's existing `SAMPLE_DESCRIPTION` group.
