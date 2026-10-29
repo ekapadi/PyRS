@@ -368,7 +368,7 @@ NO_LOG = "_no_log_"
 
 #: The run index's column, on `peaks` and `SAMPLE_DESCRIPTION`, and the sample log
 #: it is read from (see `_runs`). Here, in the leaf module, because `_discriminator`
-#: reserves it and `_runs` builds on `_discriminator`.
+#: reserves it and `_runs` reads and writes it, and neither imports the other.
 RUN_NUMBER = "run_number"
 
 #: `peaks` attribute recording whether the run is part of the workspace key.

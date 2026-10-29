@@ -326,11 +326,10 @@ def test_peak_collection_lite():
 class TestRunNumberDefault:
     """A collection that records no run number takes the configured value, read when created.
 
-    The default used to be a literal `-1` in the signature. It now comes from
-    `nxstress.default_run_number`, and is looked up when the collection is
-    constructed rather than when the module is imported -- so an override, a
-    test's or a deployment's, is seen. A signature default would have been
-    frozen at import.
+    The default comes from `nxstress.default_run_number`, and is looked up when
+    the collection is constructed rather than when the module is imported -- so
+    an override, a test's or a deployment's, is seen. A signature default would
+    be frozen at import.
     """
 
     def test_an_unset_run_number_takes_the_configured_default(self, config_override):

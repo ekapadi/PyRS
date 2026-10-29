@@ -945,7 +945,7 @@ class StrainStressViewer(QMainWindow):
             self.enable_stress_output(False)
         self.update_nxstress_action()
 
-    def update_nxstress_action(self):
+    def update_nxstress_action(self) -> None:
         """Enable the NXstress actions when NXstress I/O is on, and saving when something can be written.
 
         **Load NXstress...** follows `nxstress.enable` alone.
@@ -1031,19 +1031,27 @@ class StrainStressViewer(QMainWindow):
         if filename:
             self.controller.load(filename)
 
-    def save_nxstress(self):
+    def save_nxstress(self) -> None:
+        """File > Save as NXstress...: write every loaded direction to one `.nxs` file.
+
+        A failure is reported in a dialog, and leaves any existing file untouched.
+        """
         filename, _ = QFileDialog.getSaveFileName(self, "Save as NXstress", "", NXSTRESS_FILE_FILTER)
         if filename:
             # Imposes the configured extension, and replaces an existing file only on success.
             write_nxstress_or_report(self, filename, self.model.save_as_nxstress)
 
-    def load_nxstress(self):
+    def load_nxstress(self) -> None:
+        """File > Load NXstress...: load every direction from one `.nxs` file.
+
+        A refused file is reported by the model, and the window is left as it was.
+        """
         filename, _ = QFileDialog.getOpenFileName(self, "Load NXstress", "", f"{NXSTRESS_FILE_FILTER};;All Files (*)")
         if filename and self.model.load_nxstress(filename):
             self.update_file_fields()
             self.update_plot()
 
-    def update_file_fields(self):
+    def update_file_fields(self) -> None:
         """Show the files each direction was loaded from, each name once.
 
         A direction loaded from an NXstress file lists that file once per

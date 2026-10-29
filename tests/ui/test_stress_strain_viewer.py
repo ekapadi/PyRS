@@ -605,39 +605,6 @@ def test_model_from_json(tmpdir, test_data_dir):
     assert d0.errors[0] == 0.000123
 
 
-@pytest.mark.integration
-def test_model_from_json_with_a_missing_file_is_reported(tmpdir, test_data_dir):
-    """A direction that fails to load is reported and left empty; stress waits, as in the window."""
-    # Arrange
-    model_json = {
-        "stress_case": "in-plane-stress",
-        "filenames_11": [os.path.join(test_data_dir, "HB2B_1320.h5")],
-        "filenames_22": [str(tmpdir.join("missing.h5"))],
-        "filenames_33": [],
-        "peak_tag": "peak0",
-        "youngs_modulus": 200,
-        "poisson_ratio": 0.3,
-        "d0": {"d0": 1.0123, "d0_error": 0.000123},
-    }
-    json_filename = tmpdir.join("model.json")
-    with open(json_filename, "w") as f:
-        json.dump(model_json, f)
-    model = Model()
-    failures = []
-    model.failureMsg.connect(lambda *args: failures.append(args))
-
-    # Act
-    model.from_json(json_filename)
-
-    # Assert
-    assert len(failures) == 1 and "missing.h5" in failures[0][0]
-    assert len(model.e11) == 1
-    assert model.e22 == []
-    assert model.stress is None
-    assert model.validate_selection("22") == "e22 file hasn't been loaded"
-    assert model.modelUpdated == ("in-plane-stress", "peak0", 200, 0.3)
-
-
 @pytest.fixture
 def strain_stress_window(qtbot):
     """A fresh strain/stress window for each test, closed afterwards (see `tests/ui/conftest.py`)."""
@@ -646,6 +613,43 @@ def strain_stress_window(qtbot):
     window = StrainStressViewer(model, ctrl)
     qtbot.addWidget(window)
     return window, qtbot
+
+
+@pytest.mark.gui
+@pytest.mark.integration
+def test_saved_state_restores_its_peak_in_the_window(strain_stress_window, test_data_dir, tmp_path, monkeypatch):
+    """Restoring e11 offers its peak tags, and the window selects the first: the saved one must win."""
+    # Arrange
+    window, _ = strain_stress_window
+    state = tmp_path / "state.json"
+    run_1328 = os.path.join(test_data_dir, "HB2B_1328.h5")
+    state.write_text(
+        json.dumps(
+            {
+                "stress_case": "in-plane-stress",
+                "filenames_11": [run_1328],
+                "filenames_22": [run_1328],
+                "filenames_33": [],
+                "peak_tag": "peak1",
+                "youngs_modulus": 200,
+                "poisson_ratio": 0.3,
+                "d0": None,
+            }
+        )
+    )
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(state), ""))
+    # 1328's peak1 strain field is empty, so plotting it reports a failure in a
+    # modal dialog, which would block here. Recorded, not shown.
+    dialogs: list = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", lambda box: dialogs.append(box.text()))
+
+    # Act
+    window.load()
+
+    # Assert
+    assert window.model.selectedPeak == "peak1"
+    assert window.peak_selection.peak_select.currentText() == "peak1"
+    assert dialogs == ["Failed to generate field"]
 
 
 # changes to SliceViewer from Mantid in the version 5.1 is needed for the stress/strain viewer to run

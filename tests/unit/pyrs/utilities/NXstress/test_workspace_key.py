@@ -102,9 +102,48 @@ class TestOf:
     def test_omits_the_run_when_the_entry_does_not(self, workspace):
         assert WorkspaceKey.of(workspace, ("direction",), carries_run=False) == WorkspaceKey((("direction", "22"),))
 
+    def test_equals_a_hand_built_key_whatever_the_name_order(self, workspace):
+        """`of` sorts by name, so a key built in name order is the same key."""
+        # Arrange
+        points = workspace.get_sub_runs().raw_copy()
+        workspace.set_sample_log("zone", points, np.array(["A"] * len(points)))
+
+        # Act
+        keys = {
+            WorkspaceKey.of(workspace, names, carries_run=True)
+            for names in (("zone", "direction"), ("direction", "zone"))
+        }
+
+        # Assert
+        assert keys == {WorkspaceKey((("direction", "22"), ("zone", "A")), run=1331)}
+
+    def test_a_workspace_of_several_runs_raises(self, workspace):
+        points = workspace.get_sub_runs().raw_copy()
+        workspace.set_sample_log("run_number", points, np.arange(len(points)) + 1331)
+
+        with pytest.raises(ValueError, match="holds .* runs"):
+            WorkspaceKey.of(workspace, ("direction",), carries_run=True)
+
+
+class TestRefusals:
+    """A malformed key would compare unequal to the same key built by `of`, silently."""
+
+    def test_unsorted_discriminators_raise(self):
+        with pytest.raises(ValueError, match="sorted by name"):
+            WorkspaceKey((("zone", "A"), ("direction", "11")))
+
+    def test_a_repeated_name_raises(self):
+        with pytest.raises(ValueError, match="distinct"):
+            WorkspaceKey((("direction", "11"), ("direction", "22")))
+
+    @pytest.mark.parametrize("run", [np.int64(1327), True, 1327.0])
+    def test_a_run_that_is_not_an_int_raises(self, run):
+        with pytest.raises(TypeError, match="must be an `int` or `Unset`"):
+            WorkspaceKey(DISCRIMINATORS, run=run)
+
 
 def test_validated_signatures_accept_it_without_warning():
-    """`validate_call_` reaches the key through `IndexedPeaks`; `Unset` used to make pydantic warn."""
+    """`validate_call_` reaches the key through `IndexedPeaks`, and pydantic cannot validate `Unset` itself."""
     # Recorded rather than escalated with "error": pydantic catches an escalated
     # warning while building the schema, so "error" would pass with or without the fix.
     with warnings.catch_warnings(record=True) as caught:

@@ -300,7 +300,7 @@ class TestEntriesWrittenBeforeTheRunIndex:
     def test_a_multi_workspace_entry_still_splits_by_scan_point(
         self, by_direction, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
     ):
-        """A 04b-era entry: disjoint scan points, told apart by discriminator alone."""
+        """An entry from before the run index: disjoint scan points, told apart by discriminator alone."""
         # Arrange
         path = tmp_path / "old_multi.nxs"
         write(

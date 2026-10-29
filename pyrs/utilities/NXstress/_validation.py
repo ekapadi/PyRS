@@ -52,7 +52,6 @@ def validate_inputs(wss: list[HidraWorkspace], peakss: list[list[PeakCollection]
         raise ValueError("NXstress.write requires at least one `HidraWorkspace`.")
 
     for n, ws in enumerate(wss):
-        # VERIFY that all required logs are present.
         logs = ws.sample_log_names
         for k in REQUIRED_LOGS:
             if k not in logs:
@@ -61,10 +60,8 @@ def validate_inputs(wss: list[HidraWorkspace], peakss: list[list[PeakCollection]
     if len(wss) > 1:
         validate_multi_workspace(wss, peakss)
 
-    # VERIFY that no duplicate PeakCollections exist
     _Peaks.validateNoDuplicatePeaks(indexed)
 
-    # VERIFY that any <scan point> or <mask> referenced by any `PeakCollection` is included in the workspace.
     for ws, peaks in zip(wss, peakss):
         _Fit.validateWorkspaceAndPeaksData(ws, peaks)
 
@@ -80,7 +77,7 @@ def validate_multi_workspace(wss: list[HidraWorkspace], peakss: list[list[PeakCo
     """
     # 1. Without a discriminator, the boundary between inputs is not recorded
     #    anywhere. NXstress does not merge workspaces: that is PyRS's job,
-    #    done before the write (Decisions Log row 45).
+    #    done before the write.
     if not _discriminator.field_names():
         raise ValueError(
             f"NXstress.write was given {len(wss)} workspaces, but "
@@ -140,11 +137,11 @@ def validate_multi_workspace(wss: list[HidraWorkspace], peakss: list[list[PeakCo
         )
     runs = np.concatenate([_runs.for_scan_points(ws._sample_logs) for ws in wss])
     axis = np.concatenate([ws.get_sub_runs().raw_copy() for ws in wss])
-    refuse_unreadable_scan_point_order(runs, axis, points_by_key, operation="write")
+    refuse_unreadable_scan_point_order(runs, axis, points_by_key=points_by_key, operation="write")
 
 
 def refuse_unreadable_scan_point_order(
-    runs: np.ndarray, axis: np.ndarray, points_by_key: dict, *, operation: str
+    runs: np.ndarray, axis: np.ndarray, *, points_by_key: dict, operation: str
 ) -> None:
     """Refuse an entry whose read-back workspaces would hold out-of-order scan points.
 

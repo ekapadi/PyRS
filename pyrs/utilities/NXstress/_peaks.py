@@ -82,8 +82,9 @@ class IndexedPeaks(NamedTuple):
     remaining splittable.
 
     Attributes:
-        key: The key of the input workspace this collection came from. Empty
-            for a single-workspace write with no field configured.
+        key: The key of the input workspace this collection came from. It holds
+            no discriminators when the entry records none, and the run whenever
+            the entry's key carries it.
         collection: The peak collection itself.
         logs: Sample logs of that same input workspace, used to look up
             the sample position for this collection's scan points. `None`
@@ -96,7 +97,7 @@ class IndexedPeaks(NamedTuple):
 
     @classmethod
     def sort_key(cls, item: "IndexedPeaks") -> tuple:
-        """Ordering with discriminators as the most slowly varying coordinates.
+        """Ordering with the workspace key -- discriminators and run -- as the most slowly varying coordinates.
 
         Putting them first is what makes each input workspace's rows one
         contiguous super-block in every position-aligned group, which in
@@ -462,7 +463,7 @@ class _Peaks:
         for peak_axis, values in zip(("sx", "sy", "sz"), cls._sample_positions(collection_logs, scan_point, N_scan)):
             peaks[peak_axis][curr_len:] = values
         # Per row, from this collection's own workspace -- the same reason as above.
-        peaks[_runs.RUN_NUMBER][curr_len:] = _runs.for_scan_points(collection_logs, scan_point)
+        peaks[_runs.RUN_NUMBER][curr_len:] = _runs.for_scan_points(collection_logs, scan_points=scan_point)
 
         return peaks
 
@@ -507,7 +508,7 @@ class _Peaks:
         return to_text_array(values) if is_text_array(values) else values
 
     @classmethod
-    def _wavelength_of_block(cls, peaks, start: int, end: int, wavelengths: dict | None) -> float:
+    def _wavelength_of_block(cls, peaks, *, start: int, end: int, wavelengths: dict) -> float:
         """The one wavelength a block of peak rows was fitted at, or NaN.
 
         A `PeakCollection` holds a single wavelength. A block whose scan points were
@@ -771,7 +772,7 @@ class _Peaks:
     @classmethod
     @validate_call_
     def peakCollectionsFromNexus(
-        cls, peaks, fit, discriminator_names: tuple[str, ...] = (), *, wavelengths: dict | None = None
+        cls, peaks, fit, discriminator_names: tuple[str, ...] = (), *, wavelengths: dict
     ) -> list[IndexedPeaks]:
         """Read PeakCollections from NXreflections and NXprocess groups.
 
@@ -787,11 +788,12 @@ class _Peaks:
         discriminator_names : tuple[str, ...]
             Discriminator fields this entry was written with, already
             cross-checked against the file by `_discriminator.names_for_read`.
-        wavelengths : dict, optional
+        wavelengths : dict
             Wavelength of each `(run, scan point)` of the entry. A `PeakCollection`
             converts its fitted peak positions to d-spacing with its wavelength, so
-            without one every d-spacing, and so every strain, is NaN. Omitted, the
-            collections carry NaN.
+            without one every d-spacing, and so every strain, is NaN. Required, so
+            that leaving it out cannot pass for an entry with no wavelength log:
+            pass `{}` for that, and the collections carry NaN.
 
         Returns
         -------
@@ -876,7 +878,7 @@ class _Peaks:
                 peak_tag=peak_tag,
                 peak_profile=peak_profile,
                 background_type=background_function,
-                wavelength=cls._wavelength_of_block(peaks, start, end, wavelengths),
+                wavelength=cls._wavelength_of_block(peaks, start=start, end=end, wavelengths=wavelengths),
                 projectfilename="",
                 runnumber=cls._run_number_of_block(peaks, start, end),
                 d_reference=d_reference,

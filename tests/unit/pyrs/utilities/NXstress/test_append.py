@@ -29,6 +29,8 @@ from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG, appendable, tail_append
 from pyrs.utilities.NXstress import _append
+from pyrs.utilities.NXstress._peaks import IndexedPeaks
+from pyrs.utilities.NXstress._workspace_key import WorkspaceKey
 from pyrs.utilities.NXstress.NXstress import NXstress
 
 
@@ -1003,6 +1005,46 @@ class TestPreconditionsAddedAfterReview:
                 nx.write([ws], [peaks])
             with pytest.raises(RuntimeError, match=r"no longer usable"):
                 nx.write([good], [good_peaks])
+
+    def test_a_foreign_peaks_column_raises(self, written, minimal_HidraWorkspace, minimal_PeakCollection):
+        """Another producer's reflection field: read ignores it, but an append would leave it short."""
+        # Arrange
+        with h5py.File(written, "a") as f:
+            f["entry/peaks"].create_dataset("foreign_field", data=np.zeros(f["entry/peaks/h"].shape[0]))
+        before = digest(written)
+        incoming, incoming_peaks = workspace(
+            minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5, 6)
+        )
+        good, good_peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="33", sub_runs=(7, 8))
+
+        # Act / Assert
+        with NXstress(written, "a") as nx:
+            with pytest.raises(RuntimeError, match=r"\['foreign_field'\], which are neither PyRS's own"):
+                nx.write([incoming], [incoming_peaks])
+            with pytest.raises(RuntimeError, match=r"no longer usable"):
+                nx.write([good], [good_peaks])
+        assert digest(written) == before
+
+    def test_an_entry_without_peak_collections_is_named(
+        self, discriminated, tmp_path, minimal_HidraWorkspace, minimal_PeakCollection
+    ):
+        """The CombineRuns export shape records no fit model: said, not "does not match `_undefined_`".
+
+        Called directly: through `write`, the entry's missing discriminator columns are
+        refused first. This check is the one that must hold if that order changes.
+        """
+        # Arrange
+        path = tmp_path / "unfitted.nxs"
+        ws, _ = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="11", sub_runs=(1, 2, 3))
+        with NXstress(path, "w") as nx:
+            nx.write([ws], [[]])
+        _, incoming_peaks = workspace(minimal_HidraWorkspace, minimal_PeakCollection, direction="22", sub_runs=(4, 5))
+        indexed = [IndexedPeaks(WorkspaceKey(), collection) for collection in incoming_peaks]
+
+        # Act / Assert
+        with nxopen(str(path), "r") as root:
+            with pytest.raises(_append.InvariantViolated, match=r"holds no `PeakCollection`s"):
+                _append.reject_fit_model_mismatch(root["entry"], indexed)
 
 
 class TestReadBackScanPointOrder:

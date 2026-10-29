@@ -23,7 +23,7 @@ from another's (see `BOUNDARY_ATTRIBUTE`).
 
 Typical workflow:
 
-1. `for_scan_points(logs, points)` gives the run number of each scan point.
+1. `for_scan_points(logs, scan_points=...)` gives the run number of each scan point.
 2. `single_run(logs)` asks whether a workspace holds exactly one run.
 3. On read, `axis(sample_description)` and `is_boundary(peaks)` recover both.
 
@@ -36,9 +36,11 @@ points are already unique, so nothing about the read changes.
 """
 
 import numpy as np
+from nexusformat.nexus import NXgroup
 
 from pyrs.dataobjects.sample_logs import SampleLogs
 from pyrs.utilities import config
+from pyrs.utilities.unset import Unset
 
 # Defined in `_definitions` so that `_discriminator` can reserve the column; part of
 # this module's surface. The attribute is True exactly when every input workspace
@@ -53,13 +55,13 @@ def default_run_number() -> int:
     return config.default_run_number()
 
 
-def for_scan_points(logs: SampleLogs, scan_points: np.ndarray | None = None) -> np.ndarray:
+def for_scan_points(logs: SampleLogs, *, scan_points: np.ndarray | Unset = Unset) -> np.ndarray:
     """The run number of each scan point.
 
     Args:
         logs: One workspace's sample logs.
         scan_points: The scan points to look up, a subset of the workspace's own;
-            every scan point of the workspace, in order, when omitted.
+            every scan point of the workspace, in order, when not supplied.
 
     Returns:
         One integer per requested scan point: the `run_number` log's value, or the
@@ -69,10 +71,10 @@ def for_scan_points(logs: SampleLogs, scan_points: np.ndarray | None = None) -> 
         ValueError: If the `run_number` log holds a value that is not a whole
             number. Truncating it would be silent, and could make two runs collide.
     """
-    points = logs.subruns.raw_copy() if scan_points is None else np.asarray(scan_points)
+    points = logs.subruns.raw_copy() if scan_points is Unset else np.asarray(scan_points)
     if RUN_NUMBER not in logs:
         return np.full(len(points), default_run_number(), dtype=np.int64)
-    values = np.asarray(logs[RUN_NUMBER] if scan_points is None else logs[(RUN_NUMBER, points)], dtype=float)
+    values = np.asarray(logs[RUN_NUMBER] if scan_points is Unset else logs[(RUN_NUMBER, points)], dtype=float)
     if not np.all(np.isfinite(values) & (values == np.round(values))):
         raise ValueError(
             f"NXstress: the `run_number` log holds values that are not whole run numbers: "
@@ -91,7 +93,7 @@ def merged_inputs(logss: list[SampleLogs]) -> list[int]:
     return [n for n, logs in enumerate(logss) if not single_run(logs)]
 
 
-def block_runs(peaks, start: int, end: int) -> np.ndarray:
+def block_runs(peaks: NXgroup, start: int, end: int) -> np.ndarray:
     """The run of each row in a block of a `peaks` group.
 
     The configured default throughout for an entry written before the run index.
@@ -111,7 +113,7 @@ def single_run(logs: SampleLogs) -> bool:
     return len(run_numbers(logs)) == 1
 
 
-def is_boundary(peaks) -> bool:
+def is_boundary(peaks: NXgroup) -> bool:
     """Whether a `peaks` group records the run as part of its workspace key.
 
     False for an entry written before the run index, which records nothing.
@@ -122,7 +124,7 @@ def is_boundary(peaks) -> bool:
     return bool(np.asarray(getattr(value, "nxvalue", value)))
 
 
-def axis(sample_description) -> np.ndarray:
+def axis(sample_description: NXgroup) -> np.ndarray:
     """The run number of every scan point of an entry, aligned with its `scan_point` axis.
 
     The configured default throughout for an entry written before the run index.

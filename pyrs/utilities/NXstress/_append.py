@@ -1,7 +1,7 @@
 """
 pyrs/utilities/NXstress/_append.py
 
-Tail-append to an existing NXstress entry (spec 04c): the pre-flight that decides
+Tail-append to an existing NXstress entry: the pre-flight that decides
 whether an append may proceed, and the commit that grows every group.
 
 An append is split in two so that its no-op guarantee can be read off the code:
@@ -31,7 +31,7 @@ The checks are named for what they raise:
 from typing import NamedTuple
 
 import numpy as np
-from nexusformat.nexus import NXdata
+from nexusformat.nexus import NXdata, NXgroup
 
 from pyrs.core.peak_profile_utility import BackgroundFunction
 from pyrs.core.workspaces import HidraWorkspace
@@ -72,7 +72,7 @@ class AppendPlan(NamedTuple):
         run_boundary: Whether the entry's workspace key carries the run.
     """
 
-    indexed: list[IndexedPeaks]
+    indexed: tuple[IndexedPeaks, ...]
     discriminator_names: tuple[str, ...]
     run_boundary: bool
 
@@ -86,7 +86,7 @@ def reject(message: str) -> InvariantViolated:
     return InvariantViolated(message)
 
 
-def preflight(entry, wss: list[HidraWorkspace], peakss: list[list[PeakCollection]]) -> AppendPlan:
+def preflight(entry: NXgroup, wss: list[HidraWorkspace], peakss: list[list[PeakCollection]]) -> AppendPlan:
     """Decide whether an append may proceed, touching nothing.
 
     Every check happens here, before any resize, so a rejected append leaves the
@@ -126,11 +126,11 @@ def preflight(entry, wss: list[HidraWorkspace], peakss: list[list[PeakCollection
         for collection in collections
     ]
 
-    run_checks(entry, wss, peakss, indexed, discriminator_names)
-    return AppendPlan(indexed, discriminator_names, run_boundary)
+    run_checks(entry, wss, peakss=peakss, indexed=indexed, discriminator_names=discriminator_names)
+    return AppendPlan(tuple(indexed), discriminator_names, run_boundary)
 
 
-def commit(entry, wss: list[HidraWorkspace], plan: AppendPlan) -> None:
+def commit(entry: NXgroup, wss: list[HidraWorkspace], plan: AppendPlan) -> None:
     """Grow every group below the entry by the incoming rows, as `preflight` planned.
 
     A **tail-append**: the incoming batch is sorted among itself and added after
@@ -149,9 +149,10 @@ def commit(entry, wss: list[HidraWorkspace], plan: AppendPlan) -> None:
     _InputData.init_group(wss, data=entry[GROUP_NAME.INPUT_DATA])
     _Instrument.init_group(wss, data=entry[GROUP_NAME.INSTRUMENT])
     _Sample.init_group(logss, data=entry[GROUP_NAME.SAMPLE_DESCRIPTION])
-    _Fit.init_group(wss, plan.indexed, logss, data=entry[GROUP_NAME.FIT])
+    indexed = list(plan.indexed)
+    _Fit.init_group(wss, indexed, logss, data=entry[GROUP_NAME.FIT])
     _Peaks.init_group(
-        plan.indexed,
+        indexed,
         logss[0],
         plan.discriminator_names,
         data=entry[GROUP_NAME.PEAKS],
@@ -160,11 +161,12 @@ def commit(entry, wss: list[HidraWorkspace], plan: AppendPlan) -> None:
 
 
 def run_checks(
-    entry,
+    entry: NXgroup,
     wss: list[HidraWorkspace],
+    *,
     peakss: list[list[PeakCollection]],
     indexed: list[IndexedPeaks],
-    discriminator_names: tuple,
+    discriminator_names: tuple[str, ...],
 ) -> None:
     """Run every pre-flight check on an incoming batch, in order, touching nothing.
 
@@ -199,7 +201,7 @@ def run_checks(
     reject_fit_model_mismatch(entry, indexed)
 
 
-def reject_run_index_mismatch(entry, wss: list[HidraWorkspace]) -> None:
+def reject_run_index_mismatch(entry: NXgroup, wss: list[HidraWorkspace]) -> None:
     """The target entry must carry the run index, in a form the incoming workspaces fit.
 
     Three refusals, all before anything is resized, all invalidating the
@@ -207,7 +209,8 @@ def reject_run_index_mismatch(entry, wss: list[HidraWorkspace]) -> None:
 
     - An entry written before the run index has no `run_number` column, on
       `peaks` or on `SAMPLE_DESCRIPTION`, so the incoming rows' runs would have
-      nowhere to go -- the same reason an entry written before 04c is refused.
+      nowhere to go -- as an entry written before its datasets could grow is
+      refused (`validate_appendable_shapes`).
     - An entry whose workspace key does not carry the run
       (`_runs.BOUNDARY_ATTRIBUTE` false) holds one workspace merged from
       several runs, and anything appended would be read back as part of it.
@@ -237,7 +240,7 @@ def reject_run_index_mismatch(entry, wss: list[HidraWorkspace]) -> None:
 
 
 def reject_unmet_case_a_preconditions(peakss: list, discriminator_names: tuple[str, ...]) -> None:
-    """Case A's two preconditions, inherited from 04b's write-time invariants."""
+    """Case A's two preconditions, which a multi-workspace write already imposes."""
     # -- Case A precondition 1: every incoming workspace must contribute at
     #    least one `PeakCollection`. `_validation.validate_multi_workspace` already enforces
     #    this, but only for N > 1; on append it binds at N == 1 too, because
@@ -254,10 +257,9 @@ def reject_unmet_case_a_preconditions(peakss: list, discriminator_names: tuple[s
 
     # -- Case A precondition 2: the target must already have a discriminator
     #    scheme. Attaching a new, distinguishable workspace to an entry written
-    #    without one would mean adding an on-disk column. That is mechanically
-    #    possible (see `probes/a4_h5py_nexusformat_append.py`) but it is schema
-    #    restructuring, which this pass excludes -- a scope decision, not a
-    #    format limit. See the plan's Decisions Log item 22.
+    #    without one would mean adding an on-disk column. h5py and nexusformat
+    #    can add one to an existing group, but that is schema restructuring,
+    #    which append excludes -- a scope decision, not a format limit.
     if not discriminator_names:
         raise reject(
             "NXstress: cannot append -- the target entry carries no discriminator columns, so "
@@ -267,7 +269,7 @@ def reject_unmet_case_a_preconditions(peakss: list, discriminator_names: tuple[s
         )
 
 
-def reject_unconfigured_columns(entry, discriminator_names: tuple[str, ...]) -> None:
+def reject_unconfigured_columns(entry: NXgroup, discriminator_names: tuple[str, ...]) -> None:
     """Every `peaks` column must be one the append knows how to grow.
 
     A read ignores a column it does not recognise; an append cannot. It grows
@@ -310,18 +312,18 @@ def reject_discriminator_type_mismatch(
             )
 
 
-def reject_ungrowable_or_disagreeing_groups(entry, wss: list[HidraWorkspace]) -> None:
+def reject_ungrowable_or_disagreeing_groups(entry: NXgroup, wss: list[HidraWorkspace]) -> None:
     """Everything `tail_append` would refuse, and every per-group disagreement.
 
     Asked before the first resize rather than during mutation: a refusal
     discovered part-way through leaves the entry desynchronized, and such an
-    entry reads back without error. See 04c's Follow-up 3 F3.1.
+    entry reads back without error.
     """
     # -- Every dataset this append will grow must be able to grow, and must
     #    agree with the incoming rows on its trailing axes. Asked here rather
     #    than discovered inside `tail_append`, which runs during mutation:
     #    by then earlier groups have grown, the entry is desynchronized, and
-    #    it reads back without error. See 04c's Follow-up 3 F3.1.
+    #    it reads back without error.
     #
     # -- Per-group agreement with the existing entry. Each of these lives on the
     #    group that owns the rule and is called here, before any resize, so that a
@@ -343,7 +345,7 @@ def reject_ungrowable_or_disagreeing_groups(entry, wss: list[HidraWorkspace]) ->
         raise reject(str(error)) from error
 
 
-def classify_compound_keys(entry, indexed: list[IndexedPeaks], discriminator_names: tuple[str, ...]) -> None:
+def classify_compound_keys(entry: NXgroup, indexed: list[IndexedPeaks], discriminator_names: tuple[str, ...]) -> None:
     """Case A (proceed), Case B (unsupported) or duplicate (violated invariant)."""
     # -- Case A / Case B / duplicate, from the entry's existing peak index.
     existing_rows: dict = {}
@@ -372,7 +374,7 @@ def classify_compound_keys(entry, indexed: list[IndexedPeaks], discriminator_nam
         )
 
 
-def reject_scan_point_collisions(entry, wss: list[HidraWorkspace]) -> None:
+def reject_scan_point_collisions(entry: NXgroup, wss: list[HidraWorkspace]) -> None:
     """The `(run, scan point)` axis must stay partitioned across the whole entry."""
     # -- The reader attributes rows to a workspace by `(run, scan point)`, so a
     #    pair appearing twice in one entry cannot be attributed at all. A scan
@@ -391,12 +393,14 @@ def reject_scan_point_collisions(entry, wss: list[HidraWorkspace]) -> None:
             )
 
 
-def refuse_unreadable_append_order(entry, wss: list[HidraWorkspace], discriminator_names: tuple[str, ...]) -> None:
+def refuse_unreadable_append_order(
+    entry: NXgroup, wss: list[HidraWorkspace], discriminator_names: tuple[str, ...]
+) -> None:
     """The appended entry must still read back with increasing scan points per workspace.
 
-    An appended workspace sharing a discriminator value with rows already on
-    disk is read back together with them, after them; so are all rows of an
-    entry holding a single discriminator value. A tail-append of lower scan
+    An appended workspace sharing a workspace key with rows already on disk is
+    read back together with them, after them; so are all rows of an entry
+    holding a single workspace key. A tail-append of lower scan
     points is then unreadable. "Unsupported" rather than "violated", like
     Case B, so the instance stays usable.
     """
@@ -414,20 +418,20 @@ def refuse_unreadable_append_order(entry, wss: list[HidraWorkspace], discriminat
     sd = entry[GROUP_NAME.SAMPLE_DESCRIPTION]
     runs = np.concatenate([_runs.axis(sd)] + [_runs.for_scan_points(ws._sample_logs) for ws in wss])
     axis = np.concatenate([np.asarray(sd["scan_point"].nxdata)] + [ws.get_sub_runs().raw_copy() for ws in wss])
-    _validation.refuse_unreadable_scan_point_order(runs, axis, points_by_key, operation="append")
+    _validation.refuse_unreadable_scan_point_order(runs, axis, points_by_key=points_by_key, operation="append")
 
 
-def reject_diffractogram_key_mismatch(entry, wss: list[HidraWorkspace]) -> None:
+def reject_diffractogram_key_mismatch(entry: NXgroup, wss: list[HidraWorkspace]) -> None:
     """Every scan point in an entry needs a diffractogram under each key.
 
     Compares **diffractogram keys**, not detector-mask names. The two are
     different sets: a key is a reduction identifier -- `eta_-5.0`,
     `mask_a_eta_-5.0` -- that references a detector mask without being one,
     and only a reduction that used the default mask *alone* produces a bare
-    `DEFAULT_TAG` key. Reading this side through `nxstress_mask_names`, which
-    injects `DEFAULT_TAG` because every reduction uses the default mask,
-    therefore added a key the writer never emits -- and made every texture
-    append impossible. See 04's Follow-up 8.
+    `DEFAULT_TAG` key. So the incoming side is read through
+    `nxstress_diffractogram_keys`, never `nxstress_mask_names`: the latter adds
+    `DEFAULT_TAG` because every reduction uses the default mask, a key the
+    writer never emits, which would refuse every texture append.
     """
     # -- The diffractogram key set must match. A key the entry has no group
     #    for would need a new group with no rows for the scan points already on
@@ -450,7 +454,7 @@ def reject_diffractogram_key_mismatch(entry, wss: list[HidraWorkspace]) -> None:
         )
 
 
-def reject_fit_model_mismatch(entry, indexed: list[IndexedPeaks]) -> None:
+def reject_fit_model_mismatch(entry: NXgroup, indexed: list[IndexedPeaks]) -> None:
     """All peak collections in one entry share a single fit model."""
     # -- The peak profile and background function are entry-wide scalars that
     #    an append cannot change. `_append_peak` would raise on a mismatch, but
@@ -489,7 +493,7 @@ def reject_fit_model_mismatch(entry, indexed: list[IndexedPeaks]) -> None:
             )
 
 
-def appendable_datasets(entry) -> dict:
+def appendable_datasets(entry: NXgroup) -> dict:
     """Every dataset in `entry` that an append grows, declared by its owner.
 
     Each grouping module reports the datasets *it* writes row-aligned, because
@@ -498,20 +502,12 @@ def appendable_datasets(entry) -> dict:
     scalar, so a field added to such a group later is covered without editing
     anything here.
 
-    This replaced a sweep of the whole entry for `shape[0] == n_scan`, which
-    was wrong in both directions. It **over**-matched, and over-matching is
-    not the harmless direction it was documented to be: the result feeds a
-    resizability *requirement*, so any entry-wide array that happened to be
-    `n_scan` long rejected a legal append. Three detector masks and three scan
-    points was enough -- `masks/names` is entry-wide, is never grown, and is
-    required by `_Instrument.validateAppend` to stay constant, yet the append
-    was refused with a message blaming an out-of-date writer. It also
-    **under**-matched: the peak index is one row per (compound key, scan
-    point), so it equals `n_scan` only while each workspace fits exactly one
-    peak. Fit a second phase -- the ordinary multi-peak case -- and `peaks/*`
-    and both parameter groups dropped out of the pre-flight entirely, leaving
-    exactly the mid-mutation refusal that 04c's Follow-up 3 F3.1 hoisted out.
-    See 04c's Follow-up 5.
+    Declared, not inferred from `shape[0] == n_scan`: length cannot tell the two
+    kinds apart. An entry-wide array may happen to be `n_scan` long (three masks,
+    three scan points), and the result is a resizability *requirement*, so it
+    would refuse a legal append. And the peak index is one row per (compound
+    key, scan point), so it is not `n_scan` long once a workspace fits more than
+    one peak.
 
     Args:
         entry: The target `NXentry`.
@@ -540,7 +536,7 @@ def appendable_datasets(entry) -> dict:
     return found
 
 
-def validate_appendable_shapes(entry, wss: list[HidraWorkspace]) -> None:
+def validate_appendable_shapes(entry: NXgroup, wss: list[HidraWorkspace]) -> None:
     """Every dataset the append will grow can grow, without growing any of them.
 
     Two distinct refusals, both of which `tail_append` would otherwise make
