@@ -6,7 +6,7 @@ from typing import List
 import pytest
 
 from pyrs.interface import gui_helper
-from pyrs.interface.gui_helper import nxstress_save_available, write_nxstress_or_report
+from pyrs.interface.gui_helper import load_file_filter, nxstress_save_available, write_nxstress_or_report
 from pyrs.utilities.config import Config
 
 
@@ -75,3 +75,15 @@ def test_write_nxstress_failure_keeps_existing_target(tmp_path: Path, messages: 
     assert target.read_text() == "keep"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["out.nxs"]
     assert messages == ["Failed to save NXstress file"]
+
+
+class TestLoadFileFilter:
+    """A load dialog offers `.nxs` files only while NXstress I/O is switched on."""
+
+    def test_nxstress_follows_the_other_filters_when_enabled(self, config_override):
+        config_override({"nxstress": {"enable": True}})
+        assert load_file_filter("HDF (*.hdf)", "H5 (*.h5)", separator=";") == "HDF (*.hdf);H5 (*.h5);NXstress (*.nxs)"
+
+    def test_nxstress_is_not_offered_when_disabled(self, config_override):
+        config_override({"nxstress": {"enable": False}})
+        assert load_file_filter("HidraProjectFile (*.h5)") == "HidraProjectFile (*.h5)"

@@ -27,6 +27,7 @@ import pyrs.interface.gui_helper
 from pyrs.interface.gui_helper import (
     browse_dir,
     browse_file,
+    load_file_filter,
     nxstress_save_available,
     parse_integers,
     pop_message,
@@ -264,7 +265,8 @@ class PeakFittingViewer(QMainWindow):
 
     def browse_hdf(self) -> None:
         """Browse for a Hidra project HDF file, then load and plot it."""
-        file_filter = "HDF (*.hdf);H5 (*.h5);NXstress (*.nxs)"
+        # `nxstress.enable` switches NXstress loading too, so `.nxs` is offered only when it is on.
+        file_filter = load_file_filter("HDF (*.hdf)", "H5 (*.h5)", separator=";")
         hidra_file_name = browse_file(
             self, "HIDRA Project File", os.getcwd(), file_filter, file_list=True, save_file=False
         )

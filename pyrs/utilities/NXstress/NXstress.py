@@ -35,7 +35,7 @@ from ._instrument import _Instrument, _Masks
 from ._sample import _Sample
 from ._fit import _Fit, _Diffractogram
 from ._peaks import _Peaks, IndexedPeaks
-from . import _discriminator
+from . import _discriminator, _runs
 
 import numpy as np
 
@@ -425,8 +425,14 @@ class NXstress:
         peaks_group = entry[GROUP_NAME.PEAKS]
         discriminator_names = _discriminator.names_for_read(peaks_group)
 
+        # Asked before any key is built: an entry written before the run index has
+        # no run column to grow, and one whose workspace key carries the run needs
+        # every incoming workspace to hold exactly one.
+        self._rejectRunIndexMismatch(entry, wss)
+        run_boundary = _runs.is_boundary(peaks_group)
+
         indexed = [
-            IndexedPeaks(_discriminator.key(ws, discriminator_names), collection, ws._sample_logs)
+            IndexedPeaks(self._workspaceKey(ws, discriminator_names, run_boundary), collection, ws._sample_logs)
             for ws, collections in zip(wss, peakss)
             for collection in collections
         ]
@@ -447,7 +453,7 @@ class NXstress:
             _Instrument.init_group(wss, data=entry[GROUP_NAME.INSTRUMENT])
             _Sample.init_group(logss, data=entry[GROUP_NAME.SAMPLE_DESCRIPTION])
             _Fit.init_group(wss, indexed, logss, data=entry[GROUP_NAME.FIT])
-            _Peaks.init_group(indexed, logss[0], discriminator_names, data=peaks_group)
+            _Peaks.init_group(indexed, logss[0], discriminator_names, data=peaks_group, run_boundary=run_boundary)
         except BaseException:
             self._invalid = True
             raise
@@ -500,6 +506,42 @@ class NXstress:
         """
         self._invalid = True
         return RuntimeError(message)
+
+    def _rejectRunIndexMismatch(self, entry, wss: list[HidraWorkspace]) -> None:
+        """The target entry must carry the run index, in a form the incoming workspaces fit.
+
+        Three refusals, all before anything is resized, all invalidating the
+        instance like every other violated precondition:
+
+        - An entry written before the run index has no `run_number` column, on
+          `peaks` or on `SAMPLE_DESCRIPTION`, so the incoming rows' runs would have
+          nowhere to go -- the same reason an entry written before 04c is refused.
+        - An entry whose workspace key does not carry the run
+          (`_runs.BOUNDARY_ATTRIBUTE` false) holds one workspace merged from
+          several runs, and anything appended would be read back as part of it.
+        - An entry whose key does carry the run cannot take an incoming workspace
+          merged from several runs: it has no one key to join under.
+        """
+        peaks_group = entry[GROUP_NAME.PEAKS]
+        if _runs.RUN_NUMBER not in peaks_group or _runs.RUN_NUMBER not in entry[GROUP_NAME.SAMPLE_DESCRIPTION]:
+            raise self._reject(
+                "NXstress: cannot append -- the target entry was written before PyRS recorded run "
+                "numbers, so it has no `run_number` column for the incoming rows.\n"
+                "  Write a new file instead."
+            )
+        if not _runs.is_boundary(peaks_group):
+            raise self._reject(
+                "NXstress: cannot append -- the target entry holds a single workspace merged from "
+                "several runs, so anything appended to it would be read back as part of that "
+                "workspace.\n  Write a new file instead."
+            )
+        merged = _runs.merged_inputs([ws._sample_logs for ws in wss])
+        if merged:
+            raise self._reject(
+                f"NXstress: cannot append -- input workspace(s) {merged} hold several runs, and this "
+                "entry tells its workspaces apart by run.\n"
+                "  Append one workspace per run."
+            )
 
     def _rejectUnmetCaseAPreconditions(self, peakss: list, discriminator_names: tuple) -> None:
         """Case A's two preconditions, inherited from 04b's write-time invariants."""
@@ -635,20 +677,21 @@ class NXstress:
             )
 
     def _rejectScanPointCollisions(self, entry, wss: list[HidraWorkspace]) -> None:
-        """The scan-point axis must stay partitioned across the whole entry."""
-        # -- The scan-point axis must stay partitioned: the reader attributes rows
-        #    to a workspace by scan-point value, so a value appearing twice in one
-        #    entry cannot be attributed at all.
-        on_disk_points = set(np.asarray(entry[GROUP_NAME.SAMPLE_DESCRIPTION]["scan_point"].nxdata).tolist())
+        """The `(run, scan point)` axis must stay partitioned across the whole entry."""
+        # -- The reader attributes rows to a workspace by `(run, scan point)`, so a
+        #    pair appearing twice in one entry cannot be attributed at all. A scan
+        #    point alone may repeat across runs.
+        sd = entry[GROUP_NAME.SAMPLE_DESCRIPTION]
+        on_disk = set(_runs.pairs(_runs.axis(sd), np.asarray(sd["scan_point"].nxdata)))
         for n, ws in enumerate(wss):
-            collisions = on_disk_points & set(ws.get_sub_runs().raw_copy().tolist())
+            incoming = set(_runs.workspace_pairs(ws._sample_logs))
+            collisions = on_disk & incoming
             if collisions:
                 raise self._reject(
-                    f"NXstress: cannot append -- scan point(s) {sorted(collisions)} of input "
+                    f"NXstress: cannot append -- (run, scan point) pair(s) {sorted(collisions)} of input "
                     f"workspace [{n}] are already in this entry.\n"
-                    "  Workspaces sharing an entry must cover disjoint scan points: the reader "
-                    "recovers each workspace's rows by scan-point value, so an overlap cannot be "
-                    "attributed."
+                    "  The reader recovers each workspace's rows by (run, scan point), so a repeated "
+                    "pair cannot be attributed."
                 )
 
     def _refuseUnreadableAppendOrder(self, entry, wss: list[HidraWorkspace], discriminator_names: tuple) -> None:
@@ -662,19 +705,21 @@ class NXstress:
         """
         points_by_key: dict = {}
         peaks_group = entry[GROUP_NAME.PEAKS]
+        run_boundary = _runs.is_boundary(peaks_group)
         for discriminators, _key, start, end in _Peaks.peakCollectionRanges(peaks_group, discriminator_names):
             points_by_key.setdefault(discriminators, set()).update(
-                np.asarray(peaks_group["scan_point"].nxdata[start:end]).tolist()
+                _runs.pairs(
+                    peaks_group[_runs.RUN_NUMBER].nxdata[start:end], peaks_group["scan_point"].nxdata[start:end]
+                )
             )
         for ws in wss:
-            points_by_key.setdefault(_discriminator.key(ws, discriminator_names), set()).update(
-                ws.get_sub_runs().raw_copy().tolist()
+            points_by_key.setdefault(self._workspaceKey(ws, discriminator_names, run_boundary), set()).update(
+                _runs.workspace_pairs(ws._sample_logs)
             )
-        axis = np.concatenate(
-            [np.asarray(entry[GROUP_NAME.SAMPLE_DESCRIPTION]["scan_point"].nxdata)]
-            + [ws.get_sub_runs().raw_copy() for ws in wss]
-        )
-        self._refuseUnreadableScanPointOrder(axis, points_by_key, discriminator_names, operation="append")
+        sd = entry[GROUP_NAME.SAMPLE_DESCRIPTION]
+        runs = np.concatenate([_runs.axis(sd)] + [_runs.for_scan_points(ws._sample_logs) for ws in wss])
+        axis = np.concatenate([np.asarray(sd["scan_point"].nxdata)] + [ws.get_sub_runs().raw_copy() for ws in wss])
+        self._refuseUnreadableScanPointOrder(runs, axis, points_by_key, operation="append")
 
     def _rejectDiffractogramKeyMismatch(self, entry, wss: list[HidraWorkspace]) -> None:
         """Every scan point in an entry needs a diffractogram under each key.
@@ -883,14 +928,27 @@ class NXstress:
         # nothing else can be split until they have been read and grouped.
         indexed = []
         discriminator_names: tuple = ()
+        scan_point_axis = entry[GROUP_NAME.SAMPLE_DESCRIPTION]["scan_point"].nxdata
+        run_axis = _runs.axis(entry[GROUP_NAME.SAMPLE_DESCRIPTION])
         if GROUP_NAME.PEAKS in entry:
             peaks_group = entry[GROUP_NAME.PEAKS]
             discriminator_names = _discriminator.names_for_read(peaks_group)
             if GROUP_NAME.FIT in entry:
-                indexed = _Peaks.peakCollectionsFromNexus(peaks_group, entry[GROUP_NAME.FIT], discriminator_names)
+                # Each collection's wavelength, which it needs to turn its fitted peak
+                # positions into d-spacing: per scan point in the instrument group,
+                # aligned with the scan-point axis.
+                _, _, wavelength_axis = _Instrument.instrumentFromNexus(entry[GROUP_NAME.INSTRUMENT])
+                wavelengths = dict(zip(_runs.pairs(run_axis, scan_point_axis), np.asarray(wavelength_axis).tolist()))
+                indexed = _Peaks.peakCollectionsFromNexus(
+                    peaks_group, entry[GROUP_NAME.FIT], discriminator_names, wavelengths=wavelengths
+                )
+        # Each collection records the file it was loaded from, as one loaded from a
+        # `HidraProjectFile` does. It is not optional: `SummaryGeneratorStress` refuses
+        # to export a strain whose collections name no file.
+        for item in indexed:
+            item.collection.projectfilename = self._path
 
-        scan_point_axis = entry[GROUP_NAME.SAMPLE_DESCRIPTION]["scan_point"].nxdata
-        selections = self._workspaceSelections(indexed, scan_point_axis, discriminator_names)
+        selections = self._workspaceSelections(indexed, scan_point_axis, run_axis)
 
         # Instrument geometry, detector shift and masks are entry-wide.
         default_mask, mask_dict = _Masks.masksFromNexus(entry[GROUP_NAME.INSTRUMENT][GROUP_NAME.MASKS])
@@ -899,7 +957,10 @@ class NXstress:
         peak_collections = []
         for rows, discriminators, collections in selections:
             ws = self._workspaceFromNexus(entry, rows, default_mask, mask_dict)
-            for name, value in discriminators:
+            # The run, when it is part of the key, is not put back: it is already the
+            # workspace's own `run_number` log, if it had one, and the `runnumber` of
+            # its peak collections.
+            for name, value in _runs.without_run(discriminators):
                 _discriminator.apply(ws, name, value)
             workspaces.append(ws)
             peak_collections.append(collections)
@@ -907,13 +968,19 @@ class NXstress:
         return workspaces, peak_collections
 
     @classmethod
-    def _workspaceSelections(cls, indexed, scan_point_axis, discriminator_names: tuple):
+    def _workspaceSelections(cls, indexed, scan_point_axis, run_axis):
         """Split one entry into per-workspace (rows, discriminators, collections).
 
         Each workspace's scan-point *set* is the union of its peak collections'
         scan points, and its rows of the scan-point family are selected by
         membership in that set -- not by position. That is what makes the read
         independent of the order `write` happened to concatenate the inputs in.
+
+        Membership is by `(run, scan point)` wherever the workspace key carries the
+        run (`_runs.is_boundary`): every run numbers its scan points from 1, so a
+        scan point alone is ambiguous between runs. An entry written before the
+        run index carries no run in its keys, and is split by scan point alone, as
+        it always was.
 
         Returns
         -------
@@ -926,7 +993,7 @@ class NXstress:
         for item in indexed:
             groups.setdefault(item.discriminators, []).append(item.collection)
 
-        if not discriminator_names or len(groups) <= 1:
+        if len(groups) <= 1:
             # One workspace: a pre-04b file, a single-workspace write, or a file
             # from the since-removed `merge_workspaces`, all of which read back whole -- no rows
             # need selecting. Its discriminators are still carried through, so a
@@ -934,13 +1001,19 @@ class NXstress:
             discriminators, collections = next(iter(groups.items())) if groups else ((), [])
             return [(None, discriminators, collections)]
 
+        axis_pairs = _runs.pairs(run_axis, scan_point_axis)
         selections = []
         claimed = np.zeros(len(scan_point_axis), dtype=bool)
         for discriminators, collections in groups.items():
             points = set()
             for collection in collections:
                 points |= set(collection.sub_runs.raw_copy().tolist())
-            rows = np.isin(scan_point_axis, sorted(points))
+            if _runs.RUN_NUMBER in dict(discriminators):
+                run = _runs.run_of(discriminators)
+                claims = {(run, point) for point in points}
+                rows = np.array([pair in claims for pair in axis_pairs], dtype=bool)
+            else:
+                rows = np.isin(scan_point_axis, sorted(points))
             overlap = claimed & rows
             if overlap.any():
                 raise RuntimeError(
@@ -1080,10 +1153,10 @@ class NXstress:
     def _validateMultiWorkspace(cls, wss: list[HidraWorkspace], peakss: list[list[PeakCollection]]):
         """The invariants that only bite when an entry holds N > 1 workspaces.
 
-        The first three are write-time gates rather than documented conventions,
+        The first four are write-time gates rather than documented conventions,
         because violating any of them produces a file that is *readable* and
         wrong rather than one that fails: an unsplittable entry, or one whose
-        rows are attributed to the wrong workspace. The fourth guards a file
+        rows are attributed to the wrong workspace. The fifth guards a file
         that would be written correctly and then could not be read back.
         """
         # 1. Without a discriminator, the boundary between inputs is not recorded
@@ -1109,56 +1182,72 @@ class NXstress:
                 "so one with no peaks cannot be recovered on read."
             )
 
-        # 3. The read side recovers each workspace by scan-point value membership,
-        #    which cannot distinguish two workspaces that share a scan point.
+        # 3. With several workspaces in one entry, each must hold a single run: the
+        #    run is part of the workspace key (`_runBoundary`), so a workspace merged
+        #    from several runs in PyRS has no one key to be read back under.
+        merged = _runs.merged_inputs([ws._sample_logs for ws in wss])
+        if merged:
+            raise ValueError(
+                f"NXstress.write: input workspace(s) {merged} hold several runs "
+                f"({[sorted(_runs.run_numbers(wss[n]._sample_logs)) for n in merged]}).\n"
+                "  A workspace merged from several runs can only be written on its own: alongside "
+                "other workspaces, its rows could not be told apart from theirs on read."
+            )
+
+        # 4. The read side recovers each workspace by `(run, scan point)` membership,
+        #    which cannot distinguish two workspaces sharing a run AND a scan point.
+        #    A scan point alone may repeat -- every run numbers its scan points from 1.
         seen: dict = {}
         for n, ws in enumerate(wss):
-            for point in ws.get_sub_runs().raw_copy().tolist():
+            for point in _runs.workspace_pairs(ws._sample_logs):
                 if point in seen:
                     raise ValueError(
-                        f"NXstress.write: scan point {point} appears in both input workspace "
+                        f"NXstress.write: (run, scan point) {point} appears in both input workspace "
                         f"[{seen[point]}] and [{n}].\n"
-                        "  Input workspaces sharing an entry must cover disjoint scan points: the "
-                        "reader recovers each workspace's rows by scan-point value, so an overlap "
-                        "cannot be attributed."
+                        "  Input workspaces sharing an entry must not repeat a scan point within one "
+                        "run: the reader recovers each workspace's rows by (run, scan point), so a "
+                        "repeat cannot be attributed. Two workspaces with no `run_number` log share "
+                        "the configured default run number."
                     )
                 seen[point] = n
 
-        # 4. Each workspace read back must hold its scan points in increasing order.
+        # 5. Each workspace read back must hold its scan points in increasing order.
         discriminator_names = cls._discriminatorNames(wss)
+        run_boundary = cls._runBoundary(wss)
         points_by_key: dict = {}
         for ws in wss:
-            points_by_key.setdefault(_discriminator.key(ws, discriminator_names), set()).update(
-                ws.get_sub_runs().raw_copy().tolist()
+            points_by_key.setdefault(cls._workspaceKey(ws, discriminator_names, run_boundary), set()).update(
+                _runs.workspace_pairs(ws._sample_logs)
             )
+        runs = np.concatenate([_runs.for_scan_points(ws._sample_logs) for ws in wss])
         axis = np.concatenate([ws.get_sub_runs().raw_copy() for ws in wss])
-        cls._refuseUnreadableScanPointOrder(axis, points_by_key, discriminator_names, operation="write")
+        cls._refuseUnreadableScanPointOrder(runs, axis, points_by_key, operation="write")
 
     @staticmethod
     def _refuseUnreadableScanPointOrder(
-        axis: np.ndarray, points_by_key: dict, discriminator_names: tuple, *, operation: str
+        runs: np.ndarray, axis: np.ndarray, points_by_key: dict, *, operation: str
     ) -> None:
         """Refuse an entry whose read-back workspaces would hold out-of-order scan points.
 
-        `read` gives each workspace the rows whose scan points it claims, in the
-        order they are on disk, and builds a `SubRuns` from them -- which refuses
-        anything not strictly increasing. Interleaved inputs are therefore fine
-        when a discriminator separates them, but workspaces sharing one
-        discriminator value are read back as one, and their concatenated axis
-        must increase.
+        `read` gives each workspace the rows whose `(run, scan point)` pairs it
+        claims, in the order they are on disk, and builds a `SubRuns` from them
+        -- which refuses anything not strictly increasing. Interleaved inputs
+        are therefore fine when their workspace keys differ, but workspaces
+        sharing one key (every discriminator value, and the run when the run is
+        part of the key) are read back as one, and their concatenated axis must
+        increase.
 
         Refused rather than sorted: the on-disk row order is the inputs' order,
         and re-sorting the rows would break the round trip -- there would
         then be no way to re-assign them to the individual workspaces on read.
-        The requirement itself is arbitrary, and its removal is recommended in
-        DD-2 of `plans/PR_review/deferred-defects.md`.
+        The requirement itself is arbitrary, and dropping it is recommended: it
+        follows from `SubRuns` refusing a non-increasing axis, not from the format.
 
         Args:
+            runs: The entry's whole run axis, aligned with `axis`.
             axis: The entry's whole scan-point axis, as it would be on disk.
-            points_by_key: Each discriminator key's scan points, mirroring how
-                `_workspaceSelections` groups the entry on read.
-            discriminator_names: The entry's discriminator fields; empty for a
-                single-workspace entry.
+            points_by_key: Each workspace key's `(run, scan point)` pairs,
+                mirroring how `_workspaceSelections` groups the entry on read.
             operation: "write" or "append", for the message.
 
         Raises:
@@ -1166,10 +1255,13 @@ class NXstress:
                 not be strictly increasing. Nothing has been written, and an
                 appending instance stays usable.
         """
-        if not discriminator_names or len(points_by_key) <= 1:
+        if len(points_by_key) <= 1:
             selections = [axis]
         else:
-            selections = [axis[np.isin(axis, sorted(points))] for points in points_by_key.values()]
+            pairs = _runs.pairs(runs, axis)
+            selections = [
+                axis[np.array([pair in points for pair in pairs], dtype=bool)] for points in points_by_key.values()
+            ]
         for points in selections:
             if np.any(points[1:] <= points[:-1]):
                 raise NotImplementedError(
@@ -1252,8 +1344,56 @@ class NXstress:
         included. That keeps the read-side cross-check a plain equality test,
         and lets a single-workspace save round-trip its discriminator value
         the same way a multi-workspace one does.
+
+        **Except** for a single workspace that has no single value for a
+        configured field: none at all (a PeakFitting save, with
+        `discriminator_fields: ["direction"]` shipped), or one varying across its
+        scan points (a workspace merged from several directions in PyRS). A
+        discriminator records the boundary *between* workspaces, and one
+        workspace has none to record, so the entry records no discriminator
+        field -- an empty `discriminator_fields` attribute, which every read
+        takes as one workspace whatever is configured. Nothing is lost: the
+        per-scan-point log, if there is one, is retained with the other logs.
+        With more than one workspace the field is the only boundary marker, so
+        there `_discriminator.resolve` still refuses.
         """
-        return _discriminator.field_names()
+        names = _discriminator.field_names()
+        if len(wss) != 1 or not names:
+            return names
+        (ws,) = wss
+        for name in names:
+            try:
+                _discriminator.resolve(ws, name)
+            except ValueError as error:
+                logger.info(
+                    f"NXstress: workspace '{ws.name}' has no single value for discriminator field "
+                    f"{name!r}, so this single-workspace entry records no discriminator field.\n"
+                    f"  ({str(error).splitlines()[0]})"
+                )
+                return ()
+        return names
+
+    @classmethod
+    def _runBoundary(cls, wss: list[HidraWorkspace]) -> bool:
+        """Whether this entry's workspace key includes the run (`_runs.BOUNDARY_ATTRIBUTE`).
+
+        True when every input workspace holds a single run. It is what lets two
+        runs sharing every discriminator value -- two runs in one strain
+        direction -- come back as two workspaces rather than one. False only for
+        a single workspace merged from several runs in PyRS, whose rows must be
+        read back together; `_validateMultiWorkspace` refuses such a workspace
+        alongside others.
+        """
+        return all(_runs.single_run(ws._sample_logs) for ws in wss)
+
+    @classmethod
+    def _workspaceKey(cls, ws: HidraWorkspace, discriminator_names: tuple, run_boundary: bool) -> tuple:
+        """The key that tells this workspace's rows from every other workspace's in the entry."""
+        key = _discriminator.key(ws, discriminator_names)
+        if not run_boundary:
+            return key
+        (run,) = _runs.run_numbers(ws._sample_logs)
+        return _runs.workspace_key(key, run)
 
     @classmethod
     @validate_call_
@@ -1268,13 +1408,14 @@ class NXstress:
         #   the discriminator columns on the peak index.
 
         discriminator_names = cls._discriminatorNames(wss)
+        run_boundary = cls._runBoundary(wss)
 
         # One flattened list of peak collections, each tagged with its own
-        # workspace's discriminator values and sample logs. This is what keeps
-        # the three position-aligned groups (PEAKS, peak parameters, background
+        # workspace's key and sample logs. This is what keeps the three
+        # position-aligned groups (PEAKS, peak parameters, background
         # parameters) in the same order as each other.
         indexed = [
-            IndexedPeaks(_discriminator.key(ws, discriminator_names), collection, ws._sample_logs)
+            IndexedPeaks(cls._workspaceKey(ws, discriminator_names, run_boundary), collection, ws._sample_logs)
             for ws, collections in zip(wss, peakss)
             for collection in collections
         ]
@@ -1299,6 +1440,6 @@ class NXstress:
         entry[GROUP_NAME.FIT] = _Fit.init_group(wss, indexed, logss)
 
         # 'PEAKS' group
-        entry[GROUP_NAME.PEAKS] = _Peaks.init_group(indexed, logss[0], discriminator_names)
+        entry[GROUP_NAME.PEAKS] = _Peaks.init_group(indexed, logss[0], discriminator_names, run_boundary=run_boundary)
 
         return entry

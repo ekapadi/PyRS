@@ -1,15 +1,18 @@
 """Integration round-trip tests for spec 02 (NXstress I/O for PeakFitting & Texture
 viewers): write via NXstress, read back, assert HidraWorkspace/PeakCollection
 equality; and confirm the .h5 suffix still routes through HidraProjectFile
-(no regression to the pre-existing path).
+(no regression to the pre-existing path). And the strain/stress viewer: every
+loaded direction saved to one `.nxs` file and loaded back.
 
 Model-level only (no QWidget construction) -- see tests/ui/test_peak_fitting.py /
-test_texture_fitting.py for the GUI-level enablement-wiring coverage.
+test_texture_fitting.py / test_nxstress_roundtrip.py for the GUI-level
+enablement-wiring coverage.
 """
 
 from pathlib import Path
 from typing import Callable
 
+import h5py
 import numpy as np
 import pytest
 
@@ -17,9 +20,11 @@ from pyrs.core.pyrscore import PyRsCore
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.interface.combine_runs.combine_runs_model import CombineRunsModel
 from pyrs.interface.peak_fitting.peak_fitting_model import PeakFittingModel
+from pyrs.interface.strainstressviewer.model import Model as StrainStressModel
 from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingModel
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
+from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode
 from pyrs.utilities.NXstress.NXstress import NXstress
 
 pytestmark = pytest.mark.integration
@@ -237,3 +242,176 @@ class TestCombineRunsViewerRoundtrip:
         out_path = tmp_path / "combined.h5"
         model.export_project_files(str(out_path))
         assert out_path.exists()
+
+
+class TestStrainStressViewerRoundtrip:
+    """The strain/stress viewer: every loaded direction in one `.nxs` file, and back.
+
+    The inputs have the shape real strain/stress data has: every run numbers its
+    scan points from 1, a direction may be loaded from two runs, and each run
+    records its `run_number`. Before NXstress keyed scan points by
+    `(run, scan point)`, none of this could be written into one entry.
+    """
+
+    PEAK = "Fe110"
+    RUNS = {"11": (1327, 1328), "22": (1331,), "33": (1332,)}
+
+    @staticmethod
+    def project(
+        write_minimal_h5_project, minimal_HidraWorkspace, minimal_PeakCollection, *, run: int, n_subruns: int = 4
+    ) -> Path:
+        """A fitted project file for one run: scan points 1..n, a `run_number` log, one peak."""
+        ws = minimal_HidraWorkspace(name=f"HB2B_{run}", with_instrument=True, with_masks=True, n_subruns=n_subruns)
+        points = ws.get_sub_runs().raw_copy()
+        ws.set_sample_log("run_number", points, np.full(len(points), run))
+        path = write_minimal_h5_project(ws, filename=f"HB2B_{run}.h5", with_instrument=True, with_masks=True)
+        peaks = minimal_PeakCollection(
+            N_subrun=len(points), sub_runs=points, peak_tag=TestStrainStressViewerRoundtrip.PEAK, runnumber=run
+        )
+        # A fitted file carries a reference spacing; without one every strain error is
+        # NaN, and fusing two runs of one direction refuses NaN costs. Varying per
+        # scan point, so the round trip has to keep every row's value.
+        peaks.set_d_reference(values=1.0 + 0.01 * np.arange(len(points)), errors=0.0001)
+        project = HidraProjectFile(str(path), mode=HidraProjectFileMode.READWRITE)
+        project.write_peak_parameters(peaks)
+        project.save()
+        project.close()
+        return path
+
+    @pytest.fixture
+    def loaded(self, write_minimal_h5_project, minimal_HidraWorkspace, minimal_PeakCollection):
+        """A model with all three directions loaded from project files, and stress calculated."""
+        model = StrainStressModel()
+        for direction, runs in self.RUNS.items():
+            setattr(
+                model,
+                f"e{direction}",
+                [
+                    str(
+                        self.project(write_minimal_h5_project, minimal_HidraWorkspace, minimal_PeakCollection, run=run)
+                    )
+                    for run in runs
+                ],
+            )
+        model.selectedPeak = self.PEAK
+        model.calculate_stress("diagonal", 200.0, 0.3, (1.0, 0.0001))
+        return model
+
+    def test_every_direction_is_recovered(self, loaded, tmp_path):
+        # Arrange
+        path = tmp_path / "stress.nxs"
+
+        # Act
+        loaded.save_as_nxstress(str(path))
+        reloaded = StrainStressModel()
+        assert reloaded.load_nxstress(str(path))
+
+        # Assert
+        for direction, runs in self.RUNS.items():
+            workspaces = getattr(reloaded, f"e{direction}")
+            assert [ws.direction for ws in workspaces] == [direction] * len(runs)
+            peaks = getattr(reloaded, f"e{direction}_peaks")
+            assert [int(collections[self.PEAK].runnumber) for collections in peaks] == list(runs)
+            assert [ws.get_sub_runs().raw_copy().tolist() for ws in workspaces] == [[1, 2, 3, 4]] * len(runs)
+            # Each collection records the file it was loaded from -- the `.nxs` now.
+            assert all(collections[self.PEAK].projectfilename == path.name for collections in peaks)
+
+    def test_the_stress_summary_is_reproduced(self, loaded, tmp_path):
+        """The reconstructed stress field writes the same CSV summary as the original."""
+        # Arrange
+        path = tmp_path / "stress.nxs"
+        loaded.save_as_nxstress(str(path))
+        reloaded = StrainStressModel()
+        reloaded.load_nxstress(str(path))
+        reloaded.selectedPeak = self.PEAK
+        reloaded.calculate_stress("diagonal", 200.0, 0.3, (1.0, 0.0001))
+        original_csv, reloaded_csv = tmp_path / "original.csv", tmp_path / "reloaded.csv"
+
+        # Act
+        loaded.write_stress_to_csv(str(original_csv), False)
+        reloaded.write_stress_to_csv(str(reloaded_csv), False)
+
+        # Assert -- the header names the runs per direction, so it must match too
+        assert "nan" not in original_csv.read_text().lower(), "the comparison would be NaN against NaN"
+        assert original_csv.read_text() == reloaded_csv.read_text()
+        assert "# Direction 11: 1327, 1328" in reloaded_csv.read_text()
+
+    def test_each_direction_is_one_contiguous_block_on_disk(self, loaded, tmp_path):
+        """Read through h5py, not `NXstress.read`: the on-disk order is the claim."""
+        # Arrange
+        path = tmp_path / "stress.nxs"
+
+        # Act
+        loaded.save_as_nxstress(str(path))
+
+        # Assert
+        with h5py.File(path, "r") as f:
+            directions = [value.decode() for value in f["entry/peaks/direction"][()]]
+        blocks = [d for n, d in enumerate(directions) if n == 0 or d != directions[n - 1]]
+        assert blocks == ["11", "22", "33"], f"each direction must be one run of rows, got {blocks}"
+
+    def test_save_without_direction_configured_refused(self, loaded, config_override, tmp_path):
+        # Arrange
+        config_override({"nxstress": {"discriminator_fields": []}})
+        path = tmp_path / "stress.nxs"
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"'direction'.*'nxstress.discriminator_fields'"):
+            loaded.save_as_nxstress(str(path))
+        assert not path.exists()
+
+    def test_with_nxstress_switched_off_save_is_refused(self, loaded, config_override, tmp_path):
+        """`nxstress.enable` switches the whole NXstress feature set, saving included."""
+        # Arrange
+        config_override({"nxstress": {"enable": False}})
+        path = tmp_path / "stress.nxs"
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=r"'nxstress.enable'"):
+            loaded.save_as_nxstress(str(path))
+        assert not path.exists()
+
+    def test_with_nxstress_switched_off_load_is_refused(self, loaded, config_override, tmp_path):
+        """... and loading too."""
+        # Arrange
+        path = tmp_path / "stress.nxs"
+        loaded.save_as_nxstress(str(path))
+        config_override({"nxstress": {"enable": False}})
+        reloaded = StrainStressModel()
+        failures: list = []
+        reloaded.failureMsg.connect(lambda *args: failures.append(args))
+
+        # Act
+        result = reloaded.load_nxstress(str(path))
+
+        # Assert
+        assert result is False
+        assert failures and "'nxstress.enable'" in " ".join(map(str, failures[0]))
+
+    def test_a_file_the_viewer_did_not_write_is_reported(
+        self, write_minimal_h5_project, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """A PeakFitting save records no direction, so there is no slot to put it in."""
+        # Arrange
+        model = PeakFittingModel(PyRsCore())
+        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+        model.hidra_workspace = ws
+        n_subrun = len(ws.get_sub_runs())
+        model.fit_result = FitResult(
+            peakcollections=[minimal_PeakCollection(N_subrun=n_subrun, peak_tag=self.PEAK)],
+            fitted=None,
+            difference=None,
+        )
+        path = tmp_path / "peak_fitting.nxs"
+        model.save_fit_result(str(path))
+        viewer = StrainStressModel()
+        failures: list = []
+        viewer.failureMsg.connect(lambda *args: failures.append(args))
+
+        # Act
+        result = viewer.load_nxstress(str(path))
+
+        # Assert
+        assert result is False
+        assert failures and "direction" in " ".join(map(str, failures[0]))
+        assert viewer.e11 == viewer.e22 == viewer.e33 == []

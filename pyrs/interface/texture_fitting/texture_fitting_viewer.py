@@ -10,11 +10,18 @@ from qtpy.QtGui import QColor  # type:ignore
 from qtpy.QtCore import Qt  # type: ignore
 
 from pyrs.interface.ui.diffdataviews import PeakFitSetupView, GeneralDiffDataView
-from pyrs.interface.gui_helper import impose_extension, nxstress_save_available, pop_message, write_nxstress_or_report
+from pyrs.interface.gui_helper import (
+    impose_extension,
+    load_file_filter,
+    nxstress_save_available,
+    pop_message,
+    write_nxstress_or_report,
+)
 from pyrs.interface.texture_fitting.texture_fitting_crtl import TextureFittingCrtl
 from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingModel
 from pyrs.utilities import get_input_project_file  # type: ignore
 from pyrs.utilities.config import Config
+from pyrs.utilities.unset import Unset
 
 import numpy as np
 
@@ -33,12 +40,14 @@ class FileLoad(QWidget):
     def __init__(
         self,
         name: Optional[str] = None,
-        fileType: str = "HidraProjectFile (*.h5);;NXstress (*.nxs);;All Files (*)",
+        fileType: str | Unset = Unset,
         parent: Optional[QWidget] = None,
     ) -> None:
         self._parent = parent
         super().__init__(parent)
         self.name = name
+        # Unset: decided when the dialog opens, because whether `.nxs` is offered
+        # follows `nxstress.enable`, which switches NXstress loading too.
         self.fileType = fileType
         layout = QHBoxLayout()
         if name is not None:
@@ -70,8 +79,13 @@ class FileLoad(QWidget):
         self._parent.fit_summary.fit_table_operator.fit_result = None
 
     def openFileDialog(self):
+        file_type = (
+            load_file_filter("HidraProjectFile (*.h5)") + ";;All Files (*)"
+            if self.fileType is Unset
+            else self.fileType
+        )
         self._parent._project_file, _ = QFileDialog.getOpenFileNames(
-            self, self.name, "", self.fileType, options=QFileDialog.DontUseNativeDialog
+            self, self.name, "", file_type, options=QFileDialog.DontUseNativeDialog
         )
 
         if self._parent._project_file:

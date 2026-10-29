@@ -366,6 +366,14 @@ UNDEFINED_PEAK_TAG = "_undefined_"
 
 NO_LOG = "_no_log_"
 
+#: The run index's column, on `peaks` and `SAMPLE_DESCRIPTION`, and the sample log
+#: it is read from (see `_runs`). Here, in the leaf module, because `_discriminator`
+#: reserves it and `_runs` builds on `_discriminator`.
+RUN_NUMBER = "run_number"
+
+#: `peaks` attribute recording whether the run is part of the workspace key.
+RUN_BOUNDARY_ATTRIBUTE = "run_number_is_boundary"
+
 
 def group_naming_scheme(base_name: str, suffix: int | str) -> str:
     # Generate the name for an HDF5 group, allowing for multiple group instances:

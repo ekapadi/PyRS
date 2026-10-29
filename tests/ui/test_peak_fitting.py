@@ -297,9 +297,11 @@ def nxstress_ready_window(fit_peaks_window, minimal_HidraWorkspace, minimal_Peak
     monkeypatch.setattr(peak_fitting_viewer, "pop_message", record)
     monkeypatch.setattr(gui_helper, "pop_message", record)
 
-    def set_peak_tag(peak_tag: str) -> None:
-        peak = minimal_PeakCollection(N_subrun=len(ws.get_sub_runs()), peak_tag=peak_tag)
-        window._model.fit_result = FitResult(peakcollections=[peak], fitted=None, difference=None)
+    def set_peak_tag(peak_tag: str, *, copies: int = 1) -> None:
+        # `copies > 1` fits the same peak twice, which the writer refuses as a
+        # duplicate `PeakCollection` -- a failure raised inside the write.
+        peaks = [minimal_PeakCollection(N_subrun=len(ws.get_sub_runs()), peak_tag=peak_tag) for _ in range(copies)]
+        window._model.fit_result = FitResult(peakcollections=peaks, fitted=None, difference=None)
 
     yield window, out_path, messages, set_peak_tag
     monkeypatch.undo()
@@ -320,11 +322,15 @@ def test_save_as_nxstress_writes_file(nxstress_ready_window) -> None:
 
 
 def test_save_as_nxstress_failure_reports_and_cleans_up(nxstress_ready_window) -> None:
-    """A tag NXstress cannot parse raises inside the writer; the slot must report
-    it (an uncaught slot exception aborts the app) and remove the partial file."""
+    """A refusal raised inside the writer must be reported by the slot (an uncaught
+    slot exception aborts the app), and the partial file removed.
+
+    The same peak fitted twice is refused as a duplicate `PeakCollection`. This test
+    used to use the tag `peak0`, which the writer could not parse; such a tag is now
+    written, with hkl (0, 0, 0) meaning "unknown"."""
     # Arrange
     window, out_path, messages, set_peak_tag = nxstress_ready_window
-    set_peak_tag("peak0")
+    set_peak_tag("Fe 110", copies=2)
 
     # Act
     window.save_as_nxstress()

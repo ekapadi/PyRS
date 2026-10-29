@@ -87,6 +87,8 @@ pandas = "*"
 types-six = "*"
 nexusformat = ">=1.0.8,<2"
 pydantic = ">=2.7.3,<3"
+# pyrs.utilities.unset: PEP 661 `Sentinel`
+typing_extensions = ">=4.16"
 h5glance = ">=0.9,<0.10"
 py-rattler = "==0.24.0"
 neutrons_standard = "*"
@@ -110,6 +112,8 @@ pandas = "*"
 types-six = "*"
 nexusformat = ">=1.0.8,<2"
 pydantic = ">=2.7.3,<3"
+# pyrs.utilities.unset: PEP 661 `Sentinel`
+typing_extensions = ">=4.16"
 neutrons_standard = "*"
 
 
@@ -169,6 +173,8 @@ pandas = "*"
 types-six = "*"
 nexusformat = ">=1.0.8,<2"
 pydantic = ">=2.7.3,<3"
+# pyrs.utilities.unset: PEP 661 `Sentinel`
+typing_extensions = ">=4.16"
 
 # ------------------------------- #
 # QA Environment Feature #
@@ -185,6 +191,8 @@ pandas = "*"
 types-six = "*"
 nexusformat = ">=1.0.8,<2"
 pydantic = ">=2.7.3,<3"
+# pyrs.utilities.unset: PEP 661 `Sentinel`
+typing_extensions = ">=4.16"
 py-rattler = "==0.24.0"
 
 # ------------------------------- #
@@ -202,6 +210,8 @@ pandas = "*"
 types-six = "*"
 nexusformat = ">=1.0.8,<2"
 pydantic = ">=2.7.3,<3"
+# pyrs.utilities.unset: PEP 661 `Sentinel`
+typing_extensions = ">=4.16"
 
 [tool.pixi.package]
 name = "pyrs"
