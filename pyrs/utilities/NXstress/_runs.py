@@ -25,8 +25,10 @@ Typical workflow:
 
 1. `for_scan_points(logs, points)` gives the run number of each scan point.
 2. `single_run(logs)` asks whether a workspace holds exactly one run.
-3. `workspace_key(disc_key, run)` adds the run to a discriminator key.
-4. On read, `axis(sample_description)` and `is_boundary(peaks)` recover both.
+3. On read, `axis(sample_description)` and `is_boundary(peaks)` recover both.
+
+The workspace key itself, which carries the run beside the discriminator values,
+is `_workspace_key.WorkspaceKey`.
 
 A file written before the run index carries neither column nor attribute. It is
 read with every scan point at the configured default run number -- its scan
@@ -44,7 +46,6 @@ from pyrs.utilities import config
 # -- two runs in one direction -- be read back as two workspaces; False only for an
 # entry holding one workspace merged from several runs, read back together.
 from ._definitions import RUN_BOUNDARY_ATTRIBUTE as BOUNDARY_ATTRIBUTE, RUN_NUMBER  # noqa: F401
-from ._discriminator import DiscriminatorKey
 
 
 def default_run_number() -> int:
@@ -108,32 +109,6 @@ def run_numbers(logs: SampleLogs) -> set[int]:
 def single_run(logs: SampleLogs) -> bool:
     """Whether a workspace holds exactly one run -- that is, it was not merged from several."""
     return len(run_numbers(logs)) == 1
-
-
-def workspace_key(disc_key: DiscriminatorKey, run: int) -> DiscriminatorKey:
-    """A discriminator key extended by the run, kept sorted by name like any other.
-
-    Carrying the run as one more `(name, value)` pair, rather than in a field of
-    its own, is what lets every consumer of the key -- the sort order, duplicate
-    detection, the read-side split, append's Case A/B classification -- treat a
-    new run as a new workspace with no change of its own.
-    """
-    return tuple(sorted((*disc_key, (RUN_NUMBER, int(run)))))
-
-
-def without_run(key: DiscriminatorKey) -> DiscriminatorKey:
-    """The discriminator part of a workspace key: what is put back onto a workspace on read."""
-    return tuple(pair for pair in key if pair[0] != RUN_NUMBER)
-
-
-def run_of(key: DiscriminatorKey) -> int:
-    """The run a workspace key carries.
-
-    Raises:
-        KeyError: If the key carries no run -- an entry whose run is not part of
-            the workspace key.
-    """
-    return int(dict(key)[RUN_NUMBER])
 
 
 def is_boundary(peaks) -> bool:

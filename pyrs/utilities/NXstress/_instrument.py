@@ -419,7 +419,7 @@ class _Instrument:
             instrument: The target entry's existing `instrument` group.
 
         Returns:
-            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+            Path -> `NXfield`, for `_append.validate_appendable_shapes`.
         """
         path = f"{GROUP_NAME.INSTRUMENT}/{GROUP_NAME.MONOCHROMATOR}/wavelength"
         mono = instrument[GROUP_NAME.MONOCHROMATOR] if GROUP_NAME.MONOCHROMATOR in instrument else None

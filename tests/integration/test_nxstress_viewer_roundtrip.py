@@ -9,6 +9,7 @@ test_texture_fitting.py / test_nxstress_roundtrip.py for the GUI-level
 enablement-wiring coverage.
 """
 
+import json
 from pathlib import Path
 from typing import Callable
 
@@ -336,6 +337,76 @@ class TestStrainStressViewerRoundtrip:
         assert original_csv.read_text() == reloaded_csv.read_text()
         assert "# Direction 11: 1327, 1328" in reloaded_csv.read_text()
 
+    @pytest.fixture
+    def from_nxstress(self, loaded, tmp_path):
+        """A model loaded from the `.nxs` file `loaded` saves, stress calculated as for `loaded`."""
+        path = tmp_path / "stress.nxs"
+        loaded.save_as_nxstress(str(path))
+        model = StrainStressModel()
+        assert model.load_nxstress(str(path))
+        model.selectedPeak = self.PEAK
+        model.calculate_stress("diagonal", 200.0, 0.3, (1.0, 0.0001))
+        return model, path
+
+    def test_saved_state_names_the_nxstress_file(self, from_nxstress, tmp_path):
+        """Once per workspace, as it names project files: e11 holds two runs."""
+        # Arrange
+        model, path = from_nxstress
+        state = tmp_path / "state.json"
+
+        # Act
+        model.to_json(str(state))
+
+        # Assert
+        data = json.loads(state.read_text())
+        assert data["filenames_11"] == [str(path)] * 2
+        assert data["filenames_22"] == data["filenames_33"] == [str(path)]
+
+    def test_saved_state_restores_every_direction(self, from_nxstress, tmp_path):
+        """The state reloads from the `.nxs` file, and reproduces the same stress summary."""
+        # Arrange
+        model, _ = from_nxstress
+        state = tmp_path / "state.json"
+        model.to_json(str(state))
+        restored = StrainStressModel()
+        failures: list = []
+        restored.failureMsg.connect(lambda *args: failures.append(args))
+        original_csv, restored_csv = tmp_path / "original.csv", tmp_path / "restored.csv"
+
+        # Act
+        restored.from_json(str(state))
+
+        # Assert
+        assert failures == []
+        for direction, runs in self.RUNS.items():
+            assert [ws.direction for ws in getattr(restored, f"e{direction}")] == [direction] * len(runs)
+            peaks = getattr(restored, f"e{direction}_peaks")
+            assert [int(collections[self.PEAK].runnumber) for collections in peaks] == list(runs)
+        assert restored.selectedPeak == self.PEAK
+        model.write_stress_to_csv(str(original_csv), False)
+        restored.write_stress_to_csv(str(restored_csv), False)
+        assert original_csv.read_text() == restored_csv.read_text()
+
+    def test_saved_state_with_nxstress_switched_off_is_reported(self, from_nxstress, config_override, tmp_path):
+        """A state naming a `.nxs` file cannot reload it while NXstress is off: said, not skipped."""
+        # Arrange
+        model, _ = from_nxstress
+        state = tmp_path / "state.json"
+        model.to_json(str(state))
+        config_override({"nxstress": {"enable": False}})
+        restored = StrainStressModel()
+        failures: list = []
+        restored.failureMsg.connect(lambda *args: failures.append(args))
+
+        # Act
+        restored.from_json(str(state))
+
+        # Assert
+        assert failures and "'nxstress.enable'" in " ".join(map(str, failures[0]))
+        assert restored.e11 == restored.e22 == restored.e33 == []
+        assert restored.stress is None
+        assert restored.modelUpdated == model.modelUpdated
+
     def test_each_direction_is_one_contiguous_block_on_disk(self, loaded, tmp_path):
         """Read through h5py, not `NXstress.read`: the on-disk order is the claim."""
         # Arrange
@@ -415,3 +486,93 @@ class TestStrainStressViewerRoundtrip:
         assert result is False
         assert failures and "direction" in " ".join(map(str, failures[0]))
         assert viewer.e11 == viewer.e22 == viewer.e33 == []
+
+
+def assert_same_stress_csv(original: Path, reloaded: Path, *, rtol: float) -> None:
+    """Two stress CSV summaries agree: text fields exactly, numbers to `rtol`.
+
+    Compared cell by cell in position, as written: the summary is what a user
+    keeps, so its layout is part of what must be reproduced.
+    """
+    original_lines, reloaded_lines = original.read_text().splitlines(), reloaded.read_text().splitlines()
+    assert len(original_lines) == len(reloaded_lines)
+    for line_number, (a, b) in enumerate(zip(original_lines, reloaded_lines), start=1):
+        cells_a, cells_b = a.split(","), b.split(",")
+        assert len(cells_a) == len(cells_b), f"line {line_number}: {a!r} vs {b!r}"
+        for cell_a, cell_b in zip(cells_a, cells_b):
+            if cell_a.strip() == cell_b.strip():
+                continue
+            assert float(cell_a) == pytest.approx(float(cell_b), rel=rtol), f"line {line_number}: {a!r} vs {b!r}"
+
+
+class TestStrainStressViewerOnRealData:
+    """The strain/stress round trip on real HB2B runs, with instrument geometry added.
+
+    The `*_with_instrument.h5` fixtures are real project files with geometry filled
+    in (`tests/scripts/make_nxstress_sample_position_fixture.py`); without
+    geometry nothing can be saved as NXstress. Their peak tags, `peak0`, name no
+    lattice plane, and are written and read back as hkl `(0, 0, 0)`, "unknown".
+    """
+
+    PEAK = "peak0"
+
+    @pytest.fixture(
+        params=[
+            pytest.param({"11": "HB2B_1328", "22": "HB2B_1331", "33": "HB2B_1332"}, id="HB2B_1328-1331-1332"),
+            pytest.param({"11": "3393_PWHT-TD", "22": "3394_PWHT-ND", "33": "3395_PWHT-LD"}, id="PWHT_TD-ND-LD"),
+        ]
+    )
+    def loaded(self, request, test_data_dir):
+        """A model with one real run per direction loaded, and stress calculated."""
+        model = StrainStressModel()
+        for direction, stem in request.param.items():
+            setattr(model, f"e{direction}", [str(Path(test_data_dir) / f"{stem}_with_instrument.h5")])
+        model.selectedPeak = self.PEAK
+        model.calculate_stress("diagonal", 200.0, 0.3, None)
+        return model
+
+    def test_every_direction_and_run_is_recovered(self, loaded, tmp_path):
+        # Arrange
+        path = tmp_path / "stress.nxs"
+
+        # Act
+        loaded.save_as_nxstress(str(path))
+        reloaded = StrainStressModel()
+        assert reloaded.load_nxstress(str(path))
+
+        # Assert
+        for direction in ("11", "22", "33"):
+            original, restored = getattr(loaded, f"e{direction}"), getattr(reloaded, f"e{direction}")
+            assert [ws.direction for ws in restored] == [direction]
+            assert restored[0].get_sub_runs().raw_copy().tolist() == original[0].get_sub_runs().raw_copy().tolist()
+            original_peaks = getattr(loaded, f"e{direction}_peaks")[0][self.PEAK]
+            restored_peaks = getattr(reloaded, f"e{direction}_peaks")[0][self.PEAK]
+            assert restored_peaks.runnumber == original_peaks.runnumber
+            np.testing.assert_array_equal(
+                restored_peaks.get_dspacing_center()[0], original_peaks.get_dspacing_center()[0]
+            )
+
+    def test_the_stress_summary_is_reproduced(self, loaded, tmp_path):
+        """The same CSV summary, to single precision.
+
+        Not byte for byte: NXstress stores a pseudo-Voigt fit as height, FWHM and
+        form factor (1 - mixing), and reconstructs the intensity and mixing from
+        them on read. The fit values are single precision, so the peak-height
+        columns can move by one float32 step -- measured at most 2.1e-7 relative
+        on these runs. d-spacing, strain and stress are unaffected.
+        """
+        # Arrange
+        path = tmp_path / "stress.nxs"
+        loaded.save_as_nxstress(str(path))
+        reloaded = StrainStressModel()
+        reloaded.load_nxstress(str(path))
+        reloaded.selectedPeak = self.PEAK
+        reloaded.calculate_stress("diagonal", 200.0, 0.3, None)
+        original_csv, reloaded_csv = tmp_path / "original.csv", tmp_path / "reloaded.csv"
+
+        # Act
+        loaded.write_stress_to_csv(str(original_csv), False)
+        reloaded.write_stress_to_csv(str(reloaded_csv), False)
+
+        # Assert
+        assert_same_stress_csv(original_csv, reloaded_csv, rtol=1e-6)

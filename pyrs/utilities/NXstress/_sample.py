@@ -485,7 +485,7 @@ class _Sample:
         if cls.TRANSFORMATIONS_GROUP not in sd:
             # An entry written before this group existed. Appending to it would
             # leave a chain shorter than the axes it describes, which is worse
-            # than the absence -- `NXstress._validateAppendableShapes` refuses
+            # than the absence -- `_append.validate_appendable_shapes` refuses
             # such an entry up front, so this is a backstop, not a path.
             raise RuntimeError(
                 "NXstress._sample: the target entry has no `transformations` group, so its "
@@ -509,7 +509,7 @@ class _Sample:
             sd: The target entry's existing `SAMPLE_DESCRIPTION` group.
 
         Returns:
-            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+            Path -> `NXfield`, for `_append.validate_appendable_shapes`.
         """
         found = row_aligned_fields(sd, GROUP_NAME.SAMPLE_DESCRIPTION)
         if "logs" in sd:
@@ -530,7 +530,7 @@ class _Sample:
         Every scan point in an entry carries the same set of logs and the same
         optional fields; appending a different set would leave the rows already on
         disk with no value for a new one, and no error to signal it. Separate from
-        `_append_group` so that `NXstress._classifyAppend` can run it before
+        `_append_group` so that `_append.run_checks` can run it before
         anything anywhere has been resized.
 
         Args:
@@ -634,7 +634,7 @@ class _Sample:
                 from the existing group -- a group this writer did not produce.
         """
         # FIRST, before anything is resized. Re-checked here as well as in
-        # `NXstress._classifyAppend` because this method is reachable on its own --
+        # `_append.run_checks` because this method is reachable on its own --
         # and a mismatch found after the first `tail_append` would already have
         # grown part of the group, which is the defect this ordering exists to
         # prevent, not merely a tidier place to put the call.
