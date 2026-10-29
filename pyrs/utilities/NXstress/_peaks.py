@@ -24,7 +24,7 @@ from pyrs.utilities.convertdatatypes import is_text_array, to_text, to_text_arra
 
 from ._definitions import CHUNK_SHAPE, FIELD_DTYPE, GROUP_NAME, row_aligned_fields
 from . import _discriminator, _runs
-from ._discriminator import DiscriminatorKey
+from ._workspace_key import WorkspaceKey
 
 
 _logger = logging.getLogger(__name__)
@@ -76,21 +76,21 @@ REQUIRED PARAMETERS FOR NXstress:
 class IndexedPeaks(NamedTuple):
     """A `PeakCollection` together with the input workspace it came from.
 
-    The workspace is identified by its discriminator values rather than by
-    position, so a single flattened list can carry the peak collections of
-    all N inputs while remaining splittable.
+    The workspace is identified by its key -- discriminator values, and the run
+    when the entry's key carries it -- rather than by position, so a single
+    flattened list can carry the peak collections of all N inputs while
+    remaining splittable.
 
     Attributes:
-        discriminators: Name-keyed discriminator values for the input
-            workspace this collection came from. Empty for a
-            single-workspace write with no field configured.
+        key: The key of the input workspace this collection came from. Empty
+            for a single-workspace write with no field configured.
         collection: The peak collection itself.
         logs: Sample logs of that same input workspace, used to look up
             the sample position for this collection's scan points. `None`
             on the read side, where no workspace exists yet.
     """
 
-    discriminators: DiscriminatorKey
+    key: WorkspaceKey
     collection: PeakCollection
     logs: SampleLogs | None = None
 
@@ -109,7 +109,7 @@ class IndexedPeaks(NamedTuple):
         correspond.
         """
         return (
-            *_discriminator.sort_values(item.discriminators),
+            *item.key.sort_values(),
             *_Peaks.PeakIndex.sort_key(item.collection),
         )
 
@@ -140,8 +140,8 @@ class _Peaks:
 
     @classmethod
     def indexed(cls, peakss: list[PeakCollection], logs: SampleLogs | None = None) -> list[IndexedPeaks]:
-        """Wrap a single workspace's peak collections with an empty discriminator key."""
-        return [IndexedPeaks((), peaks, logs) for peaks in peakss]
+        """Wrap a single workspace's peak collections with an empty workspace key."""
+        return [IndexedPeaks(WorkspaceKey(), peaks, logs) for peaks in peakss]
 
     @classmethod
     def _parse_peak_tag(cls, tag: str) -> tuple[str, tuple[int, int, int]]:
@@ -332,7 +332,7 @@ class _Peaks:
             Emitting no column instead is also the more honest record, and
             `_discriminator.names_for_read` already reads a column-less entry
             back as a single workspace. Such an entry cannot be appended to --
-            see `NXstress._rejectUnmetCaseAPreconditions` -- which is correct:
+            see `_append.reject_unmet_case_a_preconditions` -- which is correct:
             there is nothing to tell an appended workspace apart from.
         """
         if not indexed:
@@ -340,7 +340,7 @@ class _Peaks:
 
         dtypes = {}
         for name in names:
-            values = [dict(item.discriminators)[name] for item in indexed]
+            values = [dict(item.key.discriminators)[name] for item in indexed]
             inferred = np.asarray(values).dtype
             dtypes[name] = FIELD_DTYPE.STRING.value if inferred.kind in ("U", "S", "O") else inferred
         return dtypes
@@ -434,7 +434,7 @@ class _Peaks:
 
         # Discriminator values are per input workspace, so every row this
         # collection contributes carries the same value.
-        discriminators = dict(item.discriminators)
+        discriminators = dict(item.key.discriminators)
         for name in discriminator_names:
             column = _discriminator.column_name(name)
             peaks[column].resize((new_len,))
@@ -545,7 +545,7 @@ class _Peaks:
     @classmethod
     def peakCollectionRanges(
         cls, peaks, discriminator_names: tuple[str, ...] = ()
-    ) -> list[tuple[DiscriminatorKey, tuple[str, int, int, int, str], int, int]]:
+    ) -> list[tuple[WorkspaceKey, tuple[str, int, int, int, str], int, int]]:
         """Identify contiguous blocks of PeakCollection data in NXreflections group.
 
         Each PeakCollection corresponds to a unique 5-tuple (phase_name, h, k, l, mask)
@@ -565,10 +565,11 @@ class _Peaks:
 
         Returns
         -------
-        list[tuple[DiscriminatorKey, tuple[str, int, int, int, str], int, int]]
-            List of (discriminators, key, start, end) where:
-            - discriminators is the name-keyed discriminator value tuple, empty
-              when the entry has no discriminator columns
+        list[tuple[WorkspaceKey, tuple[str, int, int, int, str], int, int]]
+            List of (workspace key, key, start, end) where:
+            - workspace key holds the block's discriminator values, empty when
+              the entry has no discriminator columns, and its run when the
+              entry's key carries the run
             - key is (phase_name, h, k, l, mask)
             - start is the first index (inclusive)
             - end is the last index (exclusive)
@@ -601,17 +602,16 @@ class _Peaks:
         if len(phase_name) == 0:
             return []
 
-        def key_at(i: int) -> tuple[DiscriminatorKey, tuple[str, int, int, int, str]]:
+        def key_at(i: int) -> tuple[WorkspaceKey, tuple[str, int, int, int, str]]:
             disc = tuple((n, column[i].item()) for n, column in zip(ordered_names, discriminators))
-            if runs is not None:
-                disc = _runs.workspace_key(disc, int(runs[i]))
-            return disc, (str(phase_name[i]), int(h[i]), int(k[i]), int(l_[i]), str(mask[i]))
+            workspace = WorkspaceKey(disc) if runs is None else WorkspaceKey(disc, run=int(runs[i]))
+            return workspace, (str(phase_name[i]), int(h[i]), int(k[i]), int(l_[i]), str(mask[i]))
 
         def described(key: tuple) -> str:
             # Name the block the way a caller thinks of it: the compound key,
             # and the discriminators only when the entry actually has any.
-            disc, base = key
-            return f"{base}" + (f" for {dict(disc)}" if disc else "")
+            workspace, base = key
+            return f"{base}{workspace.describe()}"
 
         ranges = []
         seen_keys = set()
@@ -764,7 +764,7 @@ class _Peaks:
             peaks: The target entry's existing `peaks` group.
 
         Returns:
-            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+            Path -> `NXfield`, for `_append.validate_appendable_shapes`.
         """
         return row_aligned_fields(peaks, GROUP_NAME.PEAKS)
 
@@ -796,11 +796,10 @@ class _Peaks:
         Returns
         -------
         list[IndexedPeaks]
-            Reconstructed peak collections, each tagged with the discriminator
-            values of the input workspace it came from. Group by
-            `.discriminators` to recover the per-workspace lists; that grouping
-            is `NXstress.read`'s job, because it also needs the scan-point sets
-            the groups imply.
+            Reconstructed peak collections, each tagged with the workspace key
+            of the input workspace it came from. Group by `.key` to recover the
+            per-workspace lists; that grouping is `_read.workspace_selections`'
+            job, because it also needs the scan-point sets the groups imply.
         """
         from ._fit import _PeakParameters, _BackgroundParameters
         from ._definitions import GROUP_NAME, UNDEFINED_PEAK_TAG
@@ -830,7 +829,7 @@ class _Peaks:
         ranges = cls.peakCollectionRanges(peaks, discriminator_names)
 
         peak_collections = []
-        for discriminators, (phase_name, h, k, l_, mask), start, end in ranges:
+        for workspace_key, (phase_name, h, k, l_, mask), start, end in ranges:
             # Extract scan points for this range
             sub_runs_array = peaks["scan_point"].nxdata[start:end]
 
@@ -893,6 +892,6 @@ class _Peaks:
             # what the constructor above received and could only broadcast.
             pc.set_d_reference(peaks["center"].nxdata[start:end], peaks["center_errors"].nxdata[start:end])
 
-            peak_collections.append(IndexedPeaks(discriminators, pc))
+            peak_collections.append(IndexedPeaks(workspace_key, pc))
 
         return peak_collections

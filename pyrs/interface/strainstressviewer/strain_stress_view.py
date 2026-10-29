@@ -990,10 +990,7 @@ class StrainStressViewer(QMainWindow):
         self.stressCase.dimChanged.connect(self.dimChanged)
         self.fileLoading.file_load_e33.setDisabled(stressCase.lower() != "diagonal")
 
-        for d in ("11", "22", "33"):
-            self.fileLoading.set_text_values(
-                d, ", ".join(os.path.basename(filename) for filename in self.model.get_filenames_for_direction(d))
-            )
+        self.update_file_fields()
         self.update_d0_from_model()
         self.update_plot()
 
@@ -1043,7 +1040,18 @@ class StrainStressViewer(QMainWindow):
     def load_nxstress(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Load NXstress", "", f"{NXSTRESS_FILE_FILTER};;All Files (*)")
         if filename and self.model.load_nxstress(filename):
-            for direction in DIRECTIONS:
-                text = os.path.basename(filename) if getattr(self.model, f"e{direction}") else ""
-                self.fileLoading.set_text_values(direction, text)
+            self.update_file_fields()
             self.update_plot()
+
+    def update_file_fields(self):
+        """Show the files each direction was loaded from, each name once.
+
+        A direction loaded from an NXstress file lists that file once per
+        workspace -- twice for a direction of two runs -- so names are shown once
+        each, in order.
+        """
+        for direction in DIRECTIONS:
+            names = dict.fromkeys(
+                os.path.basename(filename) for filename in self.model.get_filenames_for_direction(direction)
+            )
+            self.fileLoading.set_text_values(direction, ", ".join(names))

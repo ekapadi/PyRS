@@ -11,7 +11,7 @@ from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ign
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.restorable_property import restore
 from pyrs.utilities.NXstress.NXstress import NXstress
-from pyrs.interface.nxstress_load import require_nxstress_enabled
+from pyrs.interface.nxstress_load import is_nxstress_file, require_nxstress_enabled
 from pyrs.utilities.config import Config, default_run_number
 from pyrs.utilities.convertdatatypes import to_text
 from qtpy.QtCore import Signal, QObject  # type:ignore
@@ -423,26 +423,7 @@ class Model(QObject):
             the model held has changed.
         """
         try:
-            require_nxstress_enabled()
-            with NXstress(Path(filename), "r") as nx:
-                entries = nx.entry_numbers()
-                if len(entries) != 1:
-                    raise RuntimeError(
-                        f"'{Path(filename).name}' holds {len(entries)} NXentry groups, and the strain/stress "
-                        "viewer reads one: nothing in PyRS writes more than one yet."
-                    )
-                workspaces, peakss = nx.read()
-
-            slots: dict = {direction: ([], []) for direction in DIRECTIONS}
-            for ws, collections in zip(workspaces, peakss):
-                # Raises `ValueError` for a workspace that records no direction.
-                direction = ws.direction
-                if direction not in slots:
-                    raise ValueError(
-                        f"A workspace in this file records direction '{direction}', not one of {DIRECTIONS}."
-                    )
-                slots[direction][0].append(ws)
-                slots[direction][1].append({collection.peak_tag: collection for collection in collections})
+            slots = self._read_nxstress_slots(filename)
         except Exception as e:
             self.failureMsg.emit(
                 f"Failed to load {filename}. Check that this is an NXstress file written by the strain/stress viewer",
@@ -466,6 +447,103 @@ class Model(QObject):
             if getattr(self, f"e{direction}") and self.check_peak_for_direction(direction):
                 self.create_strain(direction)
         return True
+
+    @staticmethod
+    def _read_nxstress_slots(filename: str) -> dict[str, tuple[list, list]]:
+        """Every workspace of an NXstress file, sorted into the direction it records.
+
+        Args:
+            filename: The `.nxs` file to read.
+
+        Returns:
+            For each of `DIRECTIONS`, `(workspaces, peaks)` in the shape the model
+            holds a direction in: one `{peak_tag: PeakCollection}` per workspace.
+            A direction the file does not hold has two empty lists.
+
+        Raises:
+            NXstressDisabled: If NXstress I/O is switched off (`nxstress.enable`).
+            RuntimeError: If the file holds more than one `NXentry`.
+            ValueError: If a workspace records no direction, or one the viewer
+                does not hold.
+        """
+        require_nxstress_enabled()
+        with NXstress(Path(filename), "r") as nx:
+            entries = nx.entry_numbers()
+            if len(entries) != 1:
+                raise RuntimeError(
+                    f"'{Path(filename).name}' holds {len(entries)} NXentry groups, and the strain/stress "
+                    "viewer reads one: nothing in PyRS writes more than one yet."
+                )
+            workspaces, peakss = nx.read()
+
+        slots: dict[str, tuple[list, list]] = {direction: ([], []) for direction in DIRECTIONS}
+        for ws, collections in zip(workspaces, peakss):
+            # Raises `ValueError` for a workspace that records no direction.
+            direction = ws.direction
+            if direction not in slots:
+                raise ValueError(f"A workspace in this file records direction '{direction}', not one of {DIRECTIONS}.")
+            slots[direction][0].append(ws)
+            slots[direction][1].append({collection.peak_tag: collection for collection in collections})
+        return slots
+
+    def _restore_direction(self, direction: str, filenames: list[str], *, nxstress_slots: dict) -> None:
+        """Load one direction from the files a saved state lists for it.
+
+        A project file loads as it always has, through the direction's setter. An
+        NXstress file contributes the workspaces it holds for *this* direction: a
+        state saved after an NXstress load lists the `.nxs` once per workspace, so
+        each distinct file is taken once. Mixed lists are loaded file by file, in
+        order.
+
+        A file that cannot be loaded is reported through `failureMsg` and leaves
+        the direction empty, as a failed project-file load does.
+
+        Args:
+            direction: One of `DIRECTIONS`.
+            filenames: The files the state lists for it.
+            nxstress_slots: NXstress files already read during this restore, by
+                name, so that one listed for several directions is read once.
+        """
+        if not any(is_nxstress_file(filename) for filename in filenames):
+            self.set_workspaces(f"e{direction}", filenames)
+            return
+
+        # remove existing stress as it will need to be recreated
+        self.stress = None
+        workspaces: list = []
+        peaks: list = []
+        for filename in dict.fromkeys(filenames):
+            if is_nxstress_file(filename):
+                try:
+                    if filename not in nxstress_slots:
+                        nxstress_slots[filename] = self._read_nxstress_slots(filename)
+                    loaded, loaded_peaks = nxstress_slots[filename][direction]
+                    if not loaded:
+                        raise ValueError(f"'{Path(filename).name}' holds no workspace for direction {direction}.")
+                except Exception as e:
+                    self.failureMsg.emit(
+                        f"Failed to load {filename} for direction {direction}", str(e), traceback.format_exc()
+                    )
+                    workspaces, peaks = [], []
+                    break
+                workspaces.extend(loaded)
+                peaks.extend(loaded_peaks)
+            else:
+                ws, p = self.load_hidra_project_file(filename, direction)
+                if ws is None:
+                    workspaces, peaks = [], []
+                    break
+                workspaces.append(ws)
+                if p:
+                    peaks.append(p)
+
+        setattr(self, f"_e{direction}", workspaces)
+        setattr(self, f"_e{direction}_peaks", peaks)
+        setattr(self, f"_e{direction}_strain", None)
+        if direction == "11":
+            # As the e11 setter does: the peak tags on offer come from e11.
+            self._peakTags = list(peaks[0].keys()) if peaks else []
+            self.propertyUpdated.emit("peakTags")
 
     def get_filenames_for_direction(self, direction):
         return [w.hidra_project_file for w in getattr(self, f"e{direction}")]
@@ -504,8 +582,9 @@ class Model(QObject):
 
         self._selectedPeak = data["peak_tag"]
 
+        nxstress_slots: dict = {}
         for direction in ("11", "22", "33"):
-            self.set_workspaces(f"e{direction}", data[f"filenames_{direction}"])
+            self._restore_direction(direction, data[f"filenames_{direction}"], nxstress_slots=nxstress_slots)
             if getattr(self, f"e{direction}"):
                 self.create_strain(direction)
 
@@ -517,7 +596,18 @@ class Model(QObject):
         else:
             d0 = (d0_data["d0"], d0_data["d0_error"], d0_data["vx"], d0_data["vy"], d0_data["vz"])
 
-        self.calculate_stress(data["stress_case"], data["youngs_modulus"], data["poisson_ratio"], d0)
+        stress_case = data["stress_case"]
+        directions = DIRECTIONS if stress_case == "diagonal" else DIRECTIONS[:2]
+        if all(self.validate_selection(direction) is None for direction in directions):
+            self.calculate_stress(stress_case, data["youngs_modulus"], data["poisson_ratio"], d0)
+        else:
+            # A direction failed to load, which has been reported. As in the window,
+            # stress waits for complete inputs; the constants still restore to the form.
+            # d0 is not cached: `calculate_stress` skips a d0 equal to the cached one,
+            # so a later stress would be built without it.
+            self._stressCase = stress_case
+            self._youngs_modulus = data["youngs_modulus"]
+            self._poisson_ratio = data["poisson_ratio"]
 
         self.propertyUpdated.emit("modelUpdated")
 

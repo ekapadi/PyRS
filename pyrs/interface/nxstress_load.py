@@ -45,6 +45,15 @@ class NXstressDisabled(RuntimeError):
     """
 
 
+def is_nxstress_file(filename: str) -> bool:
+    """Whether `filename` names an NXstress file, by the configured extension (`nxstress.extension`).
+
+    Decided by name alone, as the viewers' file dialogs decide it: the file need
+    not exist, and nothing is opened.
+    """
+    return Path(filename).suffix == "." + str(Config["nxstress.extension"]).lstrip(".")
+
+
 def require_nxstress_enabled() -> None:
     """Refuse any NXstress read or write while `nxstress.enable` is false.
 

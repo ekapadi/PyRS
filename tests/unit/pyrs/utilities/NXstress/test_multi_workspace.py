@@ -77,6 +77,26 @@ class TestDiscriminatorRoundtrip:
         np.testing.assert_array_equal(by_direction["22"].get_sub_runs().raw_copy(), [4, 5, 6])
         assert [len(p) for p in read_peakss] == [1, 1]
 
+    def test_every_workspace_read_names_its_source_file(
+        self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
+    ):
+        """As its collections do: it is the file a viewer's saved state reloads from."""
+        # Arrange
+        configure(config_override, "nxstress:\n  discriminator_fields: ['direction']\n")
+        workspaces, peakss = two_workspaces(minimal_HidraWorkspace, minimal_PeakCollection)
+        path = tmp_path / "two.nxs"
+        with NXstress(path, "w") as nx:
+            nx.write(workspaces, peakss)
+
+        # Act
+        with NXstress(path, "r") as nx:
+            read_wss, read_peakss = nx.read()
+
+        # Assert
+        assert [ws.hidra_project_file for ws in read_wss] == [str(path)] * 2
+        # A collection keeps only the file's name, by its own design.
+        assert [peaks[0].projectfilename for peaks in read_peakss] == [path.name] * 2
+
     def test_discriminator_column_is_written_to_the_peaks_group(
         self, config_override, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path
     ):

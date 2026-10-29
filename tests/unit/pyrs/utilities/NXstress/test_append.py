@@ -28,6 +28,7 @@ from nexusformat.nexus import NXentry, NXfield, nxopen
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.utilities.NXstress._definitions import DEFAULT_TAG, appendable, tail_append
+from pyrs.utilities.NXstress import _append
 from pyrs.utilities.NXstress.NXstress import NXstress
 
 
@@ -865,7 +866,7 @@ class TestPreconditions:
         reaches the mutation phase's failure path the only way left: by making
         `_sample.tail_append` raise once the entry times and the instrument
         wavelength have already grown. The guarantee under test is the
-        `except BaseException` invalidation in `_append`, not the trigger.
+        `except BaseException` invalidation in `NXstress._appendToEntry`, not the trigger.
         """
         # Arrange
         from pyrs.utilities.NXstress import _sample
@@ -1069,7 +1070,7 @@ class TestWriterEmitsResizableDatasets:
     list of names, so a field added afterwards is covered automatically -- the
     idiom of `test_definitions.py`.
 
-    The production counterpart is `NXstress._validateAppendableShapes`, which
+    The production counterpart is `_append.validate_appendable_shapes`, which
     runs the same sweep in the pre-flight pass. These reimplement the walk
     locally rather than calling it: a detector that shares its implementation
     with the code under test cannot fail independently of it.
@@ -1231,7 +1232,7 @@ class TestAppendableDatasetsAreDeclaredByTheirOwner:
         with NXstress(path, "r") as nx:
             entry = nx._root["entry"]
             n_scan = len(entry["SAMPLE_DESCRIPTION"]["scan_point"].nxdata)
-            declared = set(NXstress._appendableDatasets(entry))
+            declared = set(_append.appendable_datasets(entry))
 
         # Assert
         with h5py.File(path, "r") as f:
@@ -1277,7 +1278,7 @@ class TestAppendableDatasetsAreDeclaredByTheirOwner:
 
         # Act
         with NXstress(path, "r") as nx:
-            declared = set(NXstress._appendableDatasets(nx._root["entry"]))
+            declared = set(_append.appendable_datasets(nx._root["entry"]))
 
         # Assert
         assert growable_on_disk, "no resizable datasets were written at all"

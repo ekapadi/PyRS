@@ -19,6 +19,7 @@ import pytest
 
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.interface.strainstressviewer.controller import Controller
+from pyrs.interface.strainstressviewer import strain_stress_view
 from pyrs.interface.strainstressviewer.model import Model
 from pyrs.interface.strainstressviewer.strain_stress_view import StrainStressViewer
 from pyrs.peaks.peak_collection import PeakCollection
@@ -114,3 +115,38 @@ def test_load_follows_nxstress_enable(window, config_override):
     # Assert
     assert not window.loadNXstressAction.isEnabled()
     assert window.loadNXstressAction.isVisible()
+
+
+def test_file_fields_name_an_nxstress_file_once(window, test_data_dir, tmp_path, monkeypatch):
+    """After Load NXstress, and after reloading a state saved from it, each field shows the `.nxs` once.
+
+    e11 holds two runs, so a saved state lists the `.nxs` twice for it. In-plane
+    strain needs no e33: these three are the real runs with geometry that share
+    one set of sample logs, which NXstress requires of an entry.
+    """
+    # Arrange
+    model = window.model
+    files = {"11": ["HB2B_1331", "HB2B_1332"], "22": ["HB2B_1328"]}
+    for direction, stems in files.items():
+        setattr(model, f"e{direction}", [str(Path(test_data_dir) / f"{stem}_with_instrument.h5") for stem in stems])
+    model.selectedPeak = "peak0"
+    model.calculate_stress("in-plane-strain", 200.0, 0.3, None)
+    path = tmp_path / "stress.nxs"
+    model.save_as_nxstress(str(path))
+    monkeypatch.setattr(strain_stress_view.QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(path), ""))
+    state = tmp_path / "state.json"
+
+    def fields() -> list[str]:
+        return [getattr(window.fileLoading, f"file_load_e{d}").lineEdit.text() for d in ("11", "22")]
+
+    # Act / Assert -- Load NXstress
+    window.load_nxstress()
+    assert fields() == ["stress.nxs"] * 2
+
+    # Act / Assert -- a state saved now, loaded back
+    model.calculate_stress("in-plane-strain", 200.0, 0.3, None)
+    model.to_json(str(state))
+    for direction in files:
+        window.fileLoading.set_text_values(direction, "")
+    window.controller.load(str(state))
+    assert fields() == ["stress.nxs"] * 2

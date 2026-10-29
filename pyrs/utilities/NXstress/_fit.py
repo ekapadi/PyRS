@@ -552,7 +552,7 @@ class _Diffractogram:
             prefix: Path prefix for the returned keys.
 
         Returns:
-            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+            Path -> `NXfield`, for `_append.validate_appendable_shapes`.
         """
         return row_aligned_fields(data, prefix)
 
@@ -763,7 +763,7 @@ class _Fit:
                 # An append must find the group already there: a mask the target entry
                 # has no DIFFRACTOGRAM for would need a new group with no history for
                 # the scan points already on disk, which is schema restructuring rather
-                # than a tail-append. `NXstress._classifyAppend` rejects that case
+                # than a tail-append. `_append.run_checks` rejects that case
                 # before anything here is reached; this is the backstop.
                 if dgram_name not in fit:
                     raise RuntimeError(
@@ -802,7 +802,7 @@ class _Fit:
             fit: The target entry's existing `FIT` group.
 
         Returns:
-            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+            Path -> `NXfield`, for `_append.validate_appendable_shapes`.
         """
         found: dict = {f"{GROUP_NAME.FIT}/raw_data_file": fit["raw_data_file"]}
         for name in fit:
@@ -818,7 +818,7 @@ class _Fit:
     def validateAppend(cls, wss: list[HidraWorkspace], fit) -> None:
         """Check incoming diffraction against every existing DIFFRACTOGRAM group.
 
-        The mask *set* is checked by `NXstress._classifyAppend`; this checks the
+        The mask *set* is checked by `_append.run_checks`; this checks the
         shape of what would go into each group that is already there.
 
         Args:
