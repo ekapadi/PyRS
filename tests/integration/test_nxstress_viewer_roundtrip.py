@@ -9,7 +9,9 @@ test_texture_fitting.py / test_nxstress_roundtrip.py for the GUI-level
 enablement-wiring coverage.
 """
 
+import functools
 import json
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -406,6 +408,142 @@ class TestStrainStressViewerRoundtrip:
         assert restored.e11 == restored.e22 == restored.e33 == []
         assert restored.stress is None
         assert restored.modelUpdated == model.modelUpdated
+
+    @pytest.fixture
+    def two_directions(self, write_minimal_h5_project, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path):
+        """A `.nxs` holding e11 from run 1327 and e22 from 1331 only, and the project file of run 1328."""
+        project = functools.partial(
+            self.project, write_minimal_h5_project, minimal_HidraWorkspace, minimal_PeakCollection
+        )
+        model = StrainStressModel()
+        model.e11 = [str(project(run=1327))]
+        model.e22 = [str(project(run=1331))]
+        path = tmp_path / "two.nxs"
+        model.save_as_nxstress(str(path))
+        return path, project(run=1328)
+
+    def restore(self, tmp_path, **filenames) -> tuple[StrainStressModel, list]:
+        """`from_json` of an in-plane-strain state listing `filenames`, and its failure reports."""
+        state = tmp_path / "state.json"
+        data = {f"filenames_{d}": [str(f) for f in filenames.get(f"e{d}", [])] for d in ("11", "22", "33")}
+        data.update(stress_case="in-plane-strain", peak_tag=self.PEAK, youngs_modulus=200.0, poisson_ratio=0.3)
+        state.write_text(json.dumps({**data, "d0": None}))
+        model = StrainStressModel()
+        failures: list = []
+        model.failureMsg.connect(lambda *args: failures.append(args))
+        model.from_json(str(state))
+        return model, failures
+
+    def test_saved_state_mixing_nxstress_and_project_files(self, two_directions, tmp_path):
+        """A direction may list a `.nxs` and a project file: both load, in order."""
+        # Arrange
+        nxs, run_1328 = two_directions
+
+        # Act
+        model, failures = self.restore(tmp_path, e11=[nxs, run_1328], e22=[nxs])
+
+        # Assert
+        assert failures == []
+        assert [int(peaks[self.PEAK].runnumber) for peaks in model.e11_peaks] == [1327, 1328]
+        assert model.stress is not None
+
+    def test_saved_state_direction_absent_from_the_nxs(self, two_directions, tmp_path):
+        """A `.nxs` listed for a direction it does not hold is said, not silently empty."""
+        # Arrange
+        nxs, _ = two_directions
+
+        # Act
+        model, failures = self.restore(tmp_path, e11=[nxs], e22=[nxs], e33=[nxs])
+
+        # Assert
+        assert len(failures) == 1 and "direction 33" in failures[0][1]
+        assert model.e33 == []
+        assert len(model.e11) == len(model.e22) == 1
+
+    def test_saved_state_with_a_failing_project_file(self, two_directions, tmp_path):
+        """One file of a direction failing empties the direction, as a project-file load does."""
+        # Arrange
+        nxs, _ = two_directions
+
+        # Act
+        model, failures = self.restore(tmp_path, e11=[nxs, tmp_path / "missing.h5"], e22=[nxs])
+
+        # Assert
+        assert len(failures) == 1 and "missing.h5" in failures[0][0]
+        assert model.e11 == []
+        assert model.stress is None
+
+    def test_saved_state_reads_each_nxstress_file_once(self, two_directions, tmp_path, monkeypatch):
+        # Arrange
+        nxs, _ = two_directions
+        reads: list = []
+        read = StrainStressModel._read_nxstress_slots
+        monkeypatch.setattr(
+            StrainStressModel, "_read_nxstress_slots", staticmethod(lambda f: reads.append(f) or read(f))
+        )
+
+        # Act
+        self.restore(tmp_path, e11=[nxs], e22=[nxs])
+
+        # Assert
+        assert reads == [str(nxs)]
+
+    def test_saved_state_with_an_unreadable_nxs_reports_once(self, tmp_path):
+        """Listed for three directions, a broken file is one failure, not three."""
+        # Arrange
+        broken = tmp_path / "broken.nxs"
+        broken.write_text("not HDF5")
+
+        # Act
+        model, failures = self.restore(tmp_path, e11=[broken], e22=[broken], e33=[broken])
+
+        # Assert
+        assert len(failures) == 1
+        assert model.e11 == model.e22 == model.e33 == []
+
+    def test_same_d0_is_reapplied_to_a_rebuilt_stress(self, loaded):
+        """Reloading a direction drops the stress; the next one must still get the user's d0."""
+        # Arrange: `loaded` applied d0 = 1.0, where the files' own reference varies per point
+        d0 = (1.0, 0.0001)
+        loaded.e22 = loaded.get_filenames_for_direction("22")
+
+        # Act
+        loaded.calculate_stress("diagonal", 200.0, 0.3, d0)
+
+        # Assert
+        np.testing.assert_allclose(loaded.stress_facade.d_reference.values, 1.0)
+
+    def test_failed_load_leaves_the_model_unchanged(self, loaded, tmp_path):
+        """`load_nxstress` promises that a refused file changes nothing the model held."""
+        # Arrange
+        broken = tmp_path / "broken.nxs"
+        broken.write_text("not HDF5")
+        before = [list(getattr(loaded, f"e{d}")) for d in ("11", "22", "33")]
+        stress = loaded.stress
+
+        # Act
+        result = loaded.load_nxstress(str(broken))
+
+        # Assert
+        assert result is False
+        assert [getattr(loaded, f"e{d}") for d in ("11", "22", "33")] == before
+        assert loaded.stress is stress
+
+    def test_save_with_an_unfitted_file_is_refused(self, loaded, test_data_dir, tmp_path):
+        """HB2B_1423 has no fitted peaks, and NXstress records a direction only through them."""
+        # Arrange
+        loaded.e33 = [os.path.join(test_data_dir, "HB2B_1423.h5")]
+        path = tmp_path / "stress.nxs"
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="Direction 33: 1 of its 1 file"):
+            loaded.save_as_nxstress(str(path))
+        assert not path.exists()
+
+    def test_save_with_nothing_loaded_is_refused(self, tmp_path):
+        # Act / Assert
+        with pytest.raises(RuntimeError, match="Nothing to save"):
+            StrainStressModel().save_as_nxstress(str(tmp_path / "stress.nxs"))
 
     def test_each_direction_is_one_contiguous_block_on_disk(self, loaded, tmp_path):
         """Read through h5py, not `NXstress.read`: the on-disk order is the claim."""

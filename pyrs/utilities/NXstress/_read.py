@@ -14,7 +14,7 @@ Several workspaces may share one entry, so a read has to split it again:
 """
 
 import numpy as np
-from nexusformat.nexus import NXdata
+from nexusformat.nexus import NXdata, NXgroup
 
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.peaks.peak_collection import PeakCollection
@@ -31,7 +31,7 @@ from . import _discriminator, _runs
 from ._workspace_key import WorkspaceKey
 
 
-def read_entry(entry, *, path: str) -> tuple[list[HidraWorkspace], list[list[PeakCollection]]]:
+def read_entry(entry: NXgroup, *, path: str) -> tuple[list[HidraWorkspace], list[list[PeakCollection]]]:
     """Read back the workspaces and peak collections of one NXentry.
 
     Args:
@@ -75,7 +75,7 @@ def read_entry(entry, *, path: str) -> tuple[list[HidraWorkspace], list[list[Pea
     for item in indexed:
         item.collection.projectfilename = path
 
-    selections = workspace_selections(indexed, scan_point_axis, run_axis)
+    selections = workspace_selections(indexed, scan_point_axis=scan_point_axis, run_axis=run_axis)
 
     # Instrument geometry, detector shift and masks are entry-wide.
     default_mask, mask_dict = _Masks.masksFromNexus(entry[GROUP_NAME.INSTRUMENT][GROUP_NAME.MASKS])
@@ -83,7 +83,7 @@ def read_entry(entry, *, path: str) -> tuple[list[HidraWorkspace], list[list[Pea
     workspaces = []
     peak_collections = []
     for rows, workspace_key, collections in selections:
-        ws = workspace_from_nexus(entry, rows, default_mask, mask_dict)
+        ws = workspace_from_nexus(entry, rows=rows, default_mask=default_mask, mask_dict=mask_dict)
         # The workspace records its source file, as its collections do. It is the
         # file a viewer's saved state names, to load it again from.
         restore(ws, "hidra_project_file", path)
@@ -98,7 +98,9 @@ def read_entry(entry, *, path: str) -> tuple[list[HidraWorkspace], list[list[Pea
     return workspaces, peak_collections
 
 
-def workspace_selections(indexed: list[IndexedPeaks], scan_point_axis, run_axis) -> list[tuple]:
+def workspace_selections(
+    indexed: list[IndexedPeaks], *, scan_point_axis: np.ndarray, run_axis: np.ndarray
+) -> list[tuple]:
     """Split one entry into per-workspace (rows, workspace key, collections).
 
     Each workspace's scan-point *set* is the union of its peak collections'
@@ -112,22 +114,28 @@ def workspace_selections(indexed: list[IndexedPeaks], scan_point_axis, run_axis)
     run index carries no run in its keys, and is split by scan point alone, as
     it always was.
 
-    Returns
-    -------
-    list[tuple]
-        `(rows, workspace key, collections)` per workspace, where `rows` is
-        a boolean mask over `scan_point_axis`, or `None` for a
-        single-workspace entry (which needs no selection at all).
+    Args:
+        indexed: Every peak collection of the entry, with its workspace key.
+        scan_point_axis: The entry's scan point of every row.
+        run_axis: The entry's run of every row, aligned with `scan_point_axis`.
+
+    Returns:
+        `(rows, workspace key, collections)` per workspace, where `rows` is a
+        boolean mask over `scan_point_axis`, or `None` for a single-workspace
+        entry, which needs no selection at all.
+
+    Raises:
+        RuntimeError: If two workspaces claim one row, or a row belongs to none.
     """
     groups: dict = {}
     for item in indexed:
         groups.setdefault(item.key, []).append(item.collection)
 
     if len(groups) <= 1:
-        # One workspace: a pre-04b file, a single-workspace write, or a file
-        # from the since-removed `merge_workspaces`, all of which read back whole -- no rows
-        # need selecting. Its discriminators are still carried through, so a
-        # single-workspace save round-trips its value like any other.
+        # One workspace: a single-workspace write, or a file written before entries
+        # held several, either of which reads back whole -- no rows need selecting.
+        # Its discriminators are still carried through, so a single-workspace save
+        # round-trips its value like any other.
         workspace_key, collections = next(iter(groups.items())) if groups else (WorkspaceKey(), [])
         return [(None, workspace_key, collections)]
 
@@ -163,8 +171,21 @@ def workspace_selections(indexed: list[IndexedPeaks], scan_point_axis, run_axis)
     return selections
 
 
-def workspace_from_nexus(entry, rows, default_mask, mask_dict) -> HidraWorkspace:
-    """Reconstruct one `HidraWorkspace` from its rows of a (possibly shared) entry."""
+def workspace_from_nexus(
+    entry: NXgroup, *, rows: np.ndarray | None, default_mask: np.ndarray | None, mask_dict: dict
+) -> HidraWorkspace:
+    """Reconstruct one `HidraWorkspace` from its rows of a (possibly shared) entry.
+
+    Args:
+        entry: The NXentry.
+        rows: This workspace's rows of the scan-point family, as a boolean mask;
+            `None` for a single-workspace entry, which is read whole.
+        default_mask: The entry-wide default mask (`_Masks.masksFromNexus`).
+        mask_dict: The entry-wide named masks, by name.
+
+    Returns:
+        The workspace, holding only its own scan points.
+    """
     # Read sample logs. `rows` is applied inside, before any `SubRuns` is
     # built: the entry's concatenated scan-point axis need not be
     # monotonic, and `SubRuns` rejects a non-monotonic array outright.

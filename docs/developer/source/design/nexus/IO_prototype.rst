@@ -174,9 +174,10 @@ through the whole implementation:
   the diffractograms and the entry-level times -- is plain concatenation along
   ``scan_point``, in workspace order;
 * the **peak-index family** -- ``peaks`` and the ``FIT`` parameter groups -- is
-  ordered by the compound key ``(discriminators, [run], phase, h, k, l, mask)``,
-  with the discriminator values (and the run, when it is part of the key) as its
-  most slowly varying coordinates.  Note the key
+  ordered by the compound key ``(workspace key, phase, h, k, l, mask)``. The
+  workspace key is the discriminator values and, when it is part of the key, the
+  run, ordered by column name -- so a field named after ``run_number`` sorts
+  after the run. They are its most slowly varying coordinates.  Note the key
   does *not* include ``scan_point``: one key identifies one ``PeakCollection``,
   and ``scan_point`` orders the rows *within* that key's run.  Putting the
   discriminators first is what makes each workspace's rows one contiguous block,

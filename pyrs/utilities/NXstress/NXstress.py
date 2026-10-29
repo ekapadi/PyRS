@@ -541,7 +541,8 @@ class NXstress:
         #
         #   One NXentry may also hold _multiple_ `HidraWorkspace`: their rows are
         #   concatenated in workspace order throughout, and told apart on read by
-        #   the discriminator columns on the peak index.
+        #   the workspace key on the peak index: the discriminator columns and,
+        #   when it is part of the key, the run.
 
         discriminator_names = _workspace_key.entry_discriminator_names(wss)
         run_boundary = _workspace_key.entry_carries_run(wss)

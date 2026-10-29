@@ -373,7 +373,7 @@ class TestPeakCollectionsFromNexus:
                 fit_group = entry[GROUP_NAME.FIT]
 
                 # Read PeakCollections
-                reconstructed_peaks = _Peaks.peakCollectionsFromNexus(peaks_group, fit_group)
+                reconstructed_peaks = _Peaks.peakCollectionsFromNexus(peaks_group, fit_group, wavelengths={})
 
         # Verify we got 2 PeakCollections back
         assert len(reconstructed_peaks) == 2
@@ -457,7 +457,7 @@ class TestPeakCollectionsFromNexus:
                 peaks_group = entry[GROUP_NAME.PEAKS]
                 fit_group = entry[GROUP_NAME.FIT]
 
-                reconstructed_peaks = _Peaks.peakCollectionsFromNexus(peaks_group, fit_group)
+                reconstructed_peaks = _Peaks.peakCollectionsFromNexus(peaks_group, fit_group, wavelengths={})
 
         # Verify peak_tag matches
         assert len(reconstructed_peaks) == 1

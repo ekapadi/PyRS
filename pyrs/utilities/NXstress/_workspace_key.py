@@ -66,6 +66,17 @@ class WorkspaceKey:
     discriminators: DiscriminatorKey = ()
     run: int | Unset = field(default=Unset, kw_only=True)
 
+    def __post_init__(self) -> None:
+        # Equality is what tells workspaces apart, so a key built out of order, or
+        # with a numpy integer for a run, must not quietly compare unequal to the
+        # same key built by `of`. Refused, never re-sorted: re-sorting would hide
+        # the caller's mistake.
+        names = [name for name, _ in self.discriminators]
+        if names != sorted(set(names)):
+            raise ValueError(f"NXstress: discriminator names must be distinct and sorted by name, got {names}.")
+        if self.run is not Unset and type(self.run) is not int:
+            raise TypeError(f"NXstress: a workspace key's run must be an `int` or `Unset`, got {self.run!r}.")
+
     @classmethod
     def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         # Signatures under `validate_call_` reach this type through `IndexedPeaks`.
@@ -90,7 +101,13 @@ class WorkspaceKey:
         discriminators = _discriminator.key(ws, names)
         if not carries_run:
             return cls(discriminators)
-        (run,) = _runs.run_numbers(ws._sample_logs)
+        runs = _runs.run_numbers(ws._sample_logs)
+        if len(runs) != 1:
+            raise ValueError(
+                f"NXstress: workspace '{ws.name}' holds {len(runs)} runs ({sorted(runs)}), and its key can carry "
+                "only one; it has no scan points, or was merged from several runs."
+            )
+        (run,) = runs
         return cls(discriminators, run=int(run))
 
     def as_pairs(self) -> KeyPairs:

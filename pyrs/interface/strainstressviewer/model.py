@@ -11,7 +11,7 @@ from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ign
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.restorable_property import restore
 from pyrs.utilities.NXstress.NXstress import NXstress
-from pyrs.interface.nxstress_load import is_nxstress_file, require_nxstress_enabled
+from pyrs.interface.nxstress_load import NXstressDisabled, is_nxstress_file, require_nxstress_enabled
 from pyrs.utilities.config import Config, default_run_number
 from pyrs.utilities.convertdatatypes import to_text
 from qtpy.QtCore import Signal, QObject  # type:ignore
@@ -154,7 +154,7 @@ class Model(QObject):
         if not self.e11:
             return "e11 is not loaded, the peak tags from this file will be used"
 
-        if not self.e11_peaks:
+        if not any(self.e11_peaks):
             return "e11 contains no peaks, fit peaks first"
 
         if not self.check_peak_for_direction(f"{direction}"):
@@ -206,7 +206,9 @@ class Model(QObject):
             if poissonsRatio != self._poisson_ratio:
                 self._stress.poisson_ratio = poissonsRatio
 
-        if d0 is not None and (self._d0 is None or self._d0 != d0):
+        # A rebuilt stress has lost any d0 applied to the previous one, so re-apply it
+        # even when it equals the cached value.
+        if d0 is not None and (build_stress or self._d0 != d0):
             if len(d0) == 5:  # ScalarFieldSample case
                 self.stress_facade.d_reference = ScalarFieldSample("d0", *d0)
             else:
@@ -342,8 +344,8 @@ class Model(QObject):
             if ws is None:
                 return [], []
             workspaces.append(ws)
-            if p:
-                peaks.append(p)
+            # Appended even when empty: `create_strain` pairs the two lists by position.
+            peaks.append(p)
 
         return workspaces, peaks
 
@@ -386,11 +388,10 @@ class Model(QObject):
         for direction in DIRECTIONS:
             loaded = getattr(self, f"e{direction}")
             peaks = getattr(self, f"e{direction}_peaks")
-            # `load_hidra_project_files` keeps a file's peaks only when it has some,
-            # so the two lists are paired only when every file had fitted peaks.
-            if len(peaks) != len(loaded):
+            unfitted = sum(1 for collections in peaks if not collections)
+            if unfitted:
                 raise ValueError(
-                    f"Direction {direction}: {len(loaded) - len(peaks)} of its {len(loaded)} file(s) "
+                    f"Direction {direction}: {unfitted} of its {len(loaded)} file(s) "
                     "have no fitted peaks, and NXstress records a direction only through its peaks.\n"
                     "  Fit peaks first, or remove those files."
                 )
@@ -424,6 +425,10 @@ class Model(QObject):
         """
         try:
             slots = self._read_nxstress_slots(filename)
+        except NXstressDisabled as e:
+            # Its own message names the setting to change; the file is not at fault.
+            self.failureMsg.emit(f"Failed to load {filename}", str(e), traceback.format_exc())
+            return False
         except Exception as e:
             self.failureMsg.emit(
                 f"Failed to load {filename}. Check that this is an NXstress file written by the strain/stress viewer",
@@ -477,7 +482,7 @@ class Model(QObject):
             workspaces, peakss = nx.read()
 
         slots: dict[str, tuple[list, list]] = {direction: ([], []) for direction in DIRECTIONS}
-        for ws, collections in zip(workspaces, peakss):
+        for ws, collections in zip(workspaces, peakss, strict=True):
             # Raises `ValueError` for a workspace that records no direction.
             direction = ws.direction
             if direction not in slots:
@@ -502,7 +507,9 @@ class Model(QObject):
             direction: One of `DIRECTIONS`.
             filenames: The files the state lists for it.
             nxstress_slots: NXstress files already read during this restore, by
-                name, so that one listed for several directions is read once.
+                name, so that one listed for several directions is read once. A
+                file that failed to read is held as its exception, and reported
+                only for the first direction that lists it.
         """
         if not any(is_nxstress_file(filename) for filename in filenames):
             self.set_workspaces(f"e{direction}", filenames)
@@ -514,15 +521,21 @@ class Model(QObject):
         peaks: list = []
         for filename in dict.fromkeys(filenames):
             if is_nxstress_file(filename):
-                try:
-                    if filename not in nxstress_slots:
+                if filename not in nxstress_slots:
+                    try:
                         nxstress_slots[filename] = self._read_nxstress_slots(filename)
-                    loaded, loaded_peaks = nxstress_slots[filename][direction]
-                    if not loaded:
-                        raise ValueError(f"'{Path(filename).name}' holds no workspace for direction {direction}.")
-                except Exception as e:
+                    except Exception as e:
+                        nxstress_slots[filename] = e
+                        self.failureMsg.emit(f"Failed to load {filename}", str(e), traceback.format_exc())
+                if isinstance(nxstress_slots[filename], Exception):
+                    workspaces, peaks = [], []
+                    break
+                loaded, loaded_peaks = nxstress_slots[filename][direction]
+                if not loaded:
                     self.failureMsg.emit(
-                        f"Failed to load {filename} for direction {direction}", str(e), traceback.format_exc()
+                        f"Failed to load {filename} for direction {direction}",
+                        f"'{Path(filename).name}' holds no workspace for direction {direction}.",
+                        "",
                     )
                     workspaces, peaks = [], []
                     break
@@ -534,8 +547,7 @@ class Model(QObject):
                     workspaces, peaks = [], []
                     break
                 workspaces.append(ws)
-                if p:
-                    peaks.append(p)
+                peaks.append(p)
 
         setattr(self, f"_e{direction}", workspaces)
         setattr(self, f"_e{direction}_peaks", peaks)
@@ -580,12 +592,14 @@ class Model(QObject):
         with open(filename) as f:
             data = json.load(f)
 
-        self._selectedPeak = data["peak_tag"]
-
         nxstress_slots: dict = {}
-        for direction in ("11", "22", "33"):
+        for direction in DIRECTIONS:
             self._restore_direction(direction, data[f"filenames_{direction}"], nxstress_slots=nxstress_slots)
-            if getattr(self, f"e{direction}"):
+        # Set only once every direction is restored: restoring e11 offers its peak
+        # tags, and the window answers by selecting the first of them.
+        self._selectedPeak = data["peak_tag"]
+        for direction in DIRECTIONS:
+            if getattr(self, f"e{direction}") and self.check_peak_for_direction(direction):
                 self.create_strain(direction)
 
         d0_data = data["d0"]
@@ -601,10 +615,10 @@ class Model(QObject):
         if all(self.validate_selection(direction) is None for direction in directions):
             self.calculate_stress(stress_case, data["youngs_modulus"], data["poisson_ratio"], d0)
         else:
-            # A direction failed to load, which has been reported. As in the window,
-            # stress waits for complete inputs; the constants still restore to the form.
-            # d0 is not cached: `calculate_stress` skips a d0 equal to the cached one,
-            # so a later stress would be built without it.
+            # A direction failed to load, which has been reported, or lacks the peak.
+            # As in the window, stress waits for complete inputs, and the window says
+            # which is missing; the constants still restore to the form. d0 does not:
+            # the form reads it from the stress, and there is none yet.
             self._stressCase = stress_case
             self._youngs_modulus = data["youngs_modulus"]
             self._poisson_ratio = data["poisson_ratio"]
