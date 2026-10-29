@@ -644,6 +644,21 @@ class _Fit:
     ##    coordinate system (e.g. usually `d-spacing`).
     ##
     @classmethod
+    def _raw_data_files(cls, logss: list[SampleLogs]) -> list[str]:
+        """The distinct `Filename` values of every input, in first-seen order.
+
+        Read per scan point rather than once per input, because a workspace merged
+        from several runs in PyRS carries each run's file name on its own points.
+        """
+        names: list[str] = []
+        for logs in logss:
+            for value in np.atleast_1d(logs["Filename"]):
+                name = to_text(value)
+                if name not in names:
+                    names.append(name)
+        return names
+
+    @classmethod
     @validate_call_
     def _init(cls, logss: list[SampleLogs], *, processing_description: str, processing_time) -> NXprocess:
         # Initialize the 'FIT' (NXprocess) group:
@@ -657,12 +672,14 @@ class _Fit:
         # Required information fields:
         fit["date"] = NXfield(processing_time)
         fit["program"] = NXfield("PyRS")
-        # The NXstress schema allows one `raw_data_file` per FIT group, so a
-        # multi-workspace entry records the first input's. Nothing is lost:
-        # `Filename` is a per-scan-point log and is not one of
-        # `_Sample.NXstress_logs`, so every input's filenames are retained in
-        # full under SAMPLE_DESCRIPTION/logs.
-        fit["raw_data_file"] = NXfield(to_text(logss[0]["Filename"][0]))
+        # Every raw data file the entry was reduced from, once each: the NXstress
+        # schema defines `raw_data_file` as "the raw data file name(s) used ... This
+        # can be a list". Growable, because an append adds the files it brings.
+        # Per scan point, the same information is retained in full under
+        # SAMPLE_DESCRIPTION/logs/Filename.
+        fit["raw_data_file"] = NXfield(
+            np.array(cls._raw_data_files(logss), dtype=FIELD_DTYPE.STRING.value), **growable(1)
+        )
 
         note = NXnote(
             type="text/plain",
@@ -695,6 +712,10 @@ class _Fit:
             # The NXnote description and the process timestamp record the FIRST write;
             # an append grows the data, it does not restate when the entry was made.
             fit = data
+            on_disk = set(to_text(name) for name in np.atleast_1d(fit["raw_data_file"].nxdata))
+            added = [name for name in cls._raw_data_files(logss) if name not in on_disk]
+            if added:
+                tail_append(fit["raw_data_file"], np.array(added, dtype=FIELD_DTYPE.STRING.value))
             _PeakParameters.init_group(indexed, data=fit[GROUP_NAME.PEAK_PARAMETERS])
             _BackgroundParameters.init_group(indexed, data=fit[GROUP_NAME.BACKGROUND_PARAMETERS])
         else:
@@ -773,13 +794,17 @@ class _Fit:
         than listed -- their `title` is the group's one entry-wide scalar and drops
         out for being scalar, not by being named here.
 
+        Plus `raw_data_file`, which is aligned with neither: it is the list of raw
+        data files, and an append adds the files it brings. It is declared so that
+        the pre-flight confirms it can grow.
+
         Args:
             fit: The target entry's existing `FIT` group.
 
         Returns:
             Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
         """
-        found: dict = {}
+        found: dict = {f"{GROUP_NAME.FIT}/raw_data_file": fit["raw_data_file"]}
         for name in fit:
             child = fit[name]
             prefix = f"{GROUP_NAME.FIT}/{name}"

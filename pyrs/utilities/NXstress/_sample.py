@@ -23,6 +23,7 @@ from ._definitions import (
     row_aligned_fields,
     tail_append,
 )
+from . import _runs
 
 
 """
@@ -179,6 +180,13 @@ class _Sample:
         return tuple(np.concatenate(axis) for axis in per_axis)
 
     @classmethod
+    def _concatenated_runs(cls, logss: list[SampleLogs]) -> np.ndarray:
+        """Every input's run number per scan point, concatenated in workspace order."""
+        if not logss:
+            return np.empty((0,), dtype=np.int64)
+        return np.concatenate([_runs.for_scan_points(logs) for logs in logss])
+
+    @classmethod
     def _coordinates_are_finite(cls, logs: SampleLogs) -> bool:
         """Whether every sample coordinate this `SampleLogs` carries is finite.
 
@@ -238,6 +246,9 @@ class _Sample:
         scan_points = np.concatenate(per_workspace) if per_workspace else np.empty((0,), dtype=int)
         sd["scan_point"] = NXfield(scan_points.astype(FIELD_DTYPE.INT_DATA.value), units="", **growable(1))
         N_scan = len(scan_points)
+        # The outer level of the scan-point index, aligned with `scan_point`: a scan
+        # point is only meaningful within its run. See `_runs`.
+        sd[_runs.RUN_NUMBER] = NXfield(cls._concatenated_runs(logss), units="", **growable(1))
 
         # 3) Sample positions per scanpoint (mm). Use SampleLogs.get_pointlist().
         # PointList returns vx, vy, vz arrays in millimeters.
@@ -646,6 +657,7 @@ class _Sample:
             coordinates.append((axis_name, vs))
 
         tail_append(sd["scan_point"], scan_points.astype(FIELD_DTYPE.INT_DATA.value))
+        tail_append(sd[_runs.RUN_NUMBER], cls._concatenated_runs(logss))
         for axis_name, vs in coordinates:
             tail_append(sd[axis_name], vs)
 

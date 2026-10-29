@@ -18,6 +18,10 @@ from qtpy.QtWidgets import QMainWindow, QAction  # type:ignore
 from qtpy.QtCore import Qt, Signal  # type: ignore
 from qtpy.QtGui import QDoubleValidator  # type:ignore
 
+from pyrs.interface.gui_helper import NXSTRESS_FILE_FILTER, nxstress_save_available, write_nxstress_or_report
+from pyrs.interface.strainstressviewer.model import DIRECTIONS
+from pyrs.utilities.config import Config
+
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -804,6 +808,18 @@ class StrainStressViewer(QMainWindow):
         self.loadAction.triggered.connect(self.load)
         fileMenu.addAction(self.loadAction)
         fileMenu.addSeparator()
+        # NXstress: every loaded direction in one `.nxs` file. Both actions follow
+        # `nxstress.enable`, which switches the whole NXstress feature set on or off;
+        # saving also needs something writable loaded. Disabled, never hidden.
+        self.saveNXstressAction = QAction("Save as &NXstress...", self)
+        self.saveNXstressAction.setStatusTip("Save every loaded direction to one NXstress (.nxs) file")
+        self.saveNXstressAction.triggered.connect(self.save_nxstress)
+        fileMenu.addAction(self.saveNXstressAction)
+        self.loadNXstressAction = QAction("Load NXstress...", self)
+        self.loadNXstressAction.setStatusTip("Load every direction from one NXstress (.nxs) file")
+        self.loadNXstressAction.triggered.connect(self.load_nxstress)
+        fileMenu.addAction(self.loadNXstressAction)
+        fileMenu.addSeparator()
         exitAction = QAction("&Exit", self)
         exitAction.setShortcut("Ctrl+Q")
         exitAction.setStatusTip("Exit application")
@@ -861,6 +877,8 @@ class StrainStressViewer(QMainWindow):
         self.splitter.addWidget(right)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 5)
+
+        self.update_nxstress_action()
 
     @property
     def controller(self):
@@ -925,6 +943,21 @@ class StrainStressViewer(QMainWindow):
             self.enable_stress_output(True)
         else:
             self.enable_stress_output(False)
+        self.update_nxstress_action()
+
+    def update_nxstress_action(self):
+        """Enable the NXstress actions when NXstress I/O is on, and saving when something can be written.
+
+        **Load NXstress...** follows `nxstress.enable` alone.
+
+        Every loaded workspace must carry instrument geometry, which `NXstress.write`
+        requires -- the same rule the other viewers apply through
+        `nxstress_save_available`. Project files with an incomplete `geometry setup`
+        load without it, so their directions cannot be saved as NXstress.
+        """
+        loaded = [ws for direction in DIRECTIONS for ws in getattr(self.model, f"e{direction}")]
+        self.saveNXstressAction.setEnabled(bool(loaded) and all(nxstress_save_available(ws) for ws in loaded))
+        self.loadNXstressAction.setEnabled(bool(Config["nxstress.enable"]))
 
     def enable_stress_output(self, enable):
         self.csvExport.setEnabled(enable)
@@ -1000,3 +1033,17 @@ class StrainStressViewer(QMainWindow):
         filename, _ = QFileDialog.getOpenFileName(self, "Load Stress state", "", "JSON (*.json);;All Files (*)")
         if filename:
             self.controller.load(filename)
+
+    def save_nxstress(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "Save as NXstress", "", NXSTRESS_FILE_FILTER)
+        if filename:
+            # Imposes the configured extension, and replaces an existing file only on success.
+            write_nxstress_or_report(self, filename, self.model.save_as_nxstress)
+
+    def load_nxstress(self):
+        filename, _ = QFileDialog.getOpenFileName(self, "Load NXstress", "", f"{NXSTRESS_FILE_FILTER};;All Files (*)")
+        if filename and self.model.load_nxstress(filename):
+            for direction in DIRECTIONS:
+                text = os.path.basename(filename) if getattr(self.model, f"e{direction}") else ""
+                self.fileLoading.set_text_values(direction, text)
+            self.update_plot()
