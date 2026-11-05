@@ -249,6 +249,7 @@ Notes:
   `QT_QPA_PLATFORM=offscreen` yourself before running the full suite on a
   workstation with a real desktop session, or it will stall on the GUI tier
   until the timeout below fires — see [docs/ground_truths.md](docs/ground_truths.md).
+- No tier needs a display: with neither `DISPLAY` nor `WAYLAND_DISPLAY` set, `tests/ui/conftest.py` creates an offscreen `QApplication` before its modules import mantidqt — see [docs/ground_truths.md](docs/ground_truths.md).
 - **Every test has a 300-second timeout** (`timeout`/`timeout_method` in
   `pyproject.toml`, via `pytest-timeout`). A hang is a failure, not an infinite
   wait. `timeout_method = "thread"` is deliberate: a test blocked inside Qt's C++

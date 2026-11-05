@@ -1052,7 +1052,7 @@ class TestReadBackScanPointOrder:
 
     Rows sharing a discriminator value are read back as one workspace, in
     on-disk order, and `SubRuns` refuses anything not strictly increasing. See
-    DD-2 in `plans/PR_review/deferred-defects.md`. Unsupported rather than
+    DD-2 in `docs/deferred_defects.md`. Unsupported rather than
     violated, like Case B: the entry is unchanged and the instance stays usable.
     """
 

@@ -337,7 +337,7 @@ class TestConfigOverrideRefusesMalformedConfig:
     `validate_config()` call and the entire 675-test suite stayed green -- the
     guarantee was real but unconstrained, so a later refactor could drop it
     silently and reintroduce the defect recorded as DD-1 in
-    `plans/PR_review/deferred-defects.md`.
+    `docs/deferred_defects.md`.
     """
 
     def test_a_malformed_override_is_refused_by_the_fixture(self, config_override):

@@ -481,8 +481,8 @@ class TestScanPointFamilySplit:
 class TestReadBackScanPointOrder:
     """A workspace read back must hold strictly increasing scan points.
 
-    That requirement belongs to `SubRuns`, not to the file format, and DD-2 in
-    `plans/PR_review/deferred-defects.md` recommends dropping it. Until then a
+    That requirement belongs to `SubRuns`, not to the file format, and dropping it
+    is the recommended fix for DD-2 in `docs/deferred_defects.md`. Until then a
     write that could not be read back is refused, rather than re-sorted: the
     on-disk rows are in the inputs' order, and sorting them would break the
     round trip.
