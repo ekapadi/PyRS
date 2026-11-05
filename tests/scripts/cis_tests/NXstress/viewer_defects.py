@@ -60,7 +60,8 @@ def csv_rows(out) -> None:
     section("summary CSV rows match the header")
     strain11 = StrainField(str(TEST_DATA / "HB2B_1331.h5"), peak_tag="peak0")
     strain22 = StrainField(str(TEST_DATA / "HB2B_1332.h5"), peak_tag="peak0")
-    stress = StressField(strain11, strain22, None, 200, 0.3, stress_type="in-plane-strain")
+    # `None` is how an in-plane case is built; `strain33`'s annotation omits it (DD-9 in docs/deferred_defects.md).
+    stress = StressField(strain11, strain22, None, 200, 0.3, stress_type="in-plane-strain")  # type: ignore[arg-type]
     path = out / "summary_1331_1332.csv"
     SummaryGeneratorStress(str(path), StressFacade(stress)).write_summary_csv()
     lines = [line for line in path.read_text().splitlines() if not line.startswith("#")]
