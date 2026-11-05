@@ -14,7 +14,7 @@ Shows that:
    refused, and the message names the fields to configure;
 5. workspaces sharing a discriminator value, which would read back as one
    workspace with its scan points out of order, are refused at write time (DD-2
-   in `plans/PR_review/deferred-defects.md`).
+   in `docs/deferred_defects.md`).
 
 Run from the repository root:
 

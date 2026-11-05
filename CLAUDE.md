@@ -256,6 +256,7 @@ Notes:
   into the working folder; use `tmp_path`. To debug with `--pdb` or `-s`, run
   serially: `pixi run test-unit -n 0`. CI runs each tier as its own job
   (`test-ci-unit`, `test-ci-integration`, `test-ci-gui`, under `xvfb-run`, #1100).
+- No tier needs a display: with neither `DISPLAY` nor `WAYLAND_DISPLAY` set, `tests/ui/conftest.py` creates an offscreen `QApplication` before its modules import mantidqt — see [docs/ground_truths.md](docs/ground_truths.md).
 - **Every test has a 300-second timeout** (`timeout`/`timeout_method` in
   `pyproject.toml`, via `pytest-timeout`). A hang is a failure, not an infinite
   wait. `timeout_method = "thread"` is deliberate: a test blocked inside Qt's C++
