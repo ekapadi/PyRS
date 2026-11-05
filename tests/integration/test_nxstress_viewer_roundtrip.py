@@ -27,7 +27,8 @@ from pyrs.interface.strainstressviewer.model import Model as StrainStressModel
 from pyrs.interface.texture_fitting.texture_fitting_model import TextureFittingModel
 from pyrs.peaks.peak_collection import PeakCollection
 from pyrs.peaks.peak_fit_engine import FitResult
-from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode
+from pyrs.projectfile.file_mode import HidraProjectFileMode
+from pyrs.projectfile.file_object import HidraProjectFile
 from pyrs.utilities.NXstress.NXstress import NXstress
 
 pytestmark = pytest.mark.integration
@@ -425,7 +426,9 @@ class TestStrainStressViewerRoundtrip:
     def restore(self, tmp_path, **filenames) -> tuple[StrainStressModel, list]:
         """`from_json` of an in-plane-strain state listing `filenames`, and its failure reports."""
         state = tmp_path / "state.json"
-        data = {f"filenames_{d}": [str(f) for f in filenames.get(f"e{d}", [])] for d in ("11", "22", "33")}
+        data: dict[str, object] = {
+            f"filenames_{d}": [str(f) for f in filenames.get(f"e{d}", [])] for d in ("11", "22", "33")
+        }
         data.update(stress_case="in-plane-strain", peak_tag=self.PEAK, youngs_modulus=200.0, poisson_ratio=0.3)
         state.write_text(json.dumps({**data, "d0": None}))
         model = StrainStressModel()

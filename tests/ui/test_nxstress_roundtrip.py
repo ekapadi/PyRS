@@ -23,7 +23,8 @@ from pyrs.interface.strainstressviewer import strain_stress_view
 from pyrs.interface.strainstressviewer.model import Model
 from pyrs.interface.strainstressviewer.strain_stress_view import StrainStressViewer
 from pyrs.peaks.peak_collection import PeakCollection
-from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode
+from pyrs.projectfile.file_mode import HidraProjectFileMode
+from pyrs.projectfile.file_object import HidraProjectFile
 from tests.util.project_file_helpers import write_minimal_h5_project  # noqa: F401
 
 pytestmark = [pytest.mark.gui, pytest.mark.integration]

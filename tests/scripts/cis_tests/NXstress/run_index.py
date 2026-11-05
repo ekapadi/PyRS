@@ -90,13 +90,13 @@ def four_runs_in_one_entry(out) -> None:
         check("the run is part of the workspace key", boundary)
 
         section("a peak tag naming no lattice plane")
-        rows = {
+        peak_rows = {
             (name.decode(), (int(h), int(k), int(l_)))
             for name, h, k, l_ in zip(peaks_group["phase_name"][()], peaks_group["h"], peaks_group["k"], peaks_group["l"])
         }
-        for name, hkl in sorted(rows):
+        for name, hkl in sorted(peak_rows):
             print(f"  on disk: phase_name {name!r}, (h, k, l) {hkl}")
-        unnamed = {hkl for name, hkl in rows if name in ("peak0", "peak1")}
+        unnamed = {hkl for name, hkl in peak_rows if name in ("peak0", "peak1")}
         check("peak0 and peak1 are written whole as the phase name, with hkl (000)", unnamed == {(0, 0, 0)})
     tags_in = sorted({collection.peak_tag for peaks in peakss for collection in peaks})
     tags_out = sorted({collection.peak_tag for peaks in back_peaks for collection in peaks})

@@ -12,9 +12,17 @@ Numbers are never reused. When a defect is fixed, mark its line fixed rather tha
   sites use a sub-run number as an array position, so they break on any workspace whose sub-runs do not run
   1..N. Each site has a strict `xfail` test.
 - **DD-3**, 2026-10-21: strain/stress viewer: loading a project file with no peak collections as e22 or e33
-  raises `IndexError`.
+  raises `IndexError`. **Fixed** in NXstress hookup phase 3.
 - **DD-4**, 2026-10-21: strain/stress viewer: `Controller.fileSelected` is never called, and calls
   `Model.set_workspace`, which does not exist.
 - **DD-5**, 2026-11-05: detector calibration viewer: a recipe saved before any data were loaded cannot be
   loaded back. `PeakLinesSetupView.save_json` writes `nexus_file` only when a file is loaded, but `load_json`
   reads it unconditionally and raises `KeyError`.
+- **DD-6**, 2026-10-29: a workspace whose file carries no instrument geometry cannot be saved as NXstress
+  (*Save as NXstress…* is disabled). Reading the geometry from Mantid's instrument definition is deferred.
+- **DD-7**, 2026-10-29: the model tests in `tests/ui/test_stress_strain_viewer.py` carry only the
+  `integration` marker, but the module cannot be imported without a display.
+- **DD-8**, 2026-10-29: the developer documentation does not build (`pixi run build-dev-docs`): autodoc fails
+  with `AttributeError: __name__` on a `unittest.mock` stand-in that `docs/developer/source/conf.py` installs.
+- **DD-9**, 2026-11-05: `StressField.__init__` and `StressField._stack_strains` annotate `strain33` as
+  `StrainField`, but `None` is how an in-plane case is built, so a fully type-checked caller fails mypy.
