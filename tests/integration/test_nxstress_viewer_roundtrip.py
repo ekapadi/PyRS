@@ -345,7 +345,9 @@ class TestStrainStressViewerRoundtrip:
         write_minimal_h5_project, minimal_HidraWorkspace, minimal_PeakCollection, *, run: int, n_subruns: int = 4
     ) -> Path:
         """A fitted project file for one run: scan points 1..n, a `run_number` log, one peak."""
-        ws = minimal_HidraWorkspace(name=f"HB2B_{run}", with_instrument=True, with_masks=True, n_subruns=n_subruns)
+        ws = minimal_HidraWorkspace(
+            sub_runs=np.arange(1, n_subruns + 1), name=f"HB2B_{run}", with_instrument=True, with_masks=True
+        )
         points = ws.get_sub_runs().raw_copy()
         ws.set_sample_log("run_number", points, np.full(len(points), run))
         path = write_minimal_h5_project(ws, filename=f"HB2B_{run}.h5", with_instrument=True, with_masks=True)
@@ -486,9 +488,10 @@ class TestStrainStressViewerRoundtrip:
 
         # Assert
         assert failures and "'nxstress.enable'" in " ".join(map(str, failures[0]))
+        # A state restores whole or not at all: nothing of it is kept.
         assert restored.e11 == restored.e22 == restored.e33 == []
         assert restored.stress is None
-        assert restored.modelUpdated == model.modelUpdated
+        assert restored.modelUpdated == (None, None, None, None)
 
     @pytest.fixture
     def two_directions(self, write_minimal_h5_project, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path):
@@ -531,7 +534,7 @@ class TestStrainStressViewerRoundtrip:
         assert model.stress is not None
 
     def test_saved_state_direction_absent_from_the_nxs(self, two_directions, tmp_path):
-        """A `.nxs` listed for a direction it does not hold is said, not silently empty."""
+        """A `.nxs` listed for a direction it does not hold is a failed load: said, and nothing kept."""
         # Arrange
         nxs, _ = two_directions
 
@@ -540,8 +543,8 @@ class TestStrainStressViewerRoundtrip:
 
         # Assert
         assert len(failures) == 1 and "direction 33" in failures[0][1]
-        assert model.e33 == []
-        assert len(model.e11) == len(model.e22) == 1
+        assert model.e11 == model.e22 == model.e33 == []
+        assert model.stress is None
 
     def test_saved_state_with_a_failing_project_file(self, two_directions, tmp_path):
         """One file of a direction failing empties the direction, as a project-file load does."""
@@ -686,7 +689,7 @@ class TestStrainStressViewerRoundtrip:
         """A PeakFitting save records no direction, so there is no slot to put it in."""
         # Arrange
         model = PeakFittingModel(PyRsCore())
-        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True)
+        ws = minimal_HidraWorkspace(sub_runs=[1, 2, 3], with_instrument=True, with_masks=True)
         model.hidra_workspace = ws
         n_subrun = len(ws.get_sub_runs())
         model.fit_result = FitResult(

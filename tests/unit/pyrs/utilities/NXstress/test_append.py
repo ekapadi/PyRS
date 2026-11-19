@@ -1069,7 +1069,9 @@ class TestOneWorkspacePerKey:
 
         # Act / Assert
         with NXstress(written, "a") as nx:
-            with pytest.raises(RuntimeError, match=r"workspace key \{'direction': '11'\}.*already holds"):
+            with pytest.raises(
+                RuntimeError, match=r"workspace key \{'direction': '11', 'run_number': -1\}.*already holds"
+            ):
                 nx.write([ws], [peaks])
             with pytest.raises(RuntimeError, match=r"no longer usable"):
                 nx.write([ws], [peaks])
@@ -1133,7 +1135,9 @@ class TestPeakCoverage:
 
         # Act / Assert
         with NXstress(path, "a") as nx:
-            with pytest.raises(RuntimeError, match=r"this entry's scan point\(s\) \[3\] have no peaks"):
+            with pytest.raises(
+                RuntimeError, match=r"this entry's \(run, scan point\) pair\(s\) \[\(-1, 3\)\] have no peaks"
+            ):
                 nx.write([incoming], [peaks])
         assert digest(path) == before
 

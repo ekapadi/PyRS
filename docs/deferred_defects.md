@@ -491,3 +491,32 @@ lets it merge without renumbering.
   override hides it again.
   **Why it is deferred.** Unreachable today, and outside a lint fix. To be fixed with the scoped-enum change,
   when the override is removed.
+
+- **DD-28**, 2026-11-18: strain/stress viewer: a field cannot be plotted when the sample points lie on one
+  straight line that is not parallel to a sample axis; the viewer opens a modal "Failed to generate field"
+  error instead.
+
+  **Found during:** the phase-3 rebase onto `next`, when phase 2's `make_minimal_HidraWorkspace` began to
+  vary `vy` and `vz` along with `vx`, and the GUI tier hung on the dialog.
+  **Owner:** `pyrs/dataobjects/fields.py`, `ScalarFieldSample.interpolated_sample`.
+
+  **What happens.** `interpolated_sample` reduces the grid only along axes on which the points do not vary
+  (`coordinates_irreducible`). Points on a diagonal vary along all three, so `griddata(..., method="linear")`
+  is asked for a 3-D Delaunay triangulation of collinear points, which Qhull refuses. Measured with three
+  points `(0, 0, 0)`, `(1, 1, 1)`, `(2, 2, 2)`:
+
+  ```
+  diagonal -> QhullError: QH6214 qhull input error: not enough points(3) to construct initial simplex (need 5)
+  line -> ok, 3 grid points
+  ```
+
+  (`line` is the same three values along `vx` only.) `StrainStressViewer` catches the exception and shows
+  it with `show_failure_msg`, which is modal, so a headless test blocks on it until its timeout.
+
+  **Why it is deferred.** It is in field interpolation, which is scientific production code and outside the
+  rebase. A real scan along a diagonal is unusual; the test fixture was made a line scan along `vx`
+  (`tests/ui/test_nxstress_roundtrip.py`).
+
+  **If picked up.** Detect a degenerate (collinear or coplanar) point set before `griddata`, for example from
+  the rank of the centred coordinates, and interpolate along the line or plane it spans, or fall back to
+  `method="nearest"` with a warning. Either changes plotted values for such scans, so it needs approval.

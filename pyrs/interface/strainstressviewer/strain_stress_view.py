@@ -1065,7 +1065,9 @@ class StrainStressViewer(QMainWindow):
 
         A refused file is reported by the model, and the window is left as it was.
         """
-        filename, _ = QFileDialog.getOpenFileName(self, "Load NXstress", "", f"{nxstress_file_filter()};;All Files (*)")
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Load NXstress", "", f"{nxstress_file_filter()};;All Files (*)"
+        )
         if filename and self.model.load_nxstress(filename):
             self.update_file_fields()
             self.update_plot()

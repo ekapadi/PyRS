@@ -5,8 +5,8 @@ All of these predate phase 3. Shows that:
 1. every row of the summary stress CSV has as many cells as its header. A row
    past the end of a direction's data used to carry up to four extra blank
    cells, so every later value sat under the wrong column name;
-2. a saved state naming a missing file is reported, and leaves stress
-   uncalculated as the window does. It used to raise `AssertionError` out of
+2. a saved state naming a missing file is reported, and restores nothing: a
+   state restores whole or not at all. It used to raise `AssertionError` out of
    the Load action;
 3. a saved state whose peak one direction lacks is not a crash. It used to
    raise `KeyError`;
@@ -75,10 +75,9 @@ def missing_file(out) -> None:
     model, failures = model_with_failures()
     model.from_json(write_state(out / "state_missing.json", filenames_22=[str(out / "missing.h5")]))
     print(f"  reported: {failures}")
-    print(f"  e22 holds {len(model.e22)} workspace(s); stress: {model.stress}; window says: {model.validate_selection('22')!r}")
+    print(f"  e11 holds {len(model.e11)} workspace(s), e22 {len(model.e22)}; stress: {model.stress}")
     check("reported once, with no exception", len(failures) == 1)
-    check("stress waits for the missing direction", model.stress is None)
-    check("the constants are still restored", model.modelUpdated == ("in-plane-stress", "peak0", 200, 0.3))
+    check("nothing of the state is kept", model.e11 == model.e22 == model.e33 == [] and model.stress is None)
 
 
 def peak_one_direction_lacks(out) -> None:

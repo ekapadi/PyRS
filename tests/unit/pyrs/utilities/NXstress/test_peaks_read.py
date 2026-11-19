@@ -771,7 +771,7 @@ class TestReadBackCollectionsKeepTheirPhysics:
 
     @pytest.fixture
     def round_trip(self, minimal_HidraWorkspace, minimal_PeakCollection, tmp_path):
-        ws = minimal_HidraWorkspace(with_instrument=True, with_masks=True, n_subruns=4)
+        ws = minimal_HidraWorkspace(sub_runs=[1, 2, 3, 4], with_instrument=True, with_masks=True)
         # The wavelength is stated, not left to the fixture: with a NaN one both sides
         # would be NaN, and `assert_allclose` treats NaN as equal to NaN.
         written = minimal_PeakCollection(N_subrun=4, peak_tag="Fe110", wavelength=1.486)

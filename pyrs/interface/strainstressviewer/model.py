@@ -11,7 +11,8 @@ from pyrs.projectfile import HidraProjectFile, HidraProjectFileMode  # type: ign
 from pyrs.core.workspaces import HidraWorkspace
 from pyrs.utilities.restorable_property import restore
 from pyrs.utilities.NXstress.NXstress import NXstress
-from pyrs.interface.nxstress_load import NXstressDisabled, is_nxstress_file, require_nxstress_enabled
+from pyrs.interface.gui_helper import is_nxstress_path
+from pyrs.interface.nxstress_load import NXstressDisabled, require_nxstress_enabled
 from pyrs.utilities.config import Config, default_run_number
 from pyrs.utilities.convertdatatypes import to_text
 from qtpy.QtCore import Signal, QObject  # type:ignore
@@ -552,7 +553,7 @@ class Model(QObject):
         Returns:
             Whether every file loaded.
         """
-        if not any(is_nxstress_file(filename) for filename in filenames):
+        if not any(is_nxstress_path(filename) for filename in filenames):
             return self._load_direction(direction, filenames)
 
         # remove existing stress as it will need to be recreated
@@ -561,7 +562,7 @@ class Model(QObject):
         peaks: list = []
         loaded_all = True
         for filename in dict.fromkeys(filenames):
-            if is_nxstress_file(filename):
+            if is_nxstress_path(filename):
                 if filename not in nxstress_slots:
                     try:
                         nxstress_slots[filename] = self._read_nxstress_slots(filename)
@@ -642,16 +643,16 @@ class Model(QObject):
             if not self._restore_direction(direction, data[f"filenames_{direction}"], nxstress_slots=nxstress_slots):
                 self._restore_failed()
                 return
-        # Set only once every direction is restored: restoring e11 offers its peak
-        # tags, and the window answers by selecting the first of them.
+        self._peakTags = list(self._e11_peaks[0].keys()) if len(self._e11_peaks) > 0 else []
+        self.propertyUpdated.emit("peakTags")
+        # Set only once the peak tags are offered: the window answers them by
+        # selecting the first, and the saved peak must win.
         self._selectedPeak = data["peak_tag"]
         # A peak one direction lacks is not a failed load: what loaded is kept, and
         # the window names the gap (`validate_selection`).
         for direction in DIRECTIONS:
             if getattr(self, f"e{direction}") and self.check_peak_for_direction(direction):
                 self.create_strain(direction)
-        self._peakTags = list(self._e11_peaks[0].keys()) if len(self._e11_peaks) > 0 else []
-        self.propertyUpdated.emit("peakTags")
 
         d0_data = data["d0"]
         if d0_data is None:

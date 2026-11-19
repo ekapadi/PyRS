@@ -2,10 +2,11 @@
 The strain/stress viewer's model over project files: its saved state (`Model.to_json` /
 `Model.from_json`), and loading a direction from a file it cannot use.
 
-A restore that cannot complete -- a file that fails to load, a peak one direction
-lacks, a file with no fitted peaks -- is reported and leaves stress uncalculated,
-as the window itself does before it has every input. It never raises out of the
-Load action. States naming NXstress files are covered beside the rest of the
+A file that fails to load is reported and leaves the model empty: a state
+restores whole or not at all. A restore that loads but cannot be completed -- a
+peak one direction lacks, a file with no fitted peaks -- is reported by the
+window and leaves stress uncalculated, as the window itself does before it has
+every input. Neither raises out of the Load action. States naming NXstress files are covered beside the rest of the
 NXstress round trip, in `test_nxstress_viewer_roundtrip.py`.
 
 Integration tier: real project files from `tests/data`. Imports only the model,
@@ -50,7 +51,7 @@ def model_and_failures() -> tuple[Model, list]:
 
 
 def test_a_missing_file_is_reported(model_and_failures, test_data_dir, tmp_path):
-    """The direction is left empty; stress waits, as in the window."""
+    """The whole model is left empty, not only that direction."""
     # Arrange
     model, failures = model_and_failures
     state = write_state(tmp_path / "state.json", test_data_dir, filenames_22=[str(tmp_path / "missing.h5")])
@@ -60,11 +61,9 @@ def test_a_missing_file_is_reported(model_and_failures, test_data_dir, tmp_path)
 
     # Assert
     assert len(failures) == 1 and "missing.h5" in failures[0][0]
-    assert len(model.e11) == 1
-    assert model.e22 == []
+    assert model.e11 == model.e22 == model.e33 == []
     assert model.stress is None
-    assert model.validate_selection("22") == "e22 file hasn't been loaded"
-    assert model.modelUpdated == ("in-plane-stress", "peak0", 200, 0.3)
+    assert model.modelUpdated == (None, None, None, None)
 
 
 def test_a_peak_one_direction_lacks_is_not_a_crash(model_and_failures, test_data_dir, tmp_path):

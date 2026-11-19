@@ -12,9 +12,9 @@ Shows that:
    for a direction the entry already holds) is refused;
 4. a read whose configuration disagrees with the fields the entry records is
    refused, and the message names the fields to configure;
-5. workspaces sharing a discriminator value, which would read back as one
-   workspace with its scan points out of order, are refused at write time (DD-2
-   in `docs/deferred_defects.md`).
+5. two workspaces sharing a workspace key -- every discriminator value, and the
+   run -- are refused at write time: they would read back as one workspace, and
+   NXstress never merges workspaces.
 
 Run from the repository root:
 
@@ -124,17 +124,18 @@ def main() -> None:
     check("the read is refused", message is not None)
     check("the message names the fields to configure", "['direction']" in (message or ""))
 
-    section("workspaces sharing a discriminator value, out of order")
+    section("workspaces sharing a workspace key")
     with nxstress_config(discriminator_fields=["direction"]):
         later = synthetic_workspace([4, 5, 6], direction="11")
         earlier = synthetic_workspace([1, 2, 3], direction="11")
-        with NXstress(out / "out_of_order.nxs", "w") as nx:
+        with NXstress(out / "shared_key.nxs", "w") as nx:
             message = raises(
-                NotImplementedError,
+                ValueError,
                 lambda: nx.write([later, earlier], [[synthetic_peaks(later)], [synthetic_peaks(earlier, "Fe 211")]]),
             )
-    print(f"  direction 11 twice, [4, 5, 6] + [1, 2, 3] -> NotImplementedError: {message}")
-    check("the write is refused", message is not None)
+    print(f"  direction 11 twice, same run -> ValueError: {message}")
+    check("the write is refused: NXstress never merges workspaces", message is not None)
+    check("the message names the shared key", message is not None and "same workspace key" in message)
 
 
 if __name__ == "__main__":

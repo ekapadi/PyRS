@@ -420,7 +420,7 @@ def test_save_after_nxstress_load_keeps_file_on_failure(nxstress_ready_window, m
     loaded = tmp_path / "loaded.nxs"
     loaded.write_text("keep")
     monkeypatch.setattr(window, "current_hidra_file_name", [str(loaded)])
-    set_peak_tag("peak0")
+    set_peak_tag("Fe 110", copies=2)
 
     # Act
     window.save()

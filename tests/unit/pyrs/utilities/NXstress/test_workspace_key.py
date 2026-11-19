@@ -88,7 +88,7 @@ class TestDescribe:
 class TestOf:
     @pytest.fixture
     def workspace(self, minimal_HidraWorkspace: Callable[..., HidraWorkspace]) -> HidraWorkspace:
-        ws = minimal_HidraWorkspace(with_instrument=True)
+        ws = minimal_HidraWorkspace(sub_runs=[1, 2, 3], with_instrument=True)
         points = ws.get_sub_runs().raw_copy()
         ws.set_sample_log("direction", points, np.array(["22"] * len(points)))
         ws.set_sample_log("run_number", points, np.full(len(points), 1331))

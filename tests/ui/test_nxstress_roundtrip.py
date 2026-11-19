@@ -47,9 +47,13 @@ def fitted_project(
     """A factory for a fitted project file, with or without instrument geometry."""
 
     def make(*, with_instrument: bool) -> Path:
-        ws = minimal_HidraWorkspace(with_instrument=with_instrument, with_masks=True)
+        ws = minimal_HidraWorkspace(sub_runs=[1, 2, 3], with_instrument=with_instrument, with_masks=True)
         points = ws.get_sub_runs().raw_copy()
         ws.set_sample_log("run_number", points, np.full(len(points), 1327))
+        # A line scan along vx: the window plots the strain field on load, and its
+        # interpolation fails for points on a diagonal through 3-D space (DD-28).
+        ws.set_sample_log("vy", points, np.zeros(len(points)))
+        ws.set_sample_log("vz", points, np.zeros(len(points)))
         path = write_minimal_h5_project(
             ws, filename=f"fitted_{with_instrument}.h5", with_instrument=with_instrument, with_masks=True
         )
