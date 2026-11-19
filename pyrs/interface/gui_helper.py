@@ -138,6 +138,25 @@ def report_save_failure(parent, target: str, save_err: Exception) -> None:
     pop_message(parent, f"Failed to save '{Path(target).name}'", str(save_err), "error")
 
 
+def load_file_filter(*filters: str, separator: str = ";;") -> str:
+    """A file-dialog filter offering NXstress files only when NXstress I/O is on.
+
+    `nxstress.enable` switches the whole NXstress feature set, loading included,
+    so a load dialog must not offer `.nxs` files while it is false. Read when
+    called, so the dialog follows the current configuration.
+
+    Args:
+        filters: The dialog's other format filters, in order; NXstress follows them.
+        separator: What joins the filters -- `";;"` for Qt, or whatever the
+            caller's dialog helper expects.
+
+    Returns:
+        The joined filter string.
+    """
+    parts = [*filters, nxstress_file_filter()] if Config["nxstress.enable"] else list(filters)
+    return separator.join(parts)
+
+
 def nxstress_save_available(ws: Optional["HidraWorkspace"]) -> bool:
     """Whether NXstress output can be offered for a workspace: NXstress must be
     enabled in the config, and the workspace must have the instrument geometry
