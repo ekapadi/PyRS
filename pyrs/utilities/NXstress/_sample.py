@@ -23,6 +23,7 @@ from ._definitions import (
     row_aligned_fields,
     tail_append,
 )
+from . import _runs
 from ._transformations import resolve_depends_on
 
 
@@ -180,6 +181,13 @@ class _Sample:
         return tuple(np.concatenate(axis) for axis in per_axis)
 
     @classmethod
+    def _concatenated_runs(cls, logss: list[SampleLogs]) -> np.ndarray:
+        """Every input's run number per scan point, concatenated in workspace order."""
+        if not logss:
+            return np.empty((0,), dtype=np.int64)
+        return np.concatenate([_runs.for_scan_points(logs) for logs in logss])
+
+    @classmethod
     def _coordinates_are_finite(cls, logs: SampleLogs) -> bool:
         """Whether every sample coordinate this `SampleLogs` carries is finite.
 
@@ -239,6 +247,9 @@ class _Sample:
         scan_points = np.concatenate(per_workspace) if per_workspace else np.empty((0,), dtype=int)
         sd["scan_point"] = NXfield(scan_points.astype(FIELD_DTYPE.INT_DATA.value), units="", **growable(1))
         N_scan = len(scan_points)
+        # The outer level of the scan-point index, aligned with `scan_point`: a scan
+        # point is only meaningful within its run. See `_runs`.
+        sd[_runs.RUN_NUMBER] = NXfield(cls._concatenated_runs(logss), units="", **growable(1))
 
         # 3) Sample positions per scanpoint (mm). Use SampleLogs.get_pointlist().
         # PointList returns vx, vy, vz arrays in millimeters.
@@ -485,7 +496,8 @@ class _Sample:
             # An entry written before this group existed. Appending to it would
             # leave a chain shorter than the axes it describes, which is worse
             # than the absence -- `validateAppend` refuses such an entry in the
-            # pre-flight pass, so this is a backstop, not a path.
+            # pre-flight pass, as does `_append.reject_run_index_mismatch`, since
+            # such an entry also predates the run index. This is a backstop, not a path.
             raise RuntimeError(
                 "NXstress._sample: the target entry has no `transformations` group, so its "
                 "sample frame is undefined and cannot be extended.\n"
@@ -502,13 +514,13 @@ class _Sample:
 
         Declared by the module that writes the group, rather than discovered by
         array length from outside it -- see `_definitions.row_aligned_fields` for
-        why the length sweep this replaced could reject a legal append.
+        why array length cannot decide which datasets grow.
 
         Args:
             sd: The target entry's existing `SAMPLE_DESCRIPTION` group.
 
         Returns:
-            Path -> `NXfield`, for `NXstress._validateAppendableShapes`.
+            Path -> `NXfield`, for `_append.validate_appendable_shapes`.
         """
         found = row_aligned_fields(sd, GROUP_NAME.SAMPLE_DESCRIPTION)
         if "logs" in sd:
@@ -529,7 +541,7 @@ class _Sample:
         Every scan point in an entry carries the same set of logs and the same
         optional fields; appending a different set would leave the rows already on
         disk with no value for a new one, and no error to signal it. Separate from
-        `_append_group` so that `NXstress._classifyAppend` can run it before
+        `_append_group` so that `_append.run_checks` can run it before
         anything anywhere has been resized.
 
         Args:
@@ -643,7 +655,7 @@ class _Sample:
                 from the existing group -- a group this writer did not produce.
         """
         # FIRST, before anything is resized. Re-checked here as well as in
-        # `NXstress._classifyAppend` because this method is reachable on its own --
+        # `_append.run_checks` because this method is reachable on its own --
         # and a mismatch found after the first `tail_append` would already have
         # grown part of the group, which is the defect this ordering exists to
         # prevent, not merely a tidier place to put the call.
@@ -666,6 +678,7 @@ class _Sample:
             coordinates.append((axis_name, vs))
 
         tail_append(sd["scan_point"], scan_points.astype(FIELD_DTYPE.INT_DATA.value))
+        tail_append(sd[_runs.RUN_NUMBER], cls._concatenated_runs(logss))
         for axis_name, vs in coordinates:
             tail_append(sd[axis_name], vs)
 
